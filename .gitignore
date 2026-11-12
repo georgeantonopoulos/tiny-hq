@@ -1,0 +1,20 @@
+node_modules/
+*.sqlite
+*.sqlite-*
+.DS_Store
+# The manager's generated instructions, office list and machine-specific settings (written by the daemon)
+manager/CLAUDE.md
+manager/office.md
+manager/projects.md
+manager/.claude/settings.local.json
+*.tgz
+
+# Working copies other Claude sessions make for this repo
+.claude/worktrees/
+.playwright-mcp/
+
+# Private to this Mac: the porting instructions, the upstream marker and the private-words list
+CLAUDE.local.md
+.claude/upstream.json
+.claude/private-words.txt
+.claude/settings.local.json

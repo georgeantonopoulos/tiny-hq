@@ -1,0 +1,7 @@
+#!/bin/sh
+# The owner's desk: reports they asked for, read as pages on the floor.
+#   ./desk add "<title>" <report.md | -> [--from "<your name>"]   (Markdown)
+#   ./desk list
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/desk.ts" "$@"

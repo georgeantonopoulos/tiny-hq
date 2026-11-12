@@ -1,0 +1,9 @@
+#!/bin/sh
+# The manager's timetable: list, add, switch on/off or remove a scheduled task.
+# The office runs them; the owner sees them on the timetable in the manager's office.
+#   ./schedule list
+#   ./schedule add <id> "<title>" (--daily HH:MM | --every N [--minute M]) [--until YYYY-MM-DD] -- "<prompt>"
+#   ./schedule enable|disable|remove <id>
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/schedule.ts" "$@"

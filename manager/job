@@ -1,0 +1,11 @@
+#!/bin/sh
+# Open jobs the office keeps moving until they're done (nudging the room's
+# session when it goes quiet). The manager adds them; rooms mark them waiting or done.
+#   ./job list
+#   ./job add <id> "<project folder>" "<title>" --done "<what finished looks like>"
+#   ./job wait <id> "<the one thing the owner must do>" --why <reason> --tried "<what you tried>"
+#   ./job show <id>   |   ./job note <id> "<what happened>"
+#   ./job go|done|remove <id>
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/job.ts" "$@"

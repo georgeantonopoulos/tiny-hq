@@ -1,0 +1,6 @@
+#!/bin/sh
+# Which Chrome profile holds which sign-in; check before any web console.
+#   ./profiles   |   ./profiles <site>   |   ./profiles set "<site>" "<profile>" --how "<how to reach it>" --by "<name>"
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/profiles.ts" "$@"

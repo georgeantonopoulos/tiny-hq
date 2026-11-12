@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tiny HQ</title>
+    <meta name="description" content="Tiny HQ: a room for every project, and a Claude at every desk." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Tiny HQ" />
+    <meta property="og:description" content="Tiny HQ: a room for every project, and a Claude at every desk." />
+    <meta property="og:image" content="/thumbnail.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/thumbnail.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/vendor/pixi.js"></script>
+    <script src="/vendor/pixi-no-eval.js"></script>
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <script src="/vendor/xterm.js"></script>
+    <script src="/vendor/xterm-fit.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><span class="logo" aria-hidden="true"></span> Tiny HQ</div>
+      <div class="status" id="status">Opening up…</div>
+      <div class="usage" id="usage" aria-label="Claude and Codex usage"></div>
+      <button class="sound-btn" id="sound" type="button" aria-label="Office sounds" aria-pressed="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path class="spk" d="M2.5 6h2.5l3-2.5v9L5 10H2.5z" /><path class="waves" d="M10.5 5.5a3.5 3.5 0 0 1 0 5M12.5 3.5a6.3 6.3 0 0 1 0 9" /><path class="slash" d="M10.5 5.5l4 5M14.5 5.5l-4 5" /></svg></button>
+      <button class="mic" id="mic" type="button" aria-label="Talk to the manager" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" /><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5V15M5.5 15h5" /></svg></button>
+      <button class="ghost" id="refresh" title="Re-scan projects">Re-scan</button>
+    </header>
+    <main class="layout">
+      <section class="floor" id="floor" aria-label="Office floor">
+        <div class="card hidden" id="card" role="dialog" aria-live="polite"></div>
+        <div class="board hidden" id="board" role="dialog" aria-labelledby="board-title">
+          <div class="board-sheet">
+            <header><h2 id="board-title">Whiteboard</h2><span class="meta" id="board-meta"></span><button class="ghost" id="board-close" type="button" aria-label="Close">×</button></header>
+            <div class="board-body" id="board-body"></div>
+          </div>
+        </div>
+        <div class="board hidden" id="timetable" role="dialog" aria-labelledby="timetable-title">
+          <div class="board-sheet">
+            <header><h2 id="timetable-title">Timetable</h2><span class="meta">What the office runs for the manager</span><button class="ghost" id="timetable-close" type="button" aria-label="Close">×</button></header>
+            <div class="board-body" id="timetable-body"></div>
+          </div>
+        </div>
+        <div class="board hidden" id="desk" role="dialog" aria-labelledby="desk-title">
+          <div class="board-sheet desk-sheet">
+            <header><button class="ghost" id="desk-back" type="button" aria-label="Back to the list" hidden>‹</button><h2 id="desk-title">Your desk</h2><span class="meta" id="desk-meta"></span><button class="ghost" id="desk-close" type="button" aria-label="Close">×</button></header>
+            <div class="board-body" id="desk-body"></div>
+          </div>
+        </div>
+        <div class="hint">Drag to move · scroll to zoom · click a room to open its Claude</div>
+      </section>
+      <div class="term-panel hidden" id="term-panel" role="dialog" aria-labelledby="term-title">
+        <div class="term-grip" id="term-grip" title="Drag to resize"></div>
+        <div class="term-head">
+          <strong id="term-title">Terminal</strong>
+          <span class="meta" id="term-meta"></span>
+          <button class="term-btn" id="term-new" type="button" title="Start a fresh conversation in this folder"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg><span class="long">New conversation</span><span class="short">New</span></button>
+          <button class="term-btn round" id="term-close" type="button" title="Close; the session keeps running" aria-label="Close"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button>
+        </div>
+        <div class="term-tabs hidden" id="term-tabs" role="tablist" aria-label="Open sessions"></div>
+        <div class="term-activity hidden" id="term-activity" aria-live="polite"></div>
+        <div class="term-body" id="term-body"></div>
+      </div>
+    </main>
+    <div class="overlay hidden" id="locked">
+      <div class="panel">
+        <h1>The door's locked</h1>
+        <p id="locked-how">Open it from a terminal in ~/.tiny-hq/app, which signs you in:</p>
+        <pre id="locked-cmd">tiny-hq open</pre>
+      </div>
+    </div>
+    <script type="module" src="/app/main.ts"></script>
+  </body>
+</html>

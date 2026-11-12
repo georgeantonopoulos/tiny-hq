@@ -1,0 +1,36 @@
+#!/bin/sh
+# The manager hands a task to a project: starts a fresh Claude Code session in that
+# project's own folder (the owner's settings there, and the model the owner picked
+# for that room), with the room's office brief and the task, and asks it to
+# report back to the manager.
+# Usage: ./delegate <project folder> "<project name>" "<task>"
+[ $# -eq 3 ] || { echo 'usage: ./delegate <project folder> "<project name>" "<task>"' >&2; exit 2; }
+# The office's own folder, found before moving into the project: run by a relative path
+# (`manager/delegate`), a path relative to here no longer points anywhere after the cd.
+office=$(cd "$(dirname "$0")/.." && pwd -P) || exit 1
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+cd "$1" || exit 1
+here=$(pwd -P)
+# Claude Code won't start in a folder the owner hasn't trusted (archive projects, a second disk), and a
+# background session can't show its trust prompt. Then the owner gets a "Trust and start" button over
+# the room instead; their Approve trusts the folder and the office starts this same hand-off.
+trust="$office/src/cli/trust.ts"
+[ -f "$trust" ] || { echo "delegate: can't find the office's trust check at $trust" >&2; exit 1; }
+if ! "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$trust" check "$here"; then
+  exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$trust" ask "$here" "$2" "$3"
+fi
+model=$(awk -F '\t' -v p="$here" -v q="$1" 'tolower($1) == tolower(p) || tolower($1) == tolower(q) { m = $2 } END { print m }' "${CM_DATA_DIR:-$HOME/.tiny-hq}/manager/models.tsv" 2>/dev/null)
+data="${CM_DATA_DIR:-$HOME/.tiny-hq}/manager"
+# The room's brief (its office name, who to report to), if the office has written one.
+brief_file=$(awk -F '\t' -v p="$here" -v q="$1" 'tolower($1) == tolower(p) || tolower($1) == tolower(q) { f = $2 } END { print f }' "$data/briefs.tsv" 2>/dev/null)
+brief=''
+[ -n "$brief_file" ] && [ -f "$brief_file" ] && brief=$(cat "$brief_file")
+task="$3
+
+On a long task, send the manager a one-line progress note (SendMessage, signed with your name) after each phase, not only at the end.
+
+When you're done, or if you need the owner, reply to the manager with SendMessage in three lines or fewer: what you did, what's left, and anything the owner must decide."
+set -- --bg -n "$2"
+case "$model" in opus|sonnet|haiku) set -- "$@" --model "$model" ;; esac
+[ -n "$brief" ] && set -- "$@" --append-system-prompt "$brief"
+exec "${CM_CLAUDE_BIN:-claude}" "$@" "$task"

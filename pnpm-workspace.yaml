@@ -1,0 +1,6 @@
+# pnpm settings for this single-package repo.
+# Only take versions published at least 14 days ago (value is in minutes).
+minimumReleaseAge: 20160
+# No dependency may run install/build scripts.
+onlyBuiltDependencies: []
+strictDepBuilds: true

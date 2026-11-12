@@ -1,0 +1,62 @@
+{
+  "name": "tiny-hq",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A little office for your Claude Code projects: a room per project, a manager who hands out jobs and gets them finished, question buttons instead of chat, and safe defaults.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.17.0"
+  },
+  "os": [
+    "darwin"
+  ],
+  "bin": {
+    "tiny-hq": "bin/tiny-hq.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "web",
+    "hooks",
+    "manager/ask",
+    "manager/delegate",
+    "manager/desk",
+    "manager/job",
+    "manager/profiles",
+    "manager/schedule",
+    "manager/CLAUDE.template.md",
+    "manager/.claude/settings.json",
+    "manager/.claude/output-styles",
+    "agents",
+    "skills",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "claude-code",
+    "claude",
+    "agents",
+    "office",
+    "pixel-art",
+    "productivity"
+  ],
+  "scripts": {
+    "daemon": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/daemon/main.ts",
+    "office": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli/office.ts",
+    "typecheck": "tsc -p . && tsc -p web",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test test/*.test.ts"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0",
+    "pixi.js": "8.22.0",
+    "@xterm/xterm": "6.0.0",
+    "@xterm/addon-fit": "0.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "6.0.3"
+  }
+}
