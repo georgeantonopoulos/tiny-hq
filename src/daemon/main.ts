@@ -79,7 +79,7 @@ const floors = new FloorCache(async () => {
     leads = staffed.leads;
     saveLeads(LEADS_PATH, leads);
   }
-  const floor = applyScene(layoutFloor(projects, Date.now(), { leads, onFloor, managerName: config.managerName, ownerName: config.ownerName, github: config.extras.github, coffee: config.extras.coffee }), loadScene(SCENE_PATH));
+  const floor = applyScene(layoutFloor(projects, Date.now(), { leads, onFloor, managerName: config.managerName, ownerName: config.ownerName, officeName: config.officeName, github: config.extras.github, coffee: config.extras.coffee }), loadScene(SCENE_PATH));
   writeRoster(floor, projects.slice(onFloor));
   writeBriefs(floor);
   return floor;

@@ -35,7 +35,7 @@ It runs on your Mac, on your own Claude Code plan. There is no server of ours, n
 - **No email goes out without you.** Rooms write drafts; you send.
 - **Nothing goes on a public site without your yes to the exact text.** An optional hook stops any session about to comment, post or upload on GitHub, social sites or forums, and shows you the action first.
 - **Outside text is never an instruction.** What the GitHub keeper and the timed checker read (other people's comments, email) reaches the manager as facts only, never as orders.
-- **Nothing outside `~/.tiny-hq` without asking.** Setup asks before adding each Claude Code hook, the office skill and the login item, and `tiny-hq uninstall` takes them all out again.
+- **Nothing outside `~/.tiny-hq` without asking.** Setup has a separate switch for each Claude Code hook, the office skill and the login item, and `tiny-hq uninstall` takes them all out again.
 - **Local only.** The office listens on 127.0.0.1. Phone access is off unless you set up Tailscale yourself, and then only your own devices, each paired once, can reach it.
 - **The manager can't do project work.** Its folder's settings block edits in your projects and the usual shell ways of changing things; it delegates.
 
@@ -47,21 +47,21 @@ You need macOS, [Node](https://nodejs.org) 22.17 or newer, and [Claude Code](htt
 npx tiny-hq
 ```
 
-This copies the office to `~/.tiny-hq/app`, adds a `tiny-hq` command to `~/.local/bin`, and asks five questions:
+This copies the office to `~/.tiny-hq/app`, adds a `tiny-hq` command to `~/.local/bin`, and opens a welcome page in your browser. In a few short steps you:
 
-1. your name,
-2. your project folders,
-3. your manager's name and style (calm, whimsical or plain),
-4. which extras to switch on,
-5. whether to start the office when you log in.
+1. name your office and tell it your name,
+2. hire your manager: their name and style (calm, whimsical or plain),
+3. tick which of your projects get a room,
+4. switch the extras on or off,
+5. choose which little helpers to add to Claude Code.
 
-Then it asks, one at a time, before adding each hook and the office skill to Claude Code, and opens the office in your browser.
+Then "Open my office" moves you in. Prefer the terminal? `tiny-hq setup --terminal` asks the same questions there.
 
 ## Everyday commands
 
 ```sh
 tiny-hq open        # start the office if needed and open it
-tiny-hq setup       # change your answers
+tiny-hq setup       # change your answers (the welcome page again)
 tiny-hq doctor      # check the set-up and say what's missing
 tiny-hq stop        # stop the office (your Claude sessions keep running)
 tiny-hq pair        # a one-time link for your phone (after phone access is set up)

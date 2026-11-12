@@ -64,7 +64,7 @@ export interface Floor {
   rooms: Room[];
   agents: Agent[];
   generatedAt: number;
-  names?: { manager: string; owner: string }; // from the owner's settings, for the page
+  names?: { manager: string; owner: string; office?: string }; // from the owner's settings, for the page
 }
 
 export const MAX_ROOMS = 12;
@@ -87,6 +87,7 @@ export function layoutFloor(
     onFloor?: number; // how many projects get rooms (the rest are archived); default MAX_ROOMS
     managerName?: string; // the name the owner gave the manager (settings)
     ownerName?: string; // the owner's name (settings)
+    officeName?: string; // the office's name (settings)
     github?: boolean; // the GitHub keeper is switched on (settings): Otto's room is on the floor
     coffee?: boolean; // the coffee room is switched on (settings)
   } = {},
@@ -181,5 +182,5 @@ export function layoutFloor(
   ];
 
   const right = Math.max(...rooms.map((r) => r.x + r.w));
-  return { width: Math.max(width, right + GAP), height: y + 2, door: { x: manager.x + 5, y: 0 }, rooms, agents, generatedAt: now, names: { manager: extras.managerName ?? 'Manager', owner: extras.ownerName ?? 'Owner' } };
+  return { width: Math.max(width, right + GAP), height: y + 2, door: { x: manager.x + 5, y: 0 }, rooms, agents, generatedAt: now, names: { manager: extras.managerName ?? 'Manager', owner: extras.ownerName ?? 'Owner', office: extras.officeName ?? 'Tiny HQ' } };
 }
