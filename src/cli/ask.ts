@@ -7,11 +7,11 @@
 //   ask --room "<room folder>" "<question>" --choices ...   (The manager: the button goes over that room's
 //                                 head, and the owner's pick still comes back to your own chat)
 //   ask list
-//   ask cancel                    (this folder's open questions, and any you put over a room)
+//   ask cancel [<id>]             (one question by its id; bare: your open questions in this folder, and any you put over a room)
 
 import { normTarget } from '../team/posts.ts';
 import { realpathSync, statSync } from 'node:fs';
-import { MANAGER_NOTES_DIR } from '../paths.ts';
+import { MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
 import { addAsk, afterCancel, asksPath, loadAsks, MAX_OPTIONS, roomsOwnQuestion, saveAsks, validOptions } from '../team/asks.ts';
 
@@ -57,7 +57,12 @@ if (args[0] === 'list') {
   if (!asks.length) console.log('No open questions.');
   for (const a of asks) console.log(`${a.id}  ${a.folder}  ${a.question}${a.options ? `  [${a.options.join(' | ')}]` : ''}`);
 } else if (args[0] === 'cancel') {
-  const left = afterCancel(asks, folder, me, askedFor);
+  const id = args[1] && /^[a-z0-9]{6,16}$/.test(args[1]) ? args[1] : undefined;
+  if (args[1] && !id) {
+    console.error('usage: ask cancel [<question id from ask list>]');
+    process.exit(2);
+  }
+  const left = afterCancel(asks, folder, me, askedFor, id, folder === realpathSync(MANAGER_DIR));
   saveAsks(path, left);
   console.log(`Cancelled ${asks.length - left.length} open question${asks.length - left.length === 1 ? '' : 's'}.`);
 } else {

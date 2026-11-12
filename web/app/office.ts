@@ -757,6 +757,13 @@ export class Office {
     setTimeout(() => this.update(id, text, at), 900);
   }
 
+  // Pictures someone's latest message points at.
+  pictures(id: string, at: string, n: number, load: (who: string, i: number) => Promise<string | undefined>): void {
+    if (!this.bubbles) return;
+    this.bubbles.loadPicture = load;
+    this.bubbles.setPictures(id, at, n);
+  }
+
   // Their latest message (a "!" over them until the owner reads it), without any fuss.
   update(id: string, text: string, at: string): void {
     const p = this.people.get(id);

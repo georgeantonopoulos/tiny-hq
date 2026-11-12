@@ -15,7 +15,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createReadStream, mkdirSync, openSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { tokenMatches } from './token.ts';
@@ -31,8 +31,10 @@ export interface DaemonDeps {
   sessions?: () => Promise<Record<string, 'busy' | 'idle'>>;
   // The owner picks the model for a room's Claude.
   setModel?: (projectPath: string, model: string) => Promise<{ applied: 'now' | 'next' }>;
-  // Person id -> the last thing their session said (The manager's speech bubble).
-  said?: () => Promise<Record<string, { text: string; at: string }>>;
+  // Person id -> the last thing their session said (the manager's speech bubble).
+  said?: () => Promise<Record<string, { text: string; at: string; images?: number }>>;
+  // The i-th picture the person's last message points at (a path the office found in it), if any.
+  saidImage?: (who: string, i: number) => string | undefined;
   // Person id -> what their blocked session is waiting for the owner on (permission or question).
   waiting?: () => Promise<Record<string, { kind: string; text: string }>>;
   // The manager's timetable: the scheduled tasks, and the owner switching one on or off.
@@ -78,6 +80,8 @@ const CODE_TTL_MS = 60_000;
 
 const MAX_BODY = 64 * 1024;
 
+const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
@@ -105,8 +109,28 @@ async function readText(req: IncomingMessage): Promise<string> {
 const MAX_IMAGE = 15 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 export const PASTES_DIR = join(homedir(), '.tiny-hq', 'pastes');
+// Documents the owner attaches from the page, phone included: Claude reads them from the path.
+const MAX_DOC = 30 * 1024 * 1024;
+const DOC_EXTS = new Set(['pdf', 'txt', 'md', 'csv', 'json', 'rtf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic']);
+// The file's own name, made safe: letters, digits, dot, dash, underscore; the extension kept.
+export function attachName(raw: string): { base: string; ext: string } | undefined {
+  let name = raw;
+  try {
+    name = decodeURIComponent(raw);
+  } catch {
+    /* as given */
+  }
+  name = name.split(/[\\/]/).pop() ?? '';
+  const m = /^(.*?)\.([A-Za-z0-9]{1,5})$/.exec(name.trim());
+  if (!m) return undefined;
+  const ext = m[2]!.toLowerCase();
+  if (!DOC_EXTS.has(ext)) return undefined;
+  // Letters in any language stay (a file named in Greek or Japanese keeps its name).
+  const base = m[1]!.normalize('NFC').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^[-.]+|-+$/g, '').slice(0, 60) || 'file';
+  return { base, ext };
+}
 
-function savePastedImage(bytes: Buffer, ext: string, dir = PASTES_DIR): string {
+function savePastedImage(bytes: Buffer, ext: string, dir = PASTES_DIR, name = ''): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   // Old pastes go after a week.
   for (const f of readdirSync(dir)) {
@@ -116,7 +140,7 @@ function savePastedImage(bytes: Buffer, ext: string, dir = PASTES_DIR): string {
       /* already gone */
     }
   }
-  const path = join(dir, `paste-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomBytes(3).toString('hex')}.${ext}`);
+  const path = join(dir, `paste-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomBytes(3).toString('hex')}${name ? `-${name}` : ''}.${ext}`);
   writeFileSync(path, bytes, { mode: 0o600 });
   return path;
 }
@@ -282,6 +306,27 @@ export function createDaemon(deps: DaemonDeps): Server {
     if (req.method === 'GET' && url.pathname === '/api/board' && deps.board) {
       return send(res, 200, await deps.board());
     }
+    // A picture from someone's last message, for their bubble. Only a path the office itself
+    // found in that message, only image files, at most 20 MB.
+    if (req.method === 'GET' && url.pathname === '/api/said-image' && deps.saidImage) {
+      const who = url.searchParams.get('who') ?? '';
+      const i = Number(url.searchParams.get('i'));
+      const file = Number.isInteger(i) && i >= 0 && i < 4 ? deps.saidImage(who, i) : undefined;
+      const type = file ? IMAGE_MIME[(file.match(/\.([a-z]+)$/i)?.[1] ?? '').toLowerCase()] : undefined;
+      if (!file || !type) return send(res, 404, { error: 'no such picture' });
+      try {
+        const st = statSync(file);
+        if (!st.isFile() || st.size > 20 * 1024 * 1024) return send(res, 404, { error: 'no such picture' });
+        // Opened before the reply starts, so a picture the office can see but not read (a protected
+        // folder, or gone since) is a 404; a read error later only ends this reply, never the office.
+        const fd = openSync(file, 'r');
+        res.writeHead(200, { 'content-type': type, 'content-length': String(st.size), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+        createReadStream('', { fd }).on('error', () => res.destroy()).pipe(res);
+      } catch {
+        send(res, 404, { error: 'no such picture' });
+      }
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/sessions' && deps.sessions) {
       const [sessions, said, waiting, asks] = await Promise.all([deps.sessions(), deps.said ? deps.said().catch(() => ({})) : Promise.resolve({}), deps.waiting ? deps.waiting().catch(() => ({})) : Promise.resolve(undefined), deps.asks ? deps.asks.list().catch(() => ({})) : Promise.resolve(undefined)]);
       const lastDone = deps.lastDone?.();
@@ -411,6 +456,26 @@ export function createDaemon(deps: DaemonDeps): Server {
       term.write(`\x1b[200~${path}\x1b[201~`);
       if (remote) audit(rc!.auditPath, { event: 'image', bytes: bytes.length, device: device!.id });
       return send(res, 200, { ok: true });
+    }
+    // A file attached from the page (the paperclip, or a dropped/pasted document): saved on the Mac
+    // and its path pasted into the chat, where Claude reads it. Pictures are attached as images.
+    const fm = /^\/api\/term\/([0-9a-f-]{36})\/file$/.exec(url.pathname);
+    if (deps.terminal && fm && req.method === 'POST') {
+      const term = deps.terminal.get(fm[1]!);
+      if (!term) return send(res, 404, { error: 'terminal closed' });
+      const named = attachName(String(req.headers['x-filename'] ?? ''));
+      if (!named) return send(res, 415, { error: 'only pictures, PDFs, text, Word, Excel or PowerPoint files' });
+      let bytes: Buffer;
+      try {
+        bytes = await readBytes(req, MAX_DOC);
+      } catch {
+        return send(res, 413, { error: 'file too large (30 MB max)' });
+      }
+      if (!bytes.length) return send(res, 400, { error: 'empty file' });
+      const path = savePastedImage(bytes, named.ext, PASTES_DIR, named.base);
+      term.write(`\x1b[200~${path} \x1b[201~`);
+      if (remote) audit(rc!.auditPath, { event: 'file', ext: named.ext, bytes: bytes.length, device: device!.id });
+      return send(res, 200, { ok: true, name: `${named.base}.${named.ext}` });
     }
     const tm = /^\/api\/term\/([0-9a-f-]{36})\/(stream|input|resize|close)$/.exec(url.pathname);
     if (deps.terminal && tm) {

@@ -102,6 +102,36 @@ export class Bubbles {
     return old === (plain.length > 260 ? `${plain.slice(0, 259)}…` : plain);
   }
 
+  // Pictures their latest message points at: how many, for which message, and how to fetch one.
+  private pictures = new Map<string, { at: string; n: number }>();
+  loadPicture?: (who: string, i: number) => Promise<string | undefined>;
+  // One loaded copy of each picture of a person's current message, reused when the bubble reopens and
+  // released (revoked) once their message changes, so pictures never pile up in the page's memory.
+  private picUrls = new Map<string, Promise<string | undefined>>();
+  private picture(id: string, at: string, i: number): Promise<string | undefined> {
+    const key = `${id}\n${at}\n${i}`;
+    let url = this.picUrls.get(key);
+    if (!url) {
+      url = this.loadPicture!(id, i).catch(() => undefined);
+      this.picUrls.set(key, url);
+    }
+    return url;
+  }
+  private dropPictures(id: string, at: string): void {
+    for (const [key, url] of this.picUrls) {
+      if (!key.startsWith(`${id}\n${at}\n`)) continue;
+      this.picUrls.delete(key);
+      void url.then((u) => u && URL.revokeObjectURL(u)); // also one still loading when the message changed
+    }
+  }
+  setPictures(id: string, at: string, n: number): void {
+    const was = this.pictures.get(id);
+    if (was && (was.at !== at || n === 0)) this.dropPictures(id, was.at); // a new message: the old pictures go
+    if (n > 0) this.pictures.set(id, { at, n });
+    else this.pictures.delete(id);
+    if ((was?.n ?? 0) !== n && this.panel?.id === id && this.panel.mode === 'msg') this.openMessage(id);
+  }
+
   // Their latest message. New ones get a "!" until the owner opens them.
   update(speaker: Speaker, text: string, at: string): void {
     const p = this.person(speaker);
@@ -269,6 +299,34 @@ export class Bubbles {
     body.className = 'said scroll';
     body.textContent = readable(p.line.text);
     el.append(body);
+    const pics = this.pictures.get(id);
+    if (pics && pics.at === p.line.at && this.loadPicture) {
+      const row = document.createElement('div');
+      row.className = 'pics';
+      for (let i = 0; i < pics.n; i++) {
+        const img = document.createElement('img');
+        img.alt = `Picture ${i + 1} from ${p.speaker.name}`;
+        img.title = 'Tap to see it full size';
+        row.append(img);
+        void this.picture(id, pics.at, i).then((url) => {
+          if (url) img.src = url;
+          else img.remove();
+        });
+        img.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!img.src) return;
+          const big = document.createElement('div');
+          big.className = 'pic-full';
+          const full = document.createElement('img');
+          full.src = img.src;
+          full.alt = img.alt;
+          big.append(full);
+          big.addEventListener('click', () => big.remove());
+          document.body.append(big);
+        });
+      }
+      body.append(row);
+    }
     const keep = this.panel?.id === id && this.panel.mode === 'msg' ? this.panel.el.querySelector('.scroll')?.scrollTop : undefined;
     this.show({ id, mode: 'msg', el, key: p.line.at });
     if (keep !== undefined) body.scrollTop = keep; // the same bubble refreshed: don't jump to the top

@@ -378,3 +378,13 @@ body.resizing { user-select: none; }
 
 /* A post's exact text on its button. */
 .post-text { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: #8881; white-space: pre-wrap; font-size: 13px; }
+
+/* Pictures a message points at: thumbnails under the text, tap for full size. */
+.pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pics img { max-width: 100%; max-height: 160px; border-radius: 6px; border: 1px solid #8884; cursor: zoom-in; background: #8881; }
+.pic-full { position: fixed; inset: 0; z-index: 1000; background: #000c; display: flex; align-items: center; justify-content: center; cursor: zoom-out; padding: 12px; }
+.pic-full img { max-width: 100%; max-height: 100%; object-fit: contain; }
+/* The paperclip: attach a picture, PDF or document to the chat (from the phone too). */
+#term-attach { cursor: pointer; }
+#term-attach:hover { color: var(--text); background: #ffffff1a; border-color: var(--line); }
+#term-attach svg { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }

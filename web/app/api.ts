@@ -34,6 +34,16 @@ export class Api {
     this.token = token;
   }
 
+  // A picture from someone's last message, as a page-local URL; undefined if it's gone.
+  async saidImage(who: string, i: number): Promise<string | undefined> {
+    try {
+      const r = await fetch(`/api/said-image?who=${encodeURIComponent(who)}&i=${i}`, { headers: this.headers() });
+      return r.ok ? URL.createObjectURL(await r.blob()) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return { authorization: `Bearer ${this.token}`, ...extra };
   }
@@ -111,12 +121,12 @@ export class Api {
   }
 
   // Who has a running Claude session: "manager" for the manager, "lead:<room>" per project.
-  // ...and the last thing each said (The manager's speech bubble).
-  async sessions(): Promise<{ sessions: Record<string, 'busy' | 'idle'>; said: Record<string, { text: string; at: string; to?: string }>; waiting: Record<string, { kind: string; text: string }>; asks: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string }>; lastDone?: number; deskUnread: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } }> {
+  // ...and the last thing each said (the manager's speech bubble).
+  async sessions(): Promise<{ sessions: Record<string, 'busy' | 'idle'>; said: Record<string, { text: string; at: string; to?: string; images?: number }>; waiting: Record<string, { kind: string; text: string }>; asks: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string }>; lastDone?: number; deskUnread: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } }> {
     const r = await fetch('/api/sessions', { headers: this.headers() });
     if (r.status === 401 || r.status === 403) throw new AuthError(`sessions: ${r.status}`);
     if (!r.ok) throw new Error(`sessions: ${r.status}`); // the page keeps what it last knew
-    const body = (await r.json()) as { sessions: Record<string, 'busy' | 'idle'>; said?: Record<string, { text: string; at: string; to?: string }>; waiting?: Record<string, { kind: string; text: string }>; asks?: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string }>; lastDone?: number; deskUnread?: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } };
+    const body = (await r.json()) as { sessions: Record<string, 'busy' | 'idle'>; said?: Record<string, { text: string; at: string; to?: string; images?: number }>; waiting?: Record<string, { kind: string; text: string }>; asks?: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string }>; lastDone?: number; deskUnread?: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } };
     return { sessions: body.sessions, said: body.said ?? {}, waiting: body.waiting ?? {}, asks: body.asks ?? {}, ...(body.lastDone ? { lastDone: body.lastDone } : {}), deskUnread: body.deskUnread ?? 0, ...(body.coffee ? { coffee: body.coffee } : {}) };
   }
 
@@ -216,6 +226,11 @@ export class Api {
   }
 
   // An image pasted or dropped on the terminal: the Mac saves it and pastes its path into Claude.
+  // A file attached from the page (paperclip, or a dropped/pasted document): same, any allowed type.
+  termFile(termId: string, file: File): Promise<Response> {
+    return fetch(`/api/term/${termId}/file`, { method: 'POST', headers: this.headers({ 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(file.name || 'file') }), body: file });
+  }
+
   termImage(termId: string, image: Blob): Promise<Response> {
     return fetch(`/api/term/${termId}/image`, { method: 'POST', headers: this.headers({ 'content-type': image.type }), body: image });
   }

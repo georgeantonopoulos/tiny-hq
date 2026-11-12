@@ -64,11 +64,23 @@ export function validJob(j: unknown): Job | undefined {
   return job;
 }
 
+// The file keeps every open job and the newest finished ones, up to MAX_JOBS in all. (It used to keep
+// the first 50 in file order, so with 50 jobs on file, mostly done, every new job was the one dropped:
+// the newest job was invisible to job list, nudges and the whiteboard.)
+export const MAX_JOBS = 50;
+export function keepJobs(all: Job[]): Job[] {
+  const done = all.filter((j) => j.status === 'done').sort((a, b) => b.updatedAt - a.updatedAt);
+  const room = Math.max(0, MAX_JOBS - all.filter((j) => j.status !== 'done').length);
+  const keepDone = new Set(done.slice(0, room).map((j) => j.id));
+  return all.filter((j) => j.status !== 'done' || keepDone.has(j.id));
+}
+
 export function loadJobs(path: string): Job[] {
   try {
     const raw = JSON.parse(readFileSync(path, 'utf8')) as { jobs?: unknown };
     const seen = new Set<string>();
-    return (Array.isArray(raw.jobs) ? raw.jobs : []).map(validJob).filter((j): j is Job => !!j && !seen.has(j.id) && !!seen.add(j.id)).slice(0, 50);
+    const all = (Array.isArray(raw.jobs) ? raw.jobs : []).map(validJob).filter((j): j is Job => !!j && !seen.has(j.id) && !!seen.add(j.id));
+    return keepJobs(all);
   } catch {
     return [];
   }
@@ -225,7 +237,7 @@ export function nudgeLine(job: Job, cli: string, brief = `~/.tiny-hq/manager/job
       `Do the next step yourself now, and keep going until it's done: you have the owner's logged-in Chrome for websites and consoles (store consoles, dashboards), plus the terminal and your tools. ` +
       `The only things you must never do: send an email (or a message to a person outside the office), or put anything on a public site (post, comment, reply, review, DM): draft it and get the owner's yes for that exact text with manager/ask (--why send, or --why post with --text "<the exact text>" --target <owner/repo#N or page URL>: posts are button-only). ` +
       `Don't hand the owner a step you can do yourself: a sign-in their Chrome already has, an upload, a form or a console button is yours; a broken tool or connector goes to the manager as an office fault. ` +
-      `Only if it's an email to send, a public post, a payment, a choice that's theirs, or a password or 2-factor code you can't get past, run: ${cli} wait ${job.id} "<the one thing the owner must do>" --why <send|post|pay|choice|permission|password> --tried "<what you already tried>". ` +
+      `Only if it's an email to send, a public post, a payment, a choice that's theirs, or a password or 2-factor code you can't get past, run: ${cli} wait ${job.id} "<the one thing the owner must do>" --why <send|post|pay|choice|permission|password> --tried "<what you already tried>" (for a post add --text "<the exact text>" --target <owner/repo#N or page URL>: their Approve then lets exactly that go up there, once). ` +
       `When it's done, run: ${cli} done ${job.id} and report to the manager.`,
     2000,
   );

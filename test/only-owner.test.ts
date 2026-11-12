@@ -64,6 +64,29 @@ test('job wait refuses without proof and leaves the job active', () => {
   assert.equal(asks(dir)[0]!.tried, 'Opened pypi.org in Chrome: signed out, password box');
 });
 
+// A post approved on a job-wait button used to give no pass, so the guard refused it and the owner
+// had to click again. A post's job wait now carries its text and place.
+test('job wait for a post needs its text and place, and its button carries them for the pass', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-only-'));
+  mkdirSync(join(dir, 'manager'));
+  const file = join(dir, 'manager', 'jobs.json');
+  writeFileSync(file, JSON.stringify({ jobs: [{ id: 'codex44', room: dir, title: 'Codex on #44', done: 'reviewed', status: 'active', createdAt: 1, updatedAt: 1 }] }));
+  const no = run('job', dir, 'wait', 'codex44', 'Approve @codex review on #44', '--why', 'post', '--tried', 'Fix pushed, tests green');
+  assert.equal(no.code, 2);
+  assert.match(no.out, /--text[\s\S]*--target/);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).jobs[0].status, 'active');
+  const ok = run('job', dir, 'wait', 'codex44', 'Approve @codex review on #44', '--why', 'post', '--tried', 'Fix pushed, tests green', '--text', '@codex review', '--target', 'o/lumen#44');
+  assert.equal(ok.code, 0, ok.out);
+  const a = asks(dir)[0] as { job?: string; post?: string; target?: string };
+  assert.deepEqual([a.job, a.post, a.target], ['codex44', '@codex review', 'o/lumen#44']);
+  // It rides on the room's own button only when that button is the very same post.
+  const { oneQuestionPerJob, validAsk } = await import('../src/team/asks.ts');
+  const own = (post: string) => validAsk({ id: 'ownaaaaa', folder: dir, question: 'May I post on #44?', createdAt: 1, why: 'post', tried: 't', post, target: 'o/lumen#44' })!;
+  const jobAsk = validAsk({ id: 'jobaaaaa', folder: dir, question: 'Approve @codex review on #44', createdAt: 2, job: 'codex44', why: 'post', tried: 't', post: '@codex review', target: 'o/lumen#44' })!;
+  assert.equal(oneQuestionPerJob([own('@codex review please'), jobAsk]).length, 2);
+  assert.deepEqual(oneQuestionPerJob([own('@codex review'), jobAsk]).map((x) => [x.id, x.forJob]), [['ownaaaaa', 'codex44']]);
+});
+
 test('left-over sessions are the office\'s to close, never the owner\'s', () => {
   const now = 10 * LEFTOVER_QUIET_MS;
   const ids = leftovers(

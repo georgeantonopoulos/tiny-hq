@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDaemon } from '../src/daemon/server.ts';
+import { createDaemon, PASTES_DIR } from '../src/daemon/server.ts';
 import { loadOrCreateToken } from '../src/daemon/token.ts';
 
 function call(port: number, path: string, opts: { method?: string; headers?: Record<string, string>; body?: string; host?: string } = {}) {
@@ -135,6 +135,17 @@ test('terminals: token needed, bad requests refused, input and stream reach the 
     assert.ok(pasted, 'the path goes in as a paste');
     assert.equal(readFileSync(pasted[1]!, 'utf8'), 'fakepng');
     unlinkSync(pasted[1]!);
+    // A document from the paperclip (from a phone too): saved under its own name, path pasted.
+    const doc = (name: string) => call(port, `/api/term/${term.id}/file`, { method: 'POST', headers: { authorization: 'Bearer t', 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(name) }, body: '%PDF-1' });
+    assert.equal((await doc('notes.exe')).status, 415);
+    assert.equal((await doc('../../etc/passwd')).status, 415);
+    const pdf = await doc('Ομάδα notes/../Σελίδα 3.pdf');
+    assert.equal(pdf.status, 200);
+    const filed = /^\x1b\[200~(\/.+\/paste-[^/]+-Σελίδα-3\.pdf) \x1b\[201~$/.exec(written.at(-1)!);
+    assert.ok(filed, written.at(-1));
+    assert.equal(readFileSync(filed[1]!, 'utf8'), '%PDF-1');
+    assert.ok(!filed[1]!.includes('..') && filed[1]!.startsWith(PASTES_DIR));
+    unlinkSync(filed[1]!);
     written.length = 1;
     assert.equal((await post('/api/term/22222222-2222-4222-8222-222222222222/input', { data: 'x' })).status, 404, 'unknown terminal');
     assert.equal((await call(port, `/api/term/${term.id}/input`, { headers })).status, 405);
@@ -320,5 +331,32 @@ test('model picker: token needed, bad requests refused, choice passed on', async
     assert.deepEqual(picked, [['/p', 'sonnet']]);
   } finally {
     d.close();
+  }
+});
+
+// A picture the office can see but not read (a protected folder, or gone since) is a 404, and the
+// office keeps running; only the pictures found in that person's message are served.
+test('daemon: a bubble picture it cannot read is a 404, never a crash', async () => {
+  const { chmodSync, writeFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'th-pic-'));
+  const ok = join(dir, 'ok.png');
+  const locked = join(dir, 'locked.png');
+  writeFileSync(ok, 'png');
+  writeFileSync(locked, 'png');
+  chmodSync(locked, 0o000);
+  const port = await freePort();
+  const d = createDaemon({ token: 't', port, floor: () => ({ rooms: [] }), saidImage: (who: string, i: number) => (who === 'manager' ? [ok, locked][i] : undefined) });
+  await new Promise<void>((r) => d.listen(port, '127.0.0.1', r));
+  const auth = { authorization: 'Bearer t' };
+  try {
+    assert.equal((await call(port, '/api/said-image?who=manager&i=0')).status, 401);
+    assert.equal((await call(port, '/api/said-image?who=manager&i=0', { headers: auth })).status, 200);
+    assert.equal((await call(port, '/api/said-image?who=manager&i=1', { headers: auth })).status, 404);
+    assert.equal((await call(port, '/api/said-image?who=lead:x&i=0', { headers: auth })).status, 404);
+    assert.equal((await call(port, '/api/said-image?who=manager&i=7', { headers: auth })).status, 404);
+    assert.equal((await call(port, '/health')).status, 200, 'still running');
+  } finally {
+    chmodSync(locked, 0o600);
+    await new Promise((r) => d.close(r));
   }
 });
