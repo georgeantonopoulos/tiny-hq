@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG, STYLES, cleanName, loadConfig, saveConfig, type Config,
 import { LABEL, OPEN_LABEL, openPlist, plist } from '../daemon/launchd.ts';
 import { discoverProjects, findRepos, isGone, isPlainPath, scanClaude } from '../discovery/scan.ts';
 import { MAX_ROOMS } from '../office/layout.ts';
+import { usageMeterBin } from './tools.ts';
 import { HOOKS, MARK, installedHooks, linkSkill, loadAgent, loadInstalled, readSettings, saveInstalled, skillLink, unlinkSkill, unloadAgent, withHooks, writeSettings, type HookSpec } from './install.ts';
 
 export const tilde = (p: string) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
@@ -183,6 +184,9 @@ export function applySetup(ch: SetupChoices, opts: { outside: boolean; activity?
   if (ch.briefing) config.briefingTime = before.briefingTime ?? DEFAULT_CONFIG.briefingTime;
   else delete config.briefingTime;
   if (ch.rooms) config = withRooms(config, ch.rooms, opts.activity);
+  // A usage app on this Mac (see tools.ts): the usage bar and goal pacing read it, unless a meter is set already.
+  const bar = usageMeterBin();
+  if (!config.usageCommand && bar) config.usageCommand = [bar, 'usage', '--provider', '{provider}', '--json-only'];
   saveConfig(CONFIG_PATH, config);
   // The office's commands run from Claude Code sessions whose PATH may not have this Node (nvm, a GUI launch).
   writeFileSync(join(DATA_DIR, 'node'), process.execPath + '\n', { mode: 0o600 });

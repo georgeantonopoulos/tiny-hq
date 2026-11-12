@@ -100,7 +100,9 @@ test('the welcome server needs its key, serves only its own files, and hands ove
   const { folders } = (await (await fetch(`${origin}/api/welcome/folders`, { headers: auth })).json()) as { folders: { path: string; count: number }[] };
   assert.deepEqual(folders, [{ path: join(home, 'Dev'), label: '~/Dev', count: 2 }]);
   const tools = (await (await fetch(`${origin}/api/welcome/tools`, { headers: auth })).json()) as { tools: { id: string }[] };
-  assert.deepEqual(tools.tools.map((t) => t.id), ['gh', 'codex', 'obsidian', 'tailscale']);
+  const { TOOLS } = await import('../src/cli/tools.ts');
+  assert.deepEqual(tools.tools.map((t) => t.id), TOOLS.map((t) => t.id));
+  assert.equal(tools.tools.length, 6);
   const odd = await fetch(`${origin}/api/welcome/tools/install`, { method: 'POST', headers: auth, body: JSON.stringify({ id: 'rm -rf' }) });
   assert.equal(odd.status, 400, 'only tools from the list');
   const { rooms } = (await (await fetch(`${origin}/api/welcome/rooms?roots=${encodeURIComponent(join(home, 'Dev'))}`, { headers: auth })).json()) as { rooms: { path: string; name: string }[] };
