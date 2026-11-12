@@ -112,7 +112,7 @@ export function briefTemplate(job: Pick<Job, 'id' | 'title' | 'done' | 'room'>):
     '',
     '## Rules and limits',
     '- No email (or message to a person outside the office) is sent without the owner: draft only.',
-    "- Nothing goes on a public site (post, comment, reply, review, DM, upload) without the owner's yes for that exact text: put the text to them with manager/ask \"<what and where>\" --why post --tried \"<...>\" --text \"<the exact text>\" (posts are button-only: only their Approve on that exact text lets it through, once).",
+    "- Nothing goes on a public site (post, comment, reply, review, DM, upload) without the owner's yes for that exact text: put the text to them with manager/ask \"<what and where>\" --why post --tried \"<...>\" --text \"<the exact text>\" --target <owner/repo#N, owner/repo for a new issue, or the page URL> (posts are button-only, each pass for that one place: only their Approve on that exact text lets it through, once).",
     "- Every other step of this job is the room's to do, Chrome consoles and sign-ins their Chrome already has included. A broken office tool goes to the manager as an office fault. Need a yes from the owner: manager/ask --why <reason> --tried \"<what you tried>\".",
     '',
     '## Open questions',
@@ -223,7 +223,7 @@ export function nudgeLine(job: Job, cli: string, brief = `~/.tiny-hq/manager/job
     `[Office: job "${job.title}" is not done yet] Done means: ${job.done}. ` +
       `First read the job brief, ${brief}, and add a line to its Progress as you go (${cli} note ${job.id} "<what happened>"). ` +
       `Do the next step yourself now, and keep going until it's done: you have the owner's logged-in Chrome for websites and consoles (store consoles, dashboards), plus the terminal and your tools. ` +
-      `The only things you must never do: send an email (or a message to a person outside the office), or put anything on a public site (post, comment, reply, review, DM): draft it and get the owner's yes for that exact text with manager/ask (--why send, or --why post with --text "<the exact text>": posts are button-only). ` +
+      `The only things you must never do: send an email (or a message to a person outside the office), or put anything on a public site (post, comment, reply, review, DM): draft it and get the owner's yes for that exact text with manager/ask (--why send, or --why post with --text "<the exact text>" --target <owner/repo#N or page URL>: posts are button-only). ` +
       `Don't hand the owner a step you can do yourself: a sign-in their Chrome already has, an upload, a form or a console button is yours; a broken tool or connector goes to the manager as an office fault. ` +
       `Only if it's an email to send, a public post, a payment, a choice that's theirs, or a password or 2-factor code you can't get past, run: ${cli} wait ${job.id} "<the one thing the owner must do>" --why <send|post|pay|choice|permission|password> --tried "<what you already tried>". ` +
       `When it's done, run: ${cli} done ${job.id} and report to the manager.`,

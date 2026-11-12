@@ -112,11 +112,11 @@ export class Api {
 
   // Who has a running Claude session: "manager" for the manager, "lead:<room>" per project.
   // ...and the last thing each said (The manager's speech bubble).
-  async sessions(): Promise<{ sessions: Record<string, 'busy' | 'idle'>; said: Record<string, { text: string; at: string; to?: string }>; waiting: Record<string, { kind: string; text: string }>; asks: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string }>; lastDone?: number; deskUnread: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } }> {
+  async sessions(): Promise<{ sessions: Record<string, 'busy' | 'idle'>; said: Record<string, { text: string; at: string; to?: string }>; waiting: Record<string, { kind: string; text: string }>; asks: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string }>; lastDone?: number; deskUnread: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } }> {
     const r = await fetch('/api/sessions', { headers: this.headers() });
     if (r.status === 401 || r.status === 403) throw new AuthError(`sessions: ${r.status}`);
     if (!r.ok) throw new Error(`sessions: ${r.status}`); // the page keeps what it last knew
-    const body = (await r.json()) as { sessions: Record<string, 'busy' | 'idle'>; said?: Record<string, { text: string; at: string; to?: string }>; waiting?: Record<string, { kind: string; text: string }>; asks?: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string }>; lastDone?: number; deskUnread?: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } };
+    const body = (await r.json()) as { sessions: Record<string, 'busy' | 'idle'>; said?: Record<string, { text: string; at: string; to?: string }>; waiting?: Record<string, { kind: string; text: string }>; asks?: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string }>; lastDone?: number; deskUnread?: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } };
     return { sessions: body.sessions, said: body.said ?? {}, waiting: body.waiting ?? {}, asks: body.asks ?? {}, ...(body.lastDone ? { lastDone: body.lastDone } : {}), deskUnread: body.deskUnread ?? 0, ...(body.coffee ? { coffee: body.coffee } : {}) };
   }
 

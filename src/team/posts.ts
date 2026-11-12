@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 export const PASS_TTL_MS = 2 * 60 * 60_000;
 export const approvalsPath = (dataDir: string) => join(dataDir, 'post-approvals.json');
 
-type Pass = { text: string; from: string; at: number; expires: number; usedAt?: number; session?: string };
+type Pass = { text: string; from: string; target?: string; at: number; expires: number; usedAt?: number; session?: string };
 
 function withLock(path: string, fn: () => void): void {
   const lock = `${path}.lock`;
@@ -45,7 +45,24 @@ function withLock(path: string, fn: () => void): void {
   }
 }
 
-export function grantPass(path: string, text: string, from: string, now = Date.now()): void {
+// Where a post goes: the same reading as hooks/post-approvals.mjs normTarget (a test keeps them alike).
+export function normTarget(t: string | undefined): string {
+  const s = String(t ?? '').trim();
+  if (!s) return '';
+  let m = s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9-]+)\/([\w.-]+?)(?:\.git)?(?:\/(?:pull|pulls|issues)\/(\d+))?(?:[/?#].*)?$/i);
+  if (!m) m = s.match(/^([A-Za-z0-9-]+)\/([\w.-]+?)(?:\.git)?(?:#(\d+))?$/);
+  if (m) return `${m[1]}/${m[2]}`.toLowerCase() + (m[3] ? `#${Number(m[3])}` : '');
+  if (!/^https?:\/\//i.test(s)) return '';
+  try {
+    const u = new URL(s);
+    u.searchParams.sort();
+    return `https://${u.hostname.toLowerCase().replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+  } catch {
+    return '';
+  }
+}
+
+export function grantPass(path: string, text: string, from: string, now = Date.now(), target = ''): void {
   withLock(path, () => {
     let list: Pass[] = [];
     try {
@@ -56,9 +73,10 @@ export function grantPass(path: string, text: string, from: string, now = Date.n
     }
     const keep = list.filter((p) => p && typeof p.expires === 'number' && p.expires > now - 24 * 60 * 60_000).slice(-50);
     // One decision, one pass: an Approve delivered twice (a retry) doesn't make a second one.
-    if (keep.some((p) => !p.usedAt && p.expires > now && p.text === text && p.from === from)) return;
+    const where = normTarget(target);
+    if (keep.some((p) => !p.usedAt && p.expires > now && p.text === text && p.from === from && (p.target ?? '') === where)) return;
     const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify([...keep, { text, from, at: now, expires: now + PASS_TTL_MS }], null, 2) + '\n', { mode: 0o600 });
+    writeFileSync(tmp, JSON.stringify([...keep, { text, from, target: where, at: now, expires: now + PASS_TTL_MS }], null, 2) + '\n', { mode: 0o600 });
     renameSync(tmp, path);
   });
 }

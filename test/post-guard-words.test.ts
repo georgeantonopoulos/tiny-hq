@@ -30,3 +30,21 @@ test('only words the shell runs as programs count: a search or an echo that ment
     'nohup gh gist create notes.md',
   ]) assert.ok(post(cmd), cmd);
 });
+
+// The pass lock: one just taken by another hook (its time not written yet) is never taken over, so
+// one pass can't be used twice; a lock abandoned for over 10 s is.
+test('a pass lock that was only just taken is respected; an abandoned one is taken over', async () => {
+  const { mkdtempSync, mkdirSync, utimesSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error: a plain .mjs hook, no types
+  const pa = (await import('../hooks/post-approvals.mjs')) as { usePass: (t: string, s: string, now: number, p: string, cwd?: string, where?: unknown, target?: string) => boolean };
+  const path = join(mkdtempSync(join(tmpdir(), 'cm-lock-')), 'passes.json');
+  grantPass(path, 'hello', '/room', Date.now(), 'o/r#1');
+  mkdirSync(`${path}.lock`); // another hook has just taken it
+  assert.throws(() => pa.usePass('hello', 's', Date.now(), path, '/room', undefined, 'o/r#1'), /busy/);
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(`${path}.lock`, old, old); // ...and then crashed long ago
+  assert.equal(pa.usePass('hello', 's', Date.now(), path, '/room', undefined, 'o/r#1'), true);
+});

@@ -21,6 +21,39 @@ export const approvalsPath = (dataDir = process.env.CM_DATA_DIR ?? join(homedir(
 export const sameText = (a, b) => norm(a) === norm(b) && norm(a) !== '';
 const norm = (s) => String(s ?? '').replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
 
+// Where a post goes: "owner/repo#N" for a pull request
+// or issue, "owner/repo" for something new in a repo (a new issue), or a web page "host/path" for a
+// post on another site. GitHub owners have no dots, so "example.com/forum" is never read as a repo.
+// '' when it can't be read.
+export function normTarget(t) {
+  const s = String(t ?? '').trim();
+  if (!s) return '';
+  let m = s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9-]+)\/([\w.-]+?)(?:\.git)?(?:\/(?:pull|pulls|issues)\/(\d+))?(?:[/?#].*)?$/i);
+  if (!m) m = s.match(/^([A-Za-z0-9-]+)\/([\w.-]+?)(?:\.git)?(?:#(\d+))?$/);
+  if (m) return `${m[1]}/${m[2]}`.toLowerCase() + (m[3] ? `#${Number(m[3])}` : '');
+  if (!/^https?:\/\//i.test(s)) return '';
+  try {
+    const u = new URL(s);
+    u.searchParams.sort();
+    return `https://${u.hostname.toLowerCase().replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`;
+  } catch {
+    return '';
+  }
+}
+const isRepoTarget = (t) => /^[a-z0-9-]+\/[\w.-]+(#\d+)?$/.test(t);
+// A pass's target against where the post actually goes: a PR, issue or repo exactly; a site page, or
+// a page under it, with the same query (a thread's ?id=1 is not ?id=2). A pass with no target (from before targets existed) goes nowhere.
+export function sameTarget(pass, actual) {
+  const p = normTarget(pass);
+  const a = normTarget(actual);
+  if (!p || !a) return false;
+  if (isRepoTarget(p) || isRepoTarget(a)) return p === a;
+  const [pp, pq = ''] = p.split('?');
+  const [ap, aq = ''] = a.split('?');
+  if (pq !== aq) return false;
+  return ap === pp || ap.startsWith(`${pp}/`);
+}
+
 export function loadPasses(path = approvalsPath()) {
   try {
     const raw = JSON.parse(readFileSync(path, 'utf8'));
@@ -79,20 +112,20 @@ function locked(path, fn) {
 // Inside the room that asked (or one of its worktrees)?
 const inRoom = (cwd, folder) => !folder || (typeof cwd === 'string' && (cwd === folder || cwd.startsWith(`${folder}/`)));
 
-// the owner's Approve: one pass for this exact text, for the room that asked.
-export function grantPass(text, from, now = Date.now(), path = approvalsPath()) {
+// the owner's Approve: one pass for this exact text, at this target, for the room that asked.
+export function grantPass(text, from, now = Date.now(), path = approvalsPath(), target = '') {
   locked(path, () => {
     const keep = loadPasses(path).filter((p) => p.expires > now - 24 * 60 * 60_000).slice(-50);
-    save(path, [...keep, { text: String(text), from: String(from ?? ''), at: now, expires: now + PASS_TTL_MS }]);
+    save(path, [...keep, { text: String(text), from: String(from ?? ''), target: normTarget(target), at: now, expires: now + PASS_TTL_MS }]);
   });
 }
 
-// Uses up the first unused, unexpired pass for this room whose text matches. `where` notes a browser
-// tab and site, so that tab's Post click may follow. True if there was one.
-export function usePass(text, session, now = Date.now(), path = approvalsPath(), cwd, where) {
+// Uses up the first unused, unexpired pass for this room whose text and target match. `where` notes a
+// browser tab and site, so that tab's Post click may follow. True if there was one.
+export function usePass(text, session, now = Date.now(), path = approvalsPath(), cwd, where, target) {
   return locked(path, () => {
     const list = loadPasses(path);
-    const i = list.findIndex((p) => !p.usedAt && p.expires > now && inRoom(cwd, p.from) && sameText(p.text, text));
+    const i = list.findIndex((p) => !p.usedAt && p.expires > now && inRoom(cwd, p.from) && sameText(p.text, text) && sameTarget(p.target, target));
     if (i < 0) return false;
     list[i] = { ...list[i], usedAt: now, session: String(session ?? ''), ...(where ? { tab: String(where.tab), site: String(where.site) } : {}) };
     save(path, list);

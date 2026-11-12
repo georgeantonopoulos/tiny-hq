@@ -33,6 +33,7 @@ export interface AskInfo {
   more?: number; // further questions from them, waiting their turn
   options?: string[]; // multiple choice; otherwise Approve / No
   post?: string; // a public post's exact text: Approve lets only this go up, once
+  target?: string; // where it goes (owner/repo#N, owner/repo, a page): Approve is for there only
   password?: boolean; // a sign-in only the owner can do: Done, I did it / You sign in (saved passkey or password manager) / No
 }
 
@@ -171,7 +172,7 @@ export class Bubbles {
     // Answered from this page: a check that left before the answer landed can still list it. Ignore that.
     if (this.answered.has(ask.id)) return;
     const p = this.person(speaker);
-    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.post === ask.post;
+    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.post === ask.post && p.ask.target === ask.target;
     if (same) return;
     this.endHappening(speaker.id);
     const isNew = p.ask?.id !== ask.id;
@@ -291,7 +292,9 @@ export class Bubbles {
       // The exact words that would go public: what they approve is exactly this.
       const label = document.createElement('small');
       label.className = 'tried';
-      label.textContent = 'Exact text to post (Approve lets only this go up, once):';
+      label.textContent = ask.target
+        ? `Exact text to post on ${ask.target} (Approve lets only this go up, once, only there):`
+        : 'Exact text to post (no place named, so Approve lets it go up nowhere; the room must ask again with --target):';
       const body = document.createElement('blockquote');
       body.className = 'post-text';
       body.textContent = ask.post;

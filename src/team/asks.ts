@@ -6,6 +6,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { normTarget } from './posts.ts';
 
 export interface Ask {
   id: string; // random, short
@@ -21,6 +22,7 @@ export interface Ask {
   tried?: string; // what the asker already tried, shown to the owner under the question
   askedFor?: true; // put over this room by someone else (The manager's `ask --room`): never the room's own question; the owner's answer goes into the room's chat as their own click (roomLine) and a copy to the session that asked
   post?: string; // --why post: the exact text the owner approves; their Approve gives a one-time pass for it
+  target?: string; // --why post: where it goes (owner/repo#N, owner/repo, or a page URL); the pass is only for there
 }
 
 export const MAX_OPTIONS = 6;
@@ -63,6 +65,7 @@ export function validAsk(a: unknown): Ask | undefined {
     ...(typeof o.tried === 'string' && clean(o.tried, 400) ? { tried: clean(o.tried, 400) } : {}),
     // A post's exact text (button-only posts): kept as written, line breaks included.
     ...(typeof o.post === 'string' && o.why === 'post' && o.post.trim() ? { post: o.post.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, 5000) } : {}),
+    ...(typeof o.target === 'string' && o.why === 'post' && normTarget(o.target) ? { target: normTarget(o.target) } : {}),
     ...(o.askedFor === true && typeof o.sessionId === 'string' ? { askedFor: true as const } : {}),
     ...(validTrust(o.trust) && typeof o.job !== 'string' && !validOptions(o.options) ? { trust: validTrust(o.trust) } : {}),
   };
@@ -111,7 +114,7 @@ export const MAX_ASKS_PER_FOLDER = 5;
 // A new ask joins the folder's open ones. Only the same question again (or a new
 // `job wait` for the same job) replaces its older copy; past five the oldest goes.
 // (It used to replace every ask from the folder: the second question wiped the first.)
-export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string }): Ask[] {
+export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string }): Ask[] {
   const a = validAsk({ id: id.padEnd(6, '0'), folder, question, createdAt: now, sessionId, job, options, ...(askedFor ? { askedFor: true } : {}), ...(trust ? { trust } : {}), ...(proof ?? {}) });
   if (!a) return asks;
   const same = (x: Ask) => x.folder === folder && (x.question === a.question || (!!a.job && x.job === a.job));
@@ -230,10 +233,11 @@ export function afterCancel(asks: Ask[], folder: string, me: string | undefined,
 export function answerLine(ask: Ask, answer: Answer | boolean): string | undefined {
   const a: Answer = typeof answer === 'boolean' ? { yes: answer } : answer;
   if (ask.post && 'yes' in a) {
+    const said = ask.post.length <= 300 ? `"${ask.post}"` : `"${ask.post.slice(0, 200)}…" (the full --text you gave, ${ask.post.length} characters)`;
     return clean(
       a.yes
-        ? `The owner: yes, post exactly this: "${ask.question}". (They clicked Approve on the button over your head in the office, on this exact text.) The office gave you a one-time pass for it, good for 2 hours: post it once, exactly as approved (same words), on its own; anything else is still refused.`
-        : `The owner: no, don't post it: "${ask.question}". (They clicked No on the button over your head.) Nothing goes up; tell the manager if something else should.`,
+        ? `The owner: yes, post exactly this: ${said}${ask.target ? ` on ${ask.target}` : ''}. (They clicked Approve on the button over your head in the office, on this exact text; your question was: "${ask.question}".) The office gave you a one-time pass for it, good for 2 hours${ask.target ? `, only on ${ask.target}` : ''}: post it once, exactly as approved (same words), on its own; anything else is still refused.`
+        : `The owner: no, don't post it: ${said}. (They clicked No on the button over your head.) Nothing goes up; tell the manager if something else should.`,
       900,
     );
   }

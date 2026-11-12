@@ -42,8 +42,10 @@ test('manager/ask refuses a button without --why and --tried, and keeps what was
   assert.equal(run('ask', dir, 'Please reconnect the email connector?', '--why', 'login', '--tried', 'asked the owner already').code, 2);
   assert.equal(run('ask', dir, 'Post this on X?', '--why', 'post', '--tried', 'Wrote the text and checked X rules').code, 2, 'a post needs its exact text (--text)');
   const ok = run('ask', dir, 'Post this on X? (text in post.md)', '--why', 'post', '--tried', 'Wrote the text and checked X rules', '--text', 'Hello X');
-  assert.equal(ok.code, 0, ok.out);
-  assert.deepEqual(asks(dir).map((a) => [a.question, a.why, a.tried]), [['Post this on X? (text in post.md)', 'post', 'Wrote the text and checked X rules']]);
+  assert.equal(ok.code, 2, 'a post needs where it goes (--target)');
+  const ok2 = run('ask', dir, 'Post this on X? (text in post.md)', '--why', 'post', '--tried', 'Wrote the text and checked X rules', '--text', 'Hello X', '--target', 'https://x.com/compose');
+  assert.equal(ok2.code, 0, ok2.out);
+  assert.deepEqual(asks(dir).map((a) => [a.question, a.why, a.tried, (a as { target?: string }).target]), [['Post this on X? (text in post.md)', 'post', 'Wrote the text and checked X rules', 'https://x.com/compose']]);
 });
 
 test('job wait refuses without proof and leaves the job active', () => {
