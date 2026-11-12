@@ -1,26 +1,25 @@
 // The `tiny-hq` command, once installed (bin/tiny-hq.mjs copies the office to ~/.tiny-hq/app and
 // hands over to this file):
-//   tiny-hq setup       the five questions, then a yes or no for each thing added outside ~/.tiny-hq
+//   tiny-hq setup       the welcome page in the browser (--terminal: the same questions typed here)
 //   tiny-hq open        start the office if needed and open it in the browser
 //   tiny-hq start|stop  the office in the background (or its login item, if you chose one)
 //   tiny-hq pair        a one-time link for a phone on your Tailscale (only if you set phone access up)
 //   tiny-hq doctor      checks the set-up and says what's missing
 //   tiny-hq uninstall   takes out the hooks, the skill link and the login items (--all also deletes ~/.tiny-hq)
 
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
+import { existsSync, lstatSync, readFileSync, readlinkSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { CONFIG_PATH, DATA_DIR, DEFAULT_PORT, MANAGER_DIR, NODE_FLAGS, REPO_ROOT } from '../paths.ts';
-import { DEFAULT_CONFIG, STYLES, cleanName, loadConfig, saveConfig, type Config, type ManagerStyle } from '../config.ts';
+import { DEFAULT_CONFIG, STYLES, cleanName, loadConfig, type ManagerStyle } from '../config.ts';
 import { LABEL, OPEN_LABEL, openPlist, plist } from '../daemon/launchd.ts';
-import { HOOKS, MARK, installedHooks, linkSkill, loadAgent, loadInstalled, readSettings, saveInstalled, skillLink, unlinkSkill, unloadAgent, withHooks, withoutHooks, writeSettings, type HookSpec } from './install.ts';
+import { HOOKS, MARK, installedHooks, loadAgent, loadInstalled, readSettings, skillLink, unlinkSkill, unloadAgent, withoutHooks, writeSettings, type HookSpec } from './install.ts';
+import { applySetup, currentChoices, has, tilde, untilde } from './setup.ts';
+import { runWelcome } from './welcome.ts';
 
 const run = (file: string, args: string[] = []) => spawnSync(process.execPath, [...NODE_FLAGS, join(REPO_ROOT, 'src', 'cli', file), ...args], { stdio: 'inherit' }).status ?? 1;
-const has = (bin: string) => spawnSync('/bin/sh', ['-c', `command -v ${bin}`], { stdio: 'ignore' }).status === 0;
-const tilde = (p: string) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
-const untilde = (p: string) => (p.startsWith('~/') ? join(homedir(), p.slice(2)) : p);
 
 async function up(): Promise<boolean> {
   try {
@@ -30,9 +29,58 @@ async function up(): Promise<boolean> {
   }
 }
 
-// ---- setup: the wizard ----
+// ---- setup: the welcome page, or the typed questions ----
 async function setup(args: string[]): Promise<number> {
   const defaults = args.includes('--defaults'); // every answer its default, nothing added outside ~/.tiny-hq
+  // The welcome page in the browser, unless asked for the typed questions or answers are piped in.
+  if (!defaults && !args.includes('--terminal') && (process.stdin.isTTY || args.includes('--web'))) return welcome(args);
+  return typedSetup(args, defaults);
+}
+
+async function welcome(args: string[]): Promise<number> {
+  let failed = false;
+  await runWelcome(
+    async (ch, offered) => {
+      failed = false; // a retry after a fixed problem counts as a success
+      const activity = new Map(offered.map((o, i) => [o.path, offered.length - i]));
+      const r = applySetup(ch, { outside: true, activity: (p) => activity.get(p) ?? 0 });
+      if (!r.ok) {
+        failed = true;
+        console.error(`\n${r.error}`);
+        return { error: r.error };
+      }
+      console.log(`\nSaved. Office: ${ch.officeName}. Manager: ${ch.managerName}. Rooms picked: ${ch.rooms?.chosen.length ?? 0}.`);
+      for (const n of r.notes) console.log(n);
+      if (ch.phone) console.log(PHONE_STEPS);
+      // A running office reads its settings when it starts: restart it so the new names show.
+      if (await up()) await stop();
+      if (run('office.ts', ['--no-browser']) !== 0) return { error: "The office didn't start. See ~/Library/Logs/tiny-hq.log, or run tiny-hq doctor.", notes: r.notes };
+      const url = await officeLink();
+      return url ? { url, notes: r.notes } : { error: 'The office is running, but the sign-in link could not be made. Run tiny-hq open.', notes: r.notes };
+    },
+    (url) => {
+      console.log(`\nTiny HQ setup is open in your browser. If it didn't open, go to:\n  ${url}\n\nPress Ctrl+C to stop without changing anything.`);
+      if (!args.includes('--no-open')) execFile('open', [url], () => {});
+    },
+  );
+  console.log(failed ? 'Setup stopped.' : 'Done. Your office is open in the browser.');
+  return failed ? 1 : 0;
+}
+
+// A one-time sign-in link to the running office (the same kind `tiny-hq open` uses).
+async function officeLink(): Promise<string | undefined> {
+  try {
+    const token = readFileSync(join(DATA_DIR, 'token'), 'utf8').trim();
+    const r = await fetch(`http://127.0.0.1:${DEFAULT_PORT}/api/login-code`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    if (!r.ok) return undefined;
+    const { code } = (await r.json()) as { code: string };
+    return `http://127.0.0.1:${DEFAULT_PORT}/#code=${code}`;
+  } catch {
+    return undefined;
+  }
+}
+
+async function typedSetup(args: string[], defaults: boolean): Promise<number> {
   // Answers are read as a queue of lines, so piped answers (scripts, tests) are never dropped; at the
   // end of input every remaining question takes its default.
   const rl = defaults ? undefined : createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
@@ -57,90 +105,62 @@ async function setup(args: string[]): Promise<number> {
     return a || def;
   };
   const yes = async (q: string, def: boolean): Promise<boolean> => /^y/i.test(await ask(`${q} (y/n)`, def ? 'y' : 'n'));
-  const before = existsSync(CONFIG_PATH) ? loadConfig(CONFIG_PATH) : { ...DEFAULT_CONFIG };
+  const before = currentChoices();
 
   console.log('\nTiny HQ setup. Press Enter to keep the answer in [brackets]; run `tiny-hq setup` again any time.\n');
-  // First time: suggest the Mac account's full name.
-  const macName = existsSync(CONFIG_PATH) ? '' : (spawnSync('id', ['-F'], { encoding: 'utf8' }).stdout ?? '').trim().split(' ')[0] ?? '';
-  const nameDefault = cleanName(macName, before.ownerName);
-  const ownerName = cleanName(await ask('1. Your name (what your manager calls you)', nameDefault), nameDefault);
+  const ownerName = cleanName(await ask('1. Your name (what your manager calls you)', before.ownerName), before.ownerName);
 
-  const found = before.projectRoots.filter((p) => existsSync(p));
-  const roots = (await ask('2. Your project folders, comma-separated', (found.length ? found : before.projectRoots).map(tilde).join(', ')))
+  const typedRoots = (await ask('2. Your project folders, comma-separated', (before.projectRoots.length ? before.projectRoots : DEFAULT_CONFIG.projectRoots.filter((p) => existsSync(p))).map(tilde).join(', ')))
     .split(',')
     .map((p) => untilde(p.trim()))
     .filter((p) => p.startsWith('/'));
+  const roots = typedRoots.length ? typedRoots : before.projectRoots;
   const missing = roots.filter((p) => !existsSync(p));
   if (missing.length) console.log(`   (not there yet, kept anyway: ${missing.map(tilde).join(', ')})`);
 
   const managerName = cleanName(await ask("3. Your manager's name", before.managerName), before.managerName);
   const styleIn = await ask(`   Their style: ${STYLES.map((s, i) => `${i + 1} ${s}`).join(', ')}`, String(STYLES.indexOf(before.managerStyle) + 1));
   const managerStyle: ManagerStyle = STYLES[Number(styleIn) - 1] ?? (STYLES.includes(styleIn as ManagerStyle) ? (styleIn as ManagerStyle) : before.managerStyle);
+  const officeName = cleanName(await ask("   The office's name", before.officeName), before.officeName);
 
   console.log('4. Extras (each can be switched on or off later):');
   const ghOk = has('gh');
   const github = await yes(`   GitHub keeper: watches your repos for other people's pull requests, issues and comments (uses your gh sign-in${ghOk ? '' : '; gh is not installed yet'})`, before.extras.github);
   const coffee = await yes('   Coffee room: a few times a day, 2-3 rooms share what they learned (one small Sonnet call each)', before.extras.coffee);
   const happenings = await yes('   Office happenings: little gags around the office, written by Haiku about once a day', before.extras.happenings);
-  const phone = await yes('   Phone access over Tailscale (you set it up yourself; I print the steps)', !!before.remote);
+  const phone = await yes('   Phone access over Tailscale (you set it up yourself; I print the steps)', before.phone);
 
   const login = await yes('5. Start the office when you log in?', loadInstalled(DATA_DIR)?.loginItems ?? !defaults);
 
-  // Read Claude Code's settings first: a broken file stops setup before anything is saved.
-  let settings: ReturnType<typeof readSettings>;
-  try {
-    settings = readSettings();
-  } catch (err) {
-    rl?.close();
-    console.error(`\nCouldn't read ~/.claude/settings.json: ${err instanceof Error ? err.message : String(err)}\nFix that file (it must be valid JSON), then run \`tiny-hq setup\` again. Nothing was changed.`);
-    return 1;
-  }
-  const config: Config = { ...before, ownerName, projectRoots: roots.length ? roots : before.projectRoots, managerName, managerStyle, extras: { github, coffee, happenings } };
-  saveConfig(CONFIG_PATH, config);
-  // The office's commands run from Claude Code sessions whose PATH may not have this Node (nvm, a GUI launch).
-  writeFileSync(join(DATA_DIR, 'node'), process.execPath + '\n', { mode: 0o600 });
-  console.log(`\nSaved your settings in ${tilde(CONFIG_PATH)}.`);
-
   // ---- consent: one yes or no for each thing added outside ~/.tiny-hq ----
   console.log('\nTiny HQ can add these to Claude Code. Each is optional, and `tiny-hq uninstall` takes them all out again.');
-  const had = installedHooks(settings);
   const chosen: HookSpec['id'][] = [];
   for (const h of HOOKS) {
     console.log(`\n - ${h.what}`);
-    if (await yes('   Add it?', !defaults && (had.length === 0 || had.some((c) => c.endsWith(`${MARK} ${h.id}`))))) chosen.push(h.id);
+    if (await yes('   Add it?', !defaults && before.hooks.includes(h.id))) chosen.push(h.id);
   }
   console.log(`\n - The theoffice skill: tells each room's Claude how the office works (a link in ${tilde(skillLink())}).`);
-  const skill = await yes('   Add it?', !defaults);
+  const skill = await yes('   Add it?', !defaults && before.skill);
   rl?.close();
 
+  const r = applySetup(
+    { officeName, ownerName, managerName, managerStyle, projectRoots: roots, extras: { github, coffee, happenings }, briefing: before.briefing, phone, login, hooks: chosen, skill },
+    { outside: !defaults },
+  );
+  if (!r.ok) {
+    console.error(`\n${r.error}`);
+    return 1;
+  }
+  console.log(`\nSaved your settings in ${tilde(CONFIG_PATH)}.`);
   // --defaults never touches anything outside ~/.tiny-hq: what was added before stays as it was.
   if (defaults) {
     console.log('\n(--defaults: Claude Code settings, the skill and login items left as they were.)');
     return 0;
   }
-  writeSettings(withHooks(settings, REPO_ROOT, chosen));
-  let skillOn = false;
-  if (skill) {
-    const r = linkSkill(REPO_ROOT);
-    skillOn = r !== 'taken';
-    if (r === 'taken') console.log(`   ${tilde(skillLink())} is already something of yours; left it alone.`);
-  } else unlinkSkill(REPO_ROOT);
-  for (const dir of ['hooks', 'manager']) for (const f of readdirSync(join(REPO_ROOT, dir))) if (statSync(join(REPO_ROOT, dir, f)).isFile() && !f.includes('.')) chmodSync(join(REPO_ROOT, dir, f), 0o755);
-  chmodSync(join(REPO_ROOT, 'hooks', 'office-name.sh'), 0o755);
-
-  if (login) {
-    loadAgent(LABEL, plist(process.execPath));
-    loadAgent(OPEN_LABEL, openPlist(process.execPath));
-  } else {
-    unloadAgent(LABEL);
-    unloadAgent(OPEN_LABEL);
-  }
-  saveInstalled(DATA_DIR, { hooks: chosen, skill: skillOn, loginItems: login, at: new Date().toISOString() });
-
-  console.log(`\nDone. Hooks: ${chosen.length ? chosen.join(', ') : 'none'}. Skill: ${skillOn ? 'yes' : 'no'}. Start at login: ${login ? 'yes' : 'no'}.`);
-  if (github && !ghOk) console.log('GitHub keeper: install the GitHub CLI and run `gh auth login`; it starts by itself after that.');
+  for (const n of r.notes) console.log(n);
+  console.log(`\nDone. Hooks: ${r.hooks.length ? r.hooks.join(', ') : 'none'}. Skill: ${r.skill ? 'yes' : 'no'}. Start at login: ${r.login ? 'yes' : 'no'}.`);
   if (phone) console.log(PHONE_STEPS);
-  if (!defaults && !args.includes('--no-open')) return open([]);
+  if (!args.includes('--no-open')) return open([]);
   return 0;
 }
 
@@ -273,7 +293,7 @@ async function uninstall(args: string[]): Promise<number> {
 
 const HELP = `Tiny HQ: a little office for your Claude Code projects.
 
-  tiny-hq setup        answer five questions; choose what gets added to Claude Code
+  tiny-hq setup        set up your office on a welcome page in the browser (--terminal: answer here)
   tiny-hq open         start the office if needed and open it in your browser
   tiny-hq start | stop run or stop the office in the background
   tiny-hq pair         a one-time link for your phone (after phone access is set up)

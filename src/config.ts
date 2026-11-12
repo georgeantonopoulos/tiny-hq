@@ -12,6 +12,7 @@ export type ManagerStyle = 'calm' | 'whimsical' | 'plain';
 export const STYLES: readonly ManagerStyle[] = ['calm', 'whimsical', 'plain'];
 
 export interface Config {
+  officeName: string; // the office's name, on the sign over the door (the top bar and the page title)
   ownerName: string; // what the manager calls the owner (the page says "you")
   managerName: string; // the manager's name on the floor and in their own words
   managerStyle: ManagerStyle; // how the manager talks: calm, whimsical or plain
@@ -21,13 +22,14 @@ export interface Config {
   usageCommand?: string[]; // optional usage meter: a command printing usage JSON ("{provider}" is replaced by claude or codex)
   remote?: RemoteConfig; // {host: "<mac>.<tailnet>.ts.net", login: "<the owner's Tailscale login>"}; absent = local only
   extraProjects: string[]; // folders always on the project list, wherever they are
-  pinnedProjects: string[]; // folders that always get a room on the floor, never the archive cupboard
+  pinnedProjects: string[]; // folders that always get a room on the floor, never the archive cupboard (up to 12)
   hiddenProjects: string[]; // retired folders: no room and no archive entry, even if they still log sessions
   archivedProjects: string[]; // folders kept in the archive cupboard, however busy, until the owner brings them back
   briefingTime?: string; // "HH:MM": when the manager does the daily brief; absent or malformed: no brief
 }
 
 export const DEFAULT_CONFIG: Config = {
+  officeName: 'Tiny HQ',
   ownerName: 'Owner',
   managerName: 'Manager',
   managerStyle: 'calm',
@@ -47,8 +49,10 @@ export const cleanName = (v: unknown, fallback: string): string => {
   return s || fallback;
 };
 
-const paths = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((p): p is string => typeof p === 'string' && /^\/[^\x00-\x1f\x7f]{1,400}$/.test(p)).slice(0, 50) : [];
+// Folder lists: plain absolute paths only, at most `max` (the archive and hidden lists hold every
+// project setup can offer, so a room the owner left out stays out).
+const paths = (v: unknown, max = 50): string[] =>
+  Array.isArray(v) ? v.filter((p): p is string => typeof p === 'string' && /^\/[^\x00-\x1f\x7f]{1,400}$/.test(p)).slice(0, max) : [];
 
 export function loadConfig(path: string): Config {
   if (!existsSync(path)) {
@@ -63,6 +67,7 @@ export function loadConfig(path: string): Config {
     const cmd = Array.isArray(raw.usageCommand) && raw.usageCommand.length && raw.usageCommand.every((a) => typeof a === 'string' && a.length < 400) ? raw.usageCommand.slice(0, 20) : undefined;
     const roots = paths(raw.projectRoots);
     return {
+      officeName: cleanName(raw.officeName, DEFAULT_CONFIG.officeName),
       ownerName: cleanName(raw.ownerName, DEFAULT_CONFIG.ownerName),
       managerName: cleanName(raw.managerName, DEFAULT_CONFIG.managerName),
       managerStyle: STYLES.includes(raw.managerStyle as ManagerStyle) ? (raw.managerStyle as ManagerStyle) : DEFAULT_CONFIG.managerStyle,
@@ -72,9 +77,9 @@ export function loadConfig(path: string): Config {
       ...(cmd ? { usageCommand: cmd } : {}),
       ...(remote ? { remote } : {}),
       extraProjects: paths(raw.extraProjects),
-      pinnedProjects: paths(raw.pinnedProjects).slice(0, 6),
-      hiddenProjects: paths(raw.hiddenProjects),
-      archivedProjects: paths(raw.archivedProjects),
+      pinnedProjects: paths(raw.pinnedProjects).slice(0, 12), // the rooms the owner picked; the floor holds 12
+      hiddenProjects: paths(raw.hiddenProjects, 1000),
+      archivedProjects: paths(raw.archivedProjects, 1000),
       ...(parseTime(raw.briefingTime) ? { briefingTime: parseTime(raw.briefingTime) } : {}),
     };
   } catch {

@@ -225,6 +225,10 @@ async function start(): Promise<void> {
     managerPath = (floor as typeof floor & { managerPath?: string }).managerPath ?? '';
     office.render(floor, handlers);
     terminal.renderTabs(); // colours come from the floor
+    // The office's own name on the sign (settings), in the top bar and the tab.
+    const officeName = floor.names?.office ?? 'Tiny HQ';
+    $('office-name').textContent = officeName;
+    document.title = officeName;
     office.showSessions(sessions);
     const projects = floor.rooms.filter((r) => r.kind === 'project').length;
     const archived = floor.rooms.find((r) => r.kind === 'archive')?.count ?? 0;

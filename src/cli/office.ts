@@ -2,7 +2,7 @@
 // the browser with a one-time sign-in code (never the token itself).
 
 import { spawn, execFile } from 'node:child_process';
-import { openSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, openSync, existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { CONFIG_PATH, DEFAULT_PORT, NODE_FLAGS, REPO_ROOT, TOKEN_PATH } from '../paths.ts';
@@ -31,6 +31,7 @@ if (atLogin) {
 
 if (!(await up())) {
   const logFile = join(homedir(), 'Library', 'Logs', 'tiny-hq.log');
+  mkdirSync(join(homedir(), 'Library', 'Logs'), { recursive: true });
   const out = openSync(logFile, 'a');
   spawn(process.execPath, [...NODE_FLAGS, join(REPO_ROOT, 'src', 'daemon', 'main.ts')], {
     cwd: REPO_ROOT,

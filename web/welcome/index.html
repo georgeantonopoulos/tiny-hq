@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Set up your office</title>
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="stylesheet" href="/welcome.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <!-- The office front: it changes as you answer (sign, manager, lit windows). -->
+      <section class="scene" aria-hidden="true">
+        <svg id="front" viewBox="0 0 380 132" shape-rendering="crispEdges"></svg>
+      </section>
+
+      <ol class="steps" id="steps" aria-label="Setup steps"></ol>
+
+      <form class="card" id="card" novalidate>
+        <!-- 0: hello -->
+        <section class="step" data-step="0" data-label="Hello">
+          <h1>Let's set up your office</h1>
+          <p class="lead">Every project gets its own room, with a Claude at the desk. A manager hands out the work and asks you only when it needs you.</p>
+          <p class="soft">It takes about a minute, and you can change everything later.</p>
+        </section>
+
+        <!-- 1: names -->
+        <section class="step" data-step="1" data-label="Names">
+          <h1>What's it called?</h1>
+          <label class="field">
+            <span>Your office's name</span>
+            <input id="officeName" maxlength="32" autocomplete="off" placeholder="Tiny HQ" />
+            <small>It goes on the sign over the door.</small>
+          </label>
+          <label class="field">
+            <span>Your name</span>
+            <input id="ownerName" maxlength="32" autocomplete="given-name" placeholder="Your first name" />
+            <small>What your manager calls you.</small>
+          </label>
+        </section>
+
+        <!-- 2: manager -->
+        <section class="step" data-step="2" data-label="Manager">
+          <h1>Hire your manager</h1>
+          <label class="field">
+            <span>Their name</span>
+            <input id="managerName" maxlength="32" autocomplete="off" placeholder="Manager" />
+          </label>
+          <fieldset class="styles">
+            <legend>How should they talk to you?</legend>
+            <div class="style-grid" id="styles"></div>
+          </fieldset>
+        </section>
+
+        <!-- 3: rooms -->
+        <section class="step" data-step="3" data-label="Rooms">
+          <h1>Where do you keep your projects?</h1>
+          <p class="soft">Choose the folder (or folders) your projects live in. Projects you've opened in Claude Code show up wherever they are.</p>
+          <div class="folders" id="folders"></div>
+          <div class="folder-actions">
+            <button type="button" class="secondary pick" id="pick-folder"><span class="folder-icon" aria-hidden="true"></span>Choose a folder…</button>
+            <span class="soft small" id="pick-note"></span>
+          </div>
+          <div class="suggest" id="suggest" hidden>
+            <span class="soft small">Looks like projects might be in:</span>
+            <div class="suggest-list" id="suggest-list"></div>
+          </div>
+          <h2>Which ones get a room?</h2>
+          <p class="soft" id="rooms-sub">Looking around for your projects…</p>
+          <div class="room-tools">
+            <input id="room-filter" type="search" placeholder="Find a project" aria-label="Find a project" />
+            <button type="button" class="link" id="rooms-all">Pick all</button>
+            <button type="button" class="link" id="rooms-none">Clear</button>
+          </div>
+          <div class="rooms" id="rooms" role="group" aria-label="Projects"><div class="loading"><span></span><span></span><span></span></div></div>
+        </section>
+
+        <!-- 4: extras -->
+        <section class="step" data-step="4" data-label="Extras">
+          <h1>A few nice extras</h1>
+          <p class="soft">Switch on what you like. Each one can be changed later.</p>
+          <div class="toggles" id="extras"></div>
+        </section>
+
+        <!-- 5: helpers -->
+        <section class="step" data-step="5" data-label="Helpers">
+          <h1>Little helpers for Claude Code</h1>
+          <p class="soft">They let the office see what your Claude sessions are up to and keep them safe. We recommend all four; <code>tiny-hq uninstall</code> takes them out again.</p>
+          <div class="toggles" id="helpers"></div>
+        </section>
+
+        <!-- 6: tools -->
+        <section class="step" data-step="6" data-label="Tools">
+          <h1>Handy tools</h1>
+          <p class="soft" id="tools-sub">These make the office better. All optional: install what you like, now or later.</p>
+          <div class="tools" id="tools"><div class="loading"><span></span><span></span><span></span></div></div>
+          <p class="soft small" id="brew-note" hidden>One-click installs use <a href="https://brew.sh" target="_blank" rel="noopener">Homebrew</a>, which isn't on this Mac yet. You can still get each tool from its website.</p>
+        </section>
+
+        <!-- 7: ready -->
+        <section class="step" data-step="7" data-label="Move in">
+          <h1 id="ready-title">Ready to move in</h1>
+          <ul class="summary" id="summary"></ul>
+          <p class="error" id="error" role="alert" hidden></p>
+        </section>
+
+        <footer class="nav">
+          <button type="button" class="secondary" id="back">Back</button>
+          <span class="spacer"></span>
+          <button type="submit" class="primary" id="next">Let's go</button>
+        </footer>
+      </form>
+      <p class="foot" id="foot">Everything stays on this Mac.</p>
+    </main>
+    <div class="moving hidden" id="moving" role="status" aria-live="polite">
+      <div class="box"><div class="boxes"><i></i><i></i><i></i></div><p id="moving-text">Moving in…</p></div>
+    </div>
+    <script type="module" src="/welcome.ts"></script>
+  </body>
+</html>

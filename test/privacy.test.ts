@@ -17,12 +17,21 @@ const OFFICE_ONLY = ['yrag', 'reganam-edualc', 'rabxedoc', 'membo', 'enalhsad', 
 // A real home folder: only the placeholder users the tests use are allowed.
 const HOME_PATH = /\/Users\/(?!(?:g|x|t|test|someone|owner|me|you|alex|sam)\/|[a-z]+\/\.\.\.|<)[A-Za-z0-9._-]+\//;
 
+// One file may name a few of these on purpose: the handy tools setup suggests. The owner chose to
+// suggest the usage app and their own public memory-bank tool (which lives under their GitHub name).
+// Only these words, only in that file.
+// Written backwards, like the list above, so this file doesn't carry the words itself.
+const ALLOWED: Record<string, string[]> = {
+  'src/cli/tools.ts': ['rabxedoc', 'membo', 'egroeg', 'soluoponotna', 'soluoponotnaegroeg', 'lliks-knab-yromem-ilc-naidisbo'].map((w) => [...w].reverse().join('')),
+};
+const allowed = (f: string, word: string) => (ALLOWED[f] ?? []).includes(word.toLowerCase());
+
 test('no word from the private office ships in Tiny HQ', () => {
   const hits: string[] = [];
   for (const f of files) {
     const lines = readFileSync(root + f, 'utf8').split('\n');
     lines.forEach((l, i) => {
-      for (const re of [...OFFICE_ONLY, HOME_PATH]) if (re.test(l)) hits.push(`${f}:${i + 1}: ${re} in ${l.trim().slice(0, 100)}`);
+      for (const re of [...OFFICE_ONLY, HOME_PATH]) if (re.test(l) && !allowed(f, re.source.replace(/\\b/g, ''))) hits.push(`${f}:${i + 1}: ${re} in ${l.trim().slice(0, 100)}`);
     });
   }
   assert.deepEqual(hits, []);
@@ -37,7 +46,7 @@ test('no personal word from the local private list ships either', (t) => {
   const hits: string[] = [];
   for (const f of files) {
     const text = readFileSync(root + f, 'utf8').toLowerCase();
-    for (const w of words) if (text.includes(w)) hits.push(`${f}: "${w}"`);
+    for (const w of words) if (text.includes(w) && !allowed(f, w)) hits.push(`${f}: "${w}"`);
   }
   assert.deepEqual(hits, []);
 });
