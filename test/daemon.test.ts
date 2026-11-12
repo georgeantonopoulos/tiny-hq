@@ -333,3 +333,30 @@ test('model picker: token needed, bad requests refused, choice passed on', async
     d.close();
   }
 });
+
+// A picture the office can see but not read (a protected folder, or gone since) is a 404, and the
+// office keeps running; only the pictures found in that person's message are served.
+test('daemon: a bubble picture it cannot read is a 404, never a crash', async () => {
+  const { chmodSync, writeFileSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'th-pic-'));
+  const ok = join(dir, 'ok.png');
+  const locked = join(dir, 'locked.png');
+  writeFileSync(ok, 'png');
+  writeFileSync(locked, 'png');
+  chmodSync(locked, 0o000);
+  const port = await freePort();
+  const d = createDaemon({ token: 't', port, floor: () => ({ rooms: [] }), saidImage: (who: string, i: number) => (who === 'manager' ? [ok, locked][i] : undefined) });
+  await new Promise<void>((r) => d.listen(port, '127.0.0.1', r));
+  const auth = { authorization: 'Bearer t' };
+  try {
+    assert.equal((await call(port, '/api/said-image?who=manager&i=0')).status, 401);
+    assert.equal((await call(port, '/api/said-image?who=manager&i=0', { headers: auth })).status, 200);
+    assert.equal((await call(port, '/api/said-image?who=manager&i=1', { headers: auth })).status, 404);
+    assert.equal((await call(port, '/api/said-image?who=lead:x&i=0', { headers: auth })).status, 404);
+    assert.equal((await call(port, '/api/said-image?who=manager&i=7', { headers: auth })).status, 404);
+    assert.equal((await call(port, '/health')).status, 200, 'still running');
+  } finally {
+    chmodSync(locked, 0o600);
+    await new Promise((r) => d.close(r));
+  }
+});

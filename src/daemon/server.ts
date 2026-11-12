@@ -15,7 +15,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createReadStream, mkdirSync, openSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { tokenMatches } from './token.ts';
@@ -317,8 +317,11 @@ export function createDaemon(deps: DaemonDeps): Server {
       try {
         const st = statSync(file);
         if (!st.isFile() || st.size > 20 * 1024 * 1024) return send(res, 404, { error: 'no such picture' });
+        // Opened before the reply starts, so a picture the office can see but not read (a protected
+        // folder, or gone since) is a 404; a read error later only ends this reply, never the office.
+        const fd = openSync(file, 'r');
         res.writeHead(200, { 'content-type': type, 'content-length': String(st.size), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-        createReadStream(file).pipe(res);
+        createReadStream('', { fd }).on('error', () => res.destroy()).pipe(res);
       } catch {
         send(res, 404, { error: 'no such picture' });
       }
