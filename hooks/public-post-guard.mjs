@@ -277,15 +277,17 @@ export function ghPostText(cmd, post = posts(cmd)[0]) {
 const VALUE_FLAGS = new Set(['-b', '--body', '-t', '--title', '-c', '--comment', '-R', '--repo', '-F', '--body-file', '-l', '--label', '-a', '--assignee', '-m', '--milestone', '-p', '--project', '-r', '--reviewer', '-B', '--base', '-H', '--head', '-f', '--field', '--raw-field', '-X', '--method', '-H', '--header', '-T', '--template', '--add-label', '--remove-label', '--add-assignee', '--remove-assignee', '--add-reviewer', '--remove-reviewer', '--add-project', '--remove-project', '--hostname', '--jq', '-q']);
 const API_VALUE_FLAGS = new Set(['-X', '--method', '-f', '-F', '--field', '--raw-field', '-H', '--header', '-q', '--jq', '-t', '--template', '-p', '--preview', '--cache', '--hostname', '--input']);
 export function ghTarget(post, cwd, repoOf = remoteRepo) {
-  if (post.seg.slice(0, post.at).some((w) => /^GH_HOST=/.test(w)) || hasFlag(post.seg.slice(post.at + 1), ['--hostname'])) return undefined;
+  if (post.seg.slice(0, post.at).some((w) => /^GH_HOST=/.test(w)) || otherHost() || hasFlag(post.seg.slice(post.at + 1), ['--hostname'])) return undefined;
   const seg = post.seg;
   const all = seg.slice(post.at + 1);
   let repo;
   for (let k = 0; k < all.length; k++) {
+    if (VALUE_FLAGS.has(all[k]) && all[k] !== '-R' && all[k] !== '--repo') { k++; continue; } // a flag's value, e.g. a body of "-Rowner/x"
     if ((all[k] === '-R' || all[k] === '--repo') && all[k + 1]) repo = all[k + 1];
     else if (/^(-R|--repo=)/.test(all[k]) && all[k].length > 2) repo = all[k].replace(/^(-R|--repo=)/, '');
   }
   if (!repo) for (const w of seg.slice(0, post.at)) if (/^GH_REPO=/.test(w)) repo = w.slice(8);
+  if (!repo && process.env.GH_REPO) repo = process.env.GH_REPO; // inherited, gh uses it over the folder's remote
   const own = () => (repo ? normTarget(repo).replace(/#.*/, '') : repoOf(cwd) ?? '');
   const args = ghArgs(seg, post.at);
   const sub = args[0];
@@ -327,6 +329,8 @@ export function ghTarget(post, cwd, repoOf = remoteRepo) {
 }
 // gh repo edit … --visibility public / gh repo create … --public: the repo going public ("owner/repo"),
 // '' when it can't be told for certain, undefined when the command isn't one of these.
+// GH_HOST inherited from the environment and pointing somewhere other than github.com.
+const otherHost = () => !!process.env.GH_HOST && process.env.GH_HOST.toLowerCase() !== 'github.com';
 export function repoGoingPublic(post, cwd, repoOf = remoteRepo) {
   const args = ghArgs(post.seg, post.at);
   if (args[0] !== 'repo') return undefined;
@@ -336,11 +340,9 @@ export function repoGoingPublic(post, cwd, repoOf = remoteRepo) {
   const isEdit = verb === 'edit' && visibilityTo(args) === 'public';
   const isCreate = verb === 'create' && hasFlag(args, ['--public']);
   if (!isEdit && !isCreate) return undefined;
-  // Another GitHub host, or a GH_REPO that gh would use instead of the folder's repo: refused, since
-  // the pass is for one repo on github.com.
+  // Another GitHub host is refused: the pass is for one repo on github.com.
   const env = post.seg.slice(0, post.at);
-  if (env.some((w) => /^GH_HOST=/.test(w)) || hasFlag(post.seg.slice(post.at + 1), ['--hostname'])) return '';
-  const envRepo = env.find((w) => /^GH_REPO=/.test(w));
+  if (env.some((w) => /^GH_HOST=/.test(w)) || otherHost() || hasFlag(post.seg.slice(post.at + 1), ['--hostname'])) return '';
   const named = [];
   for (let j = k + 1; j < args.length; j++) {
     const a = args[j];
@@ -348,7 +350,9 @@ export function repoGoingPublic(post, cwd, repoOf = remoteRepo) {
     if (!a.startsWith('-')) named.push(a);
   }
   if (named.length > 1) return '';
-  const t = named.length ? normTarget(named[0]) : envRepo ? normTarget(envRepo.slice(8)) : isEdit ? repoOf(cwd) ?? '' : '';
+  // The repo must be named in the command: with none, gh takes GH_REPO from wherever the shell got it
+  // (a profile the guard can't see) over the folder's remote. A named repo is what gh uses.
+  const t = named.length ? normTarget(named[0]) : '';
   return /^[a-z0-9-]+\/[\w.-]+$/.test(t) ? t : '';
 }
 // The folder's GitHub repo, as gh would pick it: the remote marked by `gh repo set-default`, else

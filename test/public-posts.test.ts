@@ -129,14 +129,44 @@ test('making a repo public needs their Approve of "make owner/repo public", once
   assert.equal(D('gh repo edit --visibility private'), undefined); // making it private isn't a post
   // A pass for the folder's repo never flips the repo GH_REPO names, or one on another host.
   grantPass(path, 'make owner/tiny-hq public', room, Date.now(), 'owner/tiny-hq');
-  denies(D('GH_REPO=other/secret gh repo edit --visibility public'), /make other\/secret public/);
+  denies(D('GH_REPO=other/secret gh repo edit --visibility public'), /can't tell for certain/); // the repo must be named
   denies(D('GH_HOST=ghe.example.com gh repo edit owner/tiny-hq --visibility public'), /can't tell for certain/);
   denies(D('gh repo edit owner/tiny-hq --visibility public --hostname ghe.example.com'), /can't tell for certain/);
   assert.equal(D('gh repo edit owner/tiny-hq --visibility public'), 'pass'); // the pass was still there
   assert.equal(postingCommand('gh repo edit o/r --visibility=internal'), undefined);
-  // From its own folder the repo is the folder's.
+  // Even in its own folder the repo must be named: gh would take a GH_REPO set in the shell first.
   grantPass(path, 'make owner/tiny-hq public', room, Date.now(), 'owner/tiny-hq');
-  assert.equal(D('gh repo edit --visibility public --accept-visibility-change-consequences'), 'pass');
+  denies(D('gh repo edit --visibility public --accept-visibility-change-consequences'), /can't tell for certain/);
+  // GH_HOST or GH_REPO inherited from the environment count too.
+  process.env.GH_HOST = 'ghe.example.com';
+  try {
+    denies(D('gh repo edit owner/tiny-hq --visibility public'), /can't tell for certain/);
+  } finally {
+    delete process.env.GH_HOST;
+  }
+  assert.equal(D('gh repo edit owner/tiny-hq --visibility public'), 'pass');
+});
+
+test('a pass never lands on another place: inherited GH_REPO, a body that looks like -R, a page query', async () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'th-place-')), 'passes.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as { usePass: (t: string, s: string, now: number, p: string, cwd?: string, where?: unknown, target?: string) => boolean; sameTarget: (a: string, b: string) => boolean };
+  const passes = { use: (t: string, s: string, cwd?: string, where?: unknown, target?: string) => pa.usePass(t, s, Date.now(), path, cwd, where, target), click: () => false, repo: () => 'owner/lumen' };
+  const room = '/Dev/Lumen';
+  const D = (command: string) => decide('Bash', { command }, {}, 's', passes, room);
+  grantPass(path, 'Thanks', room, Date.now(), 'owner/lumen#44');
+  process.env.GH_REPO = 'other/secret';
+  try {
+    denies(D('gh pr comment 44 -b Thanks'), /other\/secret#44/); // gh would post on other/secret
+  } finally {
+    delete process.env.GH_REPO;
+  }
+  denies(D('gh pr comment 44 -R other/actual -b "-Rowner/lumen"'), /other\/actual#44/);
+  assert.equal(D('gh pr comment 44 -b Thanks'), 'pass');
+  assert.equal(pa.sameTarget('https://news.ycombinator.com/item?id=1', 'https://news.ycombinator.com/item?id=2'), false);
+  assert.equal(pa.sameTarget('https://news.ycombinator.com/item?id=1', 'https://news.ycombinator.com/item?id=1'), true);
+  assert.equal(pa.sameTarget('https://example.com/t?b=2&a=1', 'https://example.com/t?a=1&b=2'), true);
 });
 
 test('targets read the same in the hook and the office', async () => {

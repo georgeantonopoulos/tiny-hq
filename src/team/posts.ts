@@ -55,7 +55,8 @@ export function normTarget(t: string | undefined): string {
   if (!/^https?:\/\//i.test(s)) return '';
   try {
     const u = new URL(s);
-    return `https://${u.hostname.toLowerCase().replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}`;
+    u.searchParams.sort();
+    return `https://${u.hostname.toLowerCase().replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`;
   } catch {
     return '';
   }

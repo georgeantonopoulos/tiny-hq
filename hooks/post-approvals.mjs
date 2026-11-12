@@ -34,20 +34,24 @@ export function normTarget(t) {
   if (!/^https?:\/\//i.test(s)) return '';
   try {
     const u = new URL(s);
-    return `https://${u.hostname.toLowerCase().replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}`;
+    u.searchParams.sort();
+    return `https://${u.hostname.toLowerCase().replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`;
   } catch {
     return '';
   }
 }
 const isRepoTarget = (t) => /^[a-z0-9-]+\/[\w.-]+(#\d+)?$/.test(t);
 // A pass's target against where the post actually goes: a PR, issue or repo exactly; a site page, or
-// a page under it. A pass with no target (from before targets existed) goes nowhere.
+// a page under it, with the same query (a thread's ?id=1 is not ?id=2). A pass with no target (from before targets existed) goes nowhere.
 export function sameTarget(pass, actual) {
   const p = normTarget(pass);
   const a = normTarget(actual);
   if (!p || !a) return false;
   if (isRepoTarget(p) || isRepoTarget(a)) return p === a;
-  return a === p || a.startsWith(`${p}/`);
+  const [pp, pq = ''] = p.split('?');
+  const [ap, aq = ''] = a.split('?');
+  if (pq !== aq) return false;
+  return ap === pp || ap.startsWith(`${pp}/`);
 }
 
 export function loadPasses(path = approvalsPath()) {
