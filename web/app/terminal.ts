@@ -16,6 +16,8 @@ interface XTerm {
   onData(cb: (d: string) => void): { dispose(): void };
   onResize(cb: (s: { cols: number; rows: number }) => void): { dispose(): void };
   loadAddon(a: unknown): void;
+  registerLinkProvider(p: { provideLinks(y: number, cb: (links: { range: { start: { x: number; y: number }; end: { x: number; y: number } }; text: string; activate(e: MouseEvent, text: string): void }[] | undefined) => void): void }): { dispose(): void };
+  buffer: { active: { length: number; getLine(y: number): { isWrapped: boolean; translateToString(trim?: boolean): string } | undefined } };
   focus(): void;
   scrollToBottom(): void;
   dispose(): void;
@@ -98,6 +100,26 @@ export class TerminalPanel {
     xterm.loadAddon(fit);
     xterm.open(this.body);
     fit.fit();
+    // Web addresses in the chat open in a new tab when tapped or clicked (copying one out of the chat
+    // is hard on a phone), including ones that wrap onto the next line.
+    xterm.registerLinkProvider({
+      provideLinks(y, cb) {
+        const buf = xterm.buffer.active;
+        const first = buf.getLine(y - 1);
+        if (!first) return cb(undefined);
+        const cols = xterm.cols;
+        let text = first.translateToString(false);
+        for (let k = y; k < buf.length && buf.getLine(k)?.isWrapped; k++) text += buf.getLine(k)!.translateToString(false);
+        const links = [];
+        for (const m of text.matchAll(/https?:\/\/[^\s<>"'`)\]]+[^\s<>"'`)\].,;:!?]/g)) {
+          if (m.index! >= cols) break; // starts on a later (wrapped) line: that line reports it
+          const end = m.index! + m[0].length - 1;
+          const url = m[0];
+          links.push({ range: { start: { x: m.index! + 1, y }, end: { x: (end % cols) + 1, y: y + Math.floor(end / cols) } }, text: url, activate: () => window.open(url, '_blank', 'noopener,noreferrer') });
+        }
+        cb(links.length ? links : undefined);
+      },
+    });
     // Something on screen straight away while Claude gets ready.
     xterm.write(`\x1b[2m  ${mode === 'new' ? `Pulling up a chair at ${name}…` : `Walking over to ${name}…`}\x1b[0m\r\n`);
     this.busy(true);

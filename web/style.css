@@ -388,3 +388,6 @@ body.resizing { user-select: none; }
 #term-attach { cursor: pointer; }
 #term-attach:hover { color: var(--text); background: #ffffff1a; border-color: var(--line); }
 #term-attach svg { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Links in a message open in a new tab. */
+.msg-link { color: var(--accent); text-decoration: underline; word-break: break-all; }
