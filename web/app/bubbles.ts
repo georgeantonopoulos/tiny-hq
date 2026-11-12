@@ -297,7 +297,7 @@ export class Bubbles {
     el.classList.add('msg');
     const body = document.createElement('div');
     body.className = 'said scroll';
-    body.textContent = readable(p.line.text);
+    linkify(body, readable(p.line.text));
     el.append(body);
     const pics = this.pictures.get(id);
     if (pics && pics.at === p.line.at && this.loadPicture) {
@@ -653,6 +653,27 @@ export function tidy(s: string): string {
 }
 
 // A whole message to read: markdown marks gone, but paragraphs, lists and code kept.
+// Text with its web addresses as links the owner can tap (on a phone, copying a link out of a bubble
+// is hard). Only http(s); each opens in a new tab. Built from text nodes, never HTML.
+const URL_RE = /https?:\/\/[^\s<>"'`)\]]+[^\s<>"'`)\].,;:!?]/g;
+export function linkify(el: HTMLElement, text: string): void {
+  el.textContent = '';
+  let at = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    if (m.index! > at) el.append(text.slice(at, m.index));
+    const a = document.createElement('a');
+    a.href = m[0];
+    a.textContent = m[0];
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.className = 'msg-link';
+    a.addEventListener('click', (e) => e.stopPropagation());
+    el.append(a);
+    at = m.index! + m[0].length;
+  }
+  if (at < text.length) el.append(text.slice(at));
+}
+
 export function readable(s: string): string {
   const t = s
     .replace(/```[a-z]*\n?/gi, '')
