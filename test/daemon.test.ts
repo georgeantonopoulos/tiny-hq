@@ -360,3 +360,14 @@ test('daemon: a bubble picture it cannot read is a 404, never a crash', async ()
     await new Promise((r) => d.close(r));
   }
 });
+
+// What the owner sends says whether it came from their phone or the Mac.
+test('the device the owner answered from: the Mac, their phone, or another device over Tailscale', async () => {
+  const { fromOf, fromWords } = await import('../src/daemon/server.ts');
+  const req = (ua: string) => ({ headers: { 'user-agent': ua } }) as unknown as import('node:http').IncomingMessage;
+  assert.equal(fromOf(req('Mozilla/5.0 (Macintosh)'), false), 'mac');
+  assert.equal(fromOf(req('Mozilla/5.0 (Linux; Android 10; K) Chrome Mobile'), true), 'phone');
+  assert.equal(fromOf(req('Mozilla/5.0 (Windows NT 10.0)'), true), 'other');
+  assert.equal(fromWords('phone'), 'on their phone');
+  assert.equal(fromWords(undefined), '');
+});

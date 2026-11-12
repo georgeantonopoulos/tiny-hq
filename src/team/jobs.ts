@@ -40,14 +40,14 @@ export function validJob(j: unknown): Job | undefined {
   if (!j || typeof j !== 'object') return undefined;
   const o = j as Record<string, unknown>;
   const str = (k: string) => (typeof o[k] === 'string' ? (o[k] as string) : '');
-  if (!ID.test(str('id')) || !str('room').startsWith('/') || !clean(str('title'), 120) || !clean(str('done'), 400)) return undefined;
+  if (!ID.test(str('id')) || !str('room').startsWith('/') || !clean(str('title'), 120) || !clean(str('done'), 1200)) return undefined;
   const status: JobStatus = o.status === 'waiting' || o.status === 'done' ? o.status : 'active';
   const num = (k: string) => (typeof o[k] === 'number' && (o[k] as number) > 0 ? (o[k] as number) : undefined);
   const job: Job = {
     id: str('id'),
     room: str('room'),
     title: clean(str('title'), 120),
-    done: clean(str('done'), 400),
+    done: clean(str('done'), 1200),
     status,
     createdAt: num('createdAt') ?? Date.now(),
     updatedAt: num('updatedAt') ?? Date.now(),
@@ -125,6 +125,7 @@ export function briefTemplate(job: Pick<Job, 'id' | 'title' | 'done' | 'room'>):
     '## Rules and limits',
     '- No email (or message to a person outside the office) is sent without the owner: draft only.',
     "- Nothing goes on a public site (post, comment, reply, review, DM, upload) without the owner's yes for that exact text: put the text to them with manager/ask \"<what and where>\" --why post --tried \"<...>\" --text \"<the exact text>\" --target <owner/repo#N, owner/repo for a new issue, or the page URL> (posts are button-only, each pass for that one place: only their Approve on that exact text lets it through, once).",
+    "- \"Works\" means seen or heard: report fixed, working or ready only after you saw or heard the real output the person gets, on the device they use (phone, the Mac's browser, the live link); say which device and how. Checking what the code asked for is not proof. If the owner reports a problem without saying where, ask which device first.",
     "- Nothing you build is reachable without a login unless the owner said yes for that project (a deploy is a post): manager/ask \"<...>\" --why post --text \"deploy <project> publicly\" --target deploy:<project>; check every deploy's address logged out.",
     "- Every other step of this job is the room's to do, Chrome consoles and sign-ins their Chrome already has included. A broken office tool goes to the manager as an office fault. Need a yes from the owner: manager/ask --why <reason> --tried \"<what you tried>\".",
     '',
