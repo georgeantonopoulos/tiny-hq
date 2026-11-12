@@ -32,12 +32,69 @@ const HOW = 'Put the exact text and where it goes to the owner first: manager/as
 
 // ---- Shell words ----
 // Enough of sh for this: quotes, backslashes, and the separators ; & | ( ) and newlines (as ";").
+// Here-documents: the text after `<<EOF` up to the EOF line is data for the command, not
+// commands, unless that command is a shell (bash <<EOF runs it). Rooms writing a file or a script
+// that only mentions a deploy or a gh post used to be refused.
+const HEREDOC_RUNS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'eval', 'source', '.', 'ssh', 'xargs', 'env', 'sudo', 'exec', 'command', 'nohup', 'time', 'timeout']);
 export function words(cmd) {
   const out = [];
   let cur = '', q = null, any = false;
+  const pending = []; // here-document ends waiting for the next newline: { end, tabs, keep }
   const flush = () => { if (cur || any) out.push(cur); cur = ''; any = false; };
+  // The program of the command being built: the first word after the last separator.
+  const program = () => {
+    let k = out.length;
+    while (k > 0 && !SEP_CHARS.has(out[k - 1])) k--;
+    const seg = out.slice(k).filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    return basename(seg[0] ?? cur ?? '');
+  };
   for (let i = 0; i < cmd.length; i++) {
     const ch = cmd[i];
+    if (!q && ch === '<' && cmd[i + 1] === '<' && cmd[i + 2] !== '<') {
+      // <<[-] delimiter (quoted or not)
+      flush();
+      let j = i + 2;
+      const tabs = cmd[j] === '-';
+      if (tabs) j++;
+      while (cmd[j] === ' ' || cmd[j] === '\t') j++;
+      let end = '';
+      let dq = null;
+      for (; j < cmd.length; j++) {
+        const c = cmd[j];
+        if (dq) { if (c === dq) dq = null; else end += c; continue; }
+        if (c === "'" || c === '"') { dq = c; continue; }
+        if (c === '\\') continue;
+        if (/[\s;&|()<>]/.test(c)) break;
+        end += c;
+      }
+      if (end) {
+        pending.push({ end, tabs, keep: HEREDOC_RUNS.has(program()) });
+        i = j - 1;
+        continue;
+      }
+    }
+    if (!q && ch === '\n' && pending.length) {
+      flush();
+      out.push(';');
+      // Skip (or keep, for a shell) each pending body up to its end line.
+      let j = i + 1;
+      for (const h of pending.splice(0)) {
+        let body = '';
+        for (;;) {
+          const nl = cmd.indexOf('\n', j);
+          const line = cmd.slice(j, nl < 0 ? cmd.length : nl);
+          j = nl < 0 ? cmd.length : nl + 1;
+          if ((h.tabs ? line.replace(/^\t+/, '') : line) === h.end || nl < 0) {
+            if ((h.tabs ? line.replace(/^\t+/, '') : line) !== h.end) body += line;
+            break;
+          }
+          body += line + '\n';
+        }
+        if (h.keep) out.push(...words(body), ';');
+      }
+      i = j - 1;
+      continue;
+    }
     if (q === "'") { if (ch === "'") q = null; else cur += ch; continue; }
     if (q === '"') {
       if (ch === '"') q = null;
@@ -59,6 +116,7 @@ export function words(cmd) {
   return out;
 }
 const SEP = new Set([';', '&', '|', '(', ')', '<', '>']);
+const SEP_CHARS = SEP;
 
 // Commands inside commands: the strings given to bash -c, sh -c, eval, xargs, env, and words that
 // themselves look like a command line, are read too.

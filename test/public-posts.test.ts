@@ -263,3 +263,17 @@ test('public deploys need the owner\'s Approve for that project; previews of a l
   denies(D('vercel ../other-project --prod'), /deploy other-project publicly/);
   assert.equal(D('vercel --prod'), 'pass', "the room's own pass was still there");
 });
+
+// Text written into a file with a here-document used to be read as commands, so a room writing notes
+// or a script that only mentions a deploy or a post was refused. Fed to a shell, it still counts.
+test('a here-document is data unless a shell runs it', () => {
+  const P = { use: () => false, click: () => false, repo: () => 'x/x' };
+  const D = (command: string) => decide('Bash', { command }, {}, 's', P, '/tmp/garden-planner');
+  const nl = '\n';
+  assert.equal(D(`cat > notes.md <<'EOF'${nl}vercel --prod${nl}gh pr comment 4 -b hi${nl}EOF`), undefined);
+  assert.equal(D(`python3 - <<EOF${nl}print("vercel --prod")${nl}EOF`), undefined);
+  assert.equal(D(`cat <<-EOF${nl}\tvercel --prod${nl}\tEOF`), undefined);
+  denies(D(`bash <<EOF${nl}vercel --prod${nl}EOF`), /deploy garden-planner publicly/);
+  denies(D(`bash -s <<'EOF'${nl}gh pr comment 4 -b hi${nl}EOF`), /button-only/);
+  denies(D(`cat > a <<EOF${nl}hello${nl}EOF${nl}vercel --prod`), /deploy garden-planner publicly/); // after the body: a command again
+});
