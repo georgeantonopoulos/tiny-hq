@@ -54,6 +54,14 @@ test('picked projects get rooms (the busiest 12); the rest go to the archive cup
   assert.deepEqual(c.hiddenProjects, ['/gone'], 'a picked project comes back from hidden');
 });
 
+test('every project left out stays in the archive after the settings are read back', async () => {
+  const { loadConfig, saveConfig } = await import('../src/config.ts');
+  const file = join(base, 'many.json');
+  const offered = Array.from({ length: 200 }, (_, i) => `/p/${i}`);
+  saveConfig(file, withRooms({ ...DEFAULT_CONFIG }, { chosen: [], offered }));
+  assert.equal(loadConfig(file).archivedProjects.length, 200);
+});
+
 test('the welcome server needs its key, serves only its own files, and hands over cleaned answers', async () => {
   let link = '';
   let got: { managerName: string; rooms?: { chosen: string[] } } | undefined;
@@ -99,6 +107,6 @@ test('the welcome server needs its key, serves only its own files, and hands ove
   const fin = await fetch(`${origin}/api/welcome/finish`, { method: 'POST', headers: auth, body: JSON.stringify({ managerName: 'Maple', rooms: { chosen: [rooms[0]!.path, '/not/offered'] } }) });
   assert.deepEqual(await fin.json(), { url: 'http://127.0.0.1:1/#code=x' });
   assert.equal(got?.managerName, 'Maple');
-  assert.deepEqual(got?.rooms?.chosen, [rooms[0]!.path]);
+  assert.deepEqual((got as { rooms?: { chosen: string[] } } | undefined)?.rooms?.chosen, [rooms[0]!.path]);
   await done; // the server closes once the office is open
 });

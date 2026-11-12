@@ -49,8 +49,10 @@ export const cleanName = (v: unknown, fallback: string): string => {
   return s || fallback;
 };
 
-const paths = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((p): p is string => typeof p === 'string' && /^\/[^\x00-\x1f\x7f]{1,400}$/.test(p)).slice(0, 50) : [];
+// Folder lists: plain absolute paths only, at most `max` (the archive and hidden lists hold every
+// project setup can offer, so a room the owner left out stays out).
+const paths = (v: unknown, max = 50): string[] =>
+  Array.isArray(v) ? v.filter((p): p is string => typeof p === 'string' && /^\/[^\x00-\x1f\x7f]{1,400}$/.test(p)).slice(0, max) : [];
 
 export function loadConfig(path: string): Config {
   if (!existsSync(path)) {
@@ -76,8 +78,8 @@ export function loadConfig(path: string): Config {
       ...(remote ? { remote } : {}),
       extraProjects: paths(raw.extraProjects),
       pinnedProjects: paths(raw.pinnedProjects).slice(0, 12), // the rooms the owner picked; the floor holds 12
-      hiddenProjects: paths(raw.hiddenProjects),
-      archivedProjects: paths(raw.archivedProjects),
+      hiddenProjects: paths(raw.hiddenProjects, 1000),
+      archivedProjects: paths(raw.archivedProjects, 1000),
       ...(parseTime(raw.briefingTime) ? { briefingTime: parseTime(raw.briefingTime) } : {}),
     };
   } catch {
