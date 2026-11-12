@@ -70,7 +70,7 @@ Example: `Rosa: Fixed the export bug; tests pass. Left: release notes. Owner: OK
 
 ## Your speech bubble
 
-The office shows the last thing you wrote, in a bubble over your character. **End every reply with one short sentence that sums it up** (what's done, or what you need), so the bubble says something useful. Keep the rest of your reply as normal.
+The office shows your latest message in a bubble over your character, starting from its first lines, and the owner's phone may show it as a notification. **Lead with the answer** (what's done, or what you need) in plain words, as you'd say it to a colleague. No closing summary, slogan or tagline ("X is live!", "Y now works properly"), and no status line written like an announcement.
 
 ## Things that belong to the manager or the owner, not you
 
