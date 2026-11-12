@@ -20,12 +20,14 @@
 // so what the owner approved is exactly what goes up. Anything the guard can't read for certain is
 // refused. It guards against accidents; a room set on getting round it on the owner's own account could.
 
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { normTarget } from './post-approvals.mjs';
 
-const HOW = 'Put the exact text to the owner first: manager/ask "<what and where>" --why post --tried "<what you did>" --text "<the exact text>". Once they approve, run the post on its own, with exactly that text written out (-b "<text>"), within 2 hours.';
+const HOW = 'Put the exact text and where it goes to the owner first: manager/ask "<what and where>" --why post --tried "<what you did>" --text "<the exact text>" --target <owner/repo#number, owner/repo for a new issue, or the page URL>. Once they approve, run the post on its own, with exactly that text written out (-b "<text>"), on that PR or issue (its number, and -R owner/repo outside its own folder), within 2 hours.';
 
 // ---- Shell words ----
 // Enough of sh for this: quotes, backslashes, and the separators ; & | ( ) and newlines (as ";").
@@ -45,6 +47,9 @@ export function words(cmd) {
     if (ch === "'" || ch === '"') { q = ch; any = true; continue; }
     if (ch === '\\' && i + 1 < cmd.length) { if (cmd[i + 1] !== '\n') cur += cmd[i + 1]; i++; any = true; continue; }
     if (ch === '\n') { flush(); out.push(';'); continue; }
+    // A comment, as the shell reads it (a # starting a word): the rest of the line never runs, so it
+    // is never read (e.g. "gh pr comment 44 -b x # -R a/b" showed the guard a/b).
+    if (ch === '#' && !cur && !any) { while (i + 1 < cmd.length && cmd[i + 1] !== '\n') i++; continue; }
     if (/\s/.test(ch)) { flush(); continue; }
     if (';&|()<>'.includes(ch)) { flush(); out.push(ch); continue; }
     cur += ch; any = true;
@@ -140,6 +145,16 @@ function ghArgs(seg, i) {
 }
 const hasFlag = (args, names) => args.some((a) => names.some((n) => a === n || a.startsWith(`${n}=`) || (/^-[a-zA-Z]$/.test(n) && a.startsWith(n) && a.length > 2 && !a.startsWith('--'))));
 
+// gh takes the last --visibility; any "public" among several counts as public.
+const visibilityTo = (args) => {
+  const seen = [];
+  for (let k = 0; k < args.length; k++) {
+    if (args[k] === '--visibility') seen.push(String(args[k + 1] ?? '').toLowerCase());
+    else if (args[k].startsWith('--visibility=')) seen.push(args[k].slice(13).toLowerCase());
+  }
+  return seen.includes('public') ? 'public' : seen.at(-1) ?? '';
+};
+
 // Is this gh call a post? Returns a short description, or undefined.
 function ghPost(args) {
   // The verb is the first plain word after the subcommand, skipping -R/--repo and its value
@@ -160,7 +175,7 @@ function ghPost(args) {
   if (sub === 'discussion') return 'a GitHub discussion';
   if (sub === 'alias' && ['set', 'import'].includes(verb)) return 'a gh alias (it could hide a post)';
   if (sub === 'repo' && verb === 'create' && hasFlag(args, ['--public'])) return 'a public repository';
-  if (sub === 'repo' && verb === 'edit' && hasFlag(args, ['--visibility'])) return 'changing who can see a repository';
+  if (sub === 'repo' && verb === 'edit' && hasFlag(args, ['--visibility'])) return visibilityTo(args) === 'public' ? 'making a repository public' : undefined;
   if (sub === 'api') {
     const method = (() => { for (let k = 0; k < args.length; k++) { const a = args[k]; if (a === '-X' || a === '--method') return (args[k + 1] ?? '').toUpperCase(); if (/^(-X|--method=)/.test(a)) return a.replace(/^(-X|--method=)/, '').toUpperCase(); } return ''; })();
     const fields = hasFlag(args, ['-f', '-F', '--field', '--raw-field', '--input']);
@@ -256,6 +271,105 @@ export function ghPostText(cmd, post = posts(cmd)[0]) {
   return title !== undefined ? `${title}\n\n${body}` : body;
 }
 
+// Where a gh post goes (each pass is for one PR or issue): "owner/repo#N", "owner/repo" for a
+// new issue, or undefined when it can't be told for certain (no number given, so gh would pick the
+// current branch's PR). The repo comes from -R/--repo or GH_REPO, else the folder's GitHub remote.
+const VALUE_FLAGS = new Set(['-b', '--body', '-t', '--title', '-c', '--comment', '-R', '--repo', '-F', '--body-file', '-l', '--label', '-a', '--assignee', '-m', '--milestone', '-p', '--project', '-r', '--reviewer', '-B', '--base', '-H', '--head', '-f', '--field', '--raw-field', '-X', '--method', '-H', '--header', '-T', '--template', '--add-label', '--remove-label', '--add-assignee', '--remove-assignee', '--add-reviewer', '--remove-reviewer', '--add-project', '--remove-project', '--hostname', '--jq', '-q']);
+const API_VALUE_FLAGS = new Set(['-X', '--method', '-f', '-F', '--field', '--raw-field', '-H', '--header', '-q', '--jq', '-t', '--template', '-p', '--preview', '--cache', '--hostname', '--input']);
+export function ghTarget(post, cwd, repoOf = remoteRepo) {
+  if (post.seg.slice(0, post.at).some((w) => /^GH_HOST=/.test(w)) || hasFlag(post.seg.slice(post.at + 1), ['--hostname'])) return undefined;
+  const seg = post.seg;
+  const all = seg.slice(post.at + 1);
+  let repo;
+  for (let k = 0; k < all.length; k++) {
+    if ((all[k] === '-R' || all[k] === '--repo') && all[k + 1]) repo = all[k + 1];
+    else if (/^(-R|--repo=)/.test(all[k]) && all[k].length > 2) repo = all[k].replace(/^(-R|--repo=)/, '');
+  }
+  if (!repo) for (const w of seg.slice(0, post.at)) if (/^GH_REPO=/.test(w)) repo = w.slice(8);
+  const own = () => (repo ? normTarget(repo).replace(/#.*/, '') : repoOf(cwd) ?? '');
+  const args = ghArgs(seg, post.at);
+  const sub = args[0];
+  if (sub === 'api') {
+    // The endpoint is the one plain word that isn't a flag's value; more than one is refused
+    // (--jq's value is not the endpoint). Another host (--hostname, GH_HOST) is refused.
+    const plain = [];
+    for (let j = 1; j < args.length; j++) {
+      const a = args[j];
+      if (API_VALUE_FLAGS.has(a)) { j++; continue; }
+      if (a.startsWith('-') || /^(GET|POST|PATCH|PUT|DELETE)$/i.test(a)) continue;
+      plain.push(a);
+    }
+    if (plain.length !== 1 || hasFlag(args, ['--hostname']) || seg.slice(0, post.at).some((w) => /^GH_HOST=/.test(w))) return undefined;
+    const endpoint = plain[0].replace(/^\/+/, '').replace(/[?#].*$/, '').replace(/\/+$/, '').replace(/^repos\/\{owner\}\/\{repo\}/, () => `repos/${own()}`);
+    // Only a comment or review on one issue or PR, or a new issue: nothing else in a repo is covered
+    // by a pass (an edit of an old comment, a commit comment, a new PR are refused).
+    let m = endpoint.match(/^repos\/([A-Za-z0-9-]+\/[\w.-]+)\/(?:issues|pulls)\/(\d+)\/(?:comments|reviews)$/);
+    if (m) return normTarget(`${m[1]}#${m[2]}`) || undefined;
+    m = endpoint.match(/^repos\/([A-Za-z0-9-]+\/[\w.-]+)\/issues$/);
+    return m ? normTarget(m[1]) || undefined : undefined;
+  }
+  if (sub !== 'pr' && sub !== 'issue') return undefined;
+  let k = 1;
+  for (; k < args.length; k++) { if (GH_TAKES_VALUE.has(args[k])) { k++; continue; } if (!args[k].startsWith('-')) break; }
+  const verb = args[k];
+  if (sub === 'issue' && verb === 'create') return own() || undefined;
+  const nums = new Set();
+  for (let j = k + 1; j < args.length; j++) {
+    const a = args[j];
+    if (VALUE_FLAGS.has(a)) { j++; continue; }
+    if (a.startsWith('-')) continue;
+    if (/^#?\d+$/.test(a)) nums.add(`${own()}#${Number(a.replace('#', ''))}`);
+    else if (/github\.com\//i.test(a) && normTarget(a).includes('#')) nums.add(normTarget(a));
+  }
+  if (nums.size !== 1) return undefined;
+  const t = normTarget([...nums][0]);
+  return t.includes('#') && !t.startsWith('#') ? t : undefined;
+}
+// gh repo edit … --visibility public / gh repo create … --public: the repo going public ("owner/repo"),
+// '' when it can't be told for certain, undefined when the command isn't one of these.
+export function repoGoingPublic(post, cwd, repoOf = remoteRepo) {
+  const args = ghArgs(post.seg, post.at);
+  if (args[0] !== 'repo') return undefined;
+  let k = 1;
+  for (; k < args.length; k++) { if (GH_TAKES_VALUE.has(args[k])) { k++; continue; } if (!args[k].startsWith('-')) break; }
+  const verb = args[k];
+  const isEdit = verb === 'edit' && visibilityTo(args) === 'public';
+  const isCreate = verb === 'create' && hasFlag(args, ['--public']);
+  if (!isEdit && !isCreate) return undefined;
+  const named = [];
+  for (let j = k + 1; j < args.length; j++) {
+    const a = args[j];
+    if (['--visibility', '-d', '--description', '-h', '--homepage', '-t', '--team', '-g', '--gitignore', '-l', '--license', '-s', '--source', '-r', '--remote', '--add-topic', '--remove-topic', '--default-branch'].includes(a) || (isCreate && (a === '-p' || a === '--template'))) { j++; continue; }
+    if (!a.startsWith('-')) named.push(a);
+  }
+  if (named.length > 1) return '';
+  const t = named.length ? normTarget(named[0]) : isEdit ? repoOf(cwd) ?? '' : '';
+  return /^[a-z0-9-]+\/[\w.-]+$/.test(t) ? t : '';
+}
+// The folder's GitHub repo, as gh would pick it: the remote marked by `gh repo set-default`, else
+// the only GitHub remote. Several GitHub remotes and no default (a fork with an upstream) is
+// undefined: gh might pick another one, so the post must name its repo with -R.
+function remoteRepo(cwd) {
+  try {
+    const out = execFileSync('git', ['-C', String(cwd ?? '.'), 'config', '--get-regexp', '^remote\\..*\\.(url|gh-resolved)$'], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const urls = new Map();
+    let chosen;
+    for (const line of out.split('\n')) {
+      const m = line.match(/^remote\.(.+)\.(url|gh-resolved) (.*)$/);
+      if (!m) continue;
+      if (m[2] === 'url') {
+        const r = m[3].trim().match(/github\.com[:/]([A-Za-z0-9-]+\/[\w.-]+?)(?:\.git)?\/?$/i);
+        if (r) urls.set(m[1], r[1].toLowerCase());
+      } else if (m[3].trim() === 'base') chosen = m[1];
+      else if (m[3].trim().includes('/')) return normTarget(m[3].trim()) || undefined; // set-default to a named repo
+    }
+    if (chosen) return urls.get(chosen);
+    return urls.size === 1 ? [...urls.values()][0] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // ---- Decide ----
 const BROWSER = /^mcp__(claude-in-chrome|plugin_playwright_playwright|playwright)__/;
 const LOOK = /(screenshot|read_page|get_page_text|find|snapshot|tabs_context|list_connected|console|network|wait_for|tabs_close|tabs_create|resize|gif_creator|select_browser|switch_browser)/;
@@ -278,10 +392,20 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
     if (found.length > 1 || allWords.some((t) => SEP.has(t)) || segments(cmd).length > 1) {
       return { deny: `Public posts are button-only: this command does ${why} alongside other commands. Run the approved post on its own, as a single gh command. ${HOW}` };
     }
+    // Making a repo public has no text of its own: the text the owner
+    // approves is the fixed sentence "make <owner/repo> public", for that repo.
+    const vis = repoGoingPublic(found[0], cwd, passes.repo);
+    if (vis !== undefined) {
+      if (!vis) return { deny: `Making a repository public is button-only, and the office can't tell for certain which repository this is. Name it in full: gh repo edit owner/repo --visibility public, or gh repo create owner/name --public. ${HOW}` };
+      if (passes.use(`make ${vis} public`, session, cwd, undefined, vis)) return 'pass';
+      return { deny: `Making a repository public is button-only: the owner hasn't approved "make ${vis} public". Ask with manager/ask "<why>" --why post --tried "<what you did>" --text "make ${vis} public" --target ${vis}; once they approve, run this command on its own within 2 hours.` };
+    }
     const text = found[0].why.startsWith('sending data') ? undefined : ghPostText(cmd, found[0]);
     if (text === undefined) return { deny: `Public posts are button-only: this is ${why}, and its exact text can't be read for certain (write it out with -b "<text>"; no $, backticks, files or editors). ${HOW}` };
-    if (passes.use(text, session, cwd)) return 'pass';
-    return { deny: `Public posts are button-only: this is ${why} whose exact text the owner has not approved. ${HOW}` };
+    const target = ghTarget(found[0], cwd, passes.repo);
+    if (!target) return { deny: `Public posts are button-only, each for one PR or issue: this is ${why}, and the office can't tell for certain which PR or issue it goes on. Name it: the number (gh pr comment 44 ...) and -R owner/repo when you're outside its own folder. ${HOW}` };
+    if (passes.use(text, session, cwd, undefined, target)) return 'pass';
+    return { deny: `Public posts are button-only (each pass is for one PR or issue): this is ${why} on ${target}, and the owner hasn't approved this exact text there. ${HOW}` };
   }
   if (!BROWSER.test(tool)) return undefined;
   const tab = String(input.tabId ?? input.tab_id ?? 'default');
@@ -303,7 +427,7 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
     const site = hostOf(where);
     // Typing the owner's approved text uses its pass; one click in that tab right after posts it.
     const typed = typeof input.text === 'string' ? input.text : typeof input.value === 'string' ? input.value : undefined;
-    if (typed !== undefined && /type|form_input|fill/.test(`${tool} ${action}`) && passes.use(typed, session, cwd, { tab, site })) return 'pass';
+    if (typed !== undefined && /type|form_input|fill/.test(`${tool} ${action}`) && passes.use(typed, session, cwd, { tab, site }, where)) return 'pass';
     if (/click|key|press/.test(`${tool} ${action}`) && passes.click(session, tab, site)) return 'pass';
     return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then type exactly that text; one click in the same tab to post it is let through for 10 minutes.` };
   }
@@ -334,7 +458,7 @@ if (isMain) {
     try {
       const pa = await import('./post-approvals.mjs');
       defaultPasses = {
-        use: (text, session, cwd, where) => pa.usePass(text, session, Date.now(), pa.approvalsPath(), cwd, where),
+        use: (text, session, cwd, where, target) => pa.usePass(text, session, Date.now(), pa.approvalsPath(), cwd, where, target),
         click: (session, tab, site) => pa.useClick(session, tab, site, Date.now(), pa.approvalsPath()),
       };
       const hook = JSON.parse(raw || '{}');

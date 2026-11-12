@@ -942,7 +942,7 @@ function openAsks(): Record<string, { id: string; question: string; more?: numbe
   const shown = oldestPerFolder(loadAsks(ASKS)).sort((x, y) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask)));
   for (const { ask, more } of shown) {
     const who = personFor(ask.folder) ?? (offFloorTrust(ask) ? { id: 'manager' } : undefined);
-    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(ask.post ? { post: ask.post } : {}) };
+    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}) };
   }
   return out;
 }
@@ -961,6 +961,20 @@ async function answerAsk(id: string, answer: Answer): Promise<void> {
     throw err;
   }
 }
+// Where a post button from before --target goes: the "#N" in its question, in the asking
+// folder's GitHub repo. Undefined when the question names no single number: its pass then goes nowhere.
+function postTargetGuess(ask: Ask): string | undefined {
+  const nums = [...new Set([...ask.question.matchAll(/#(\d+)\b/g)].map((m) => m[1]))];
+  if (nums.length !== 1) return undefined;
+  try {
+    const url = execFileSync('git', ['-C', ask.folder, 'config', '--get', 'remote.origin.url'], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const m = url.match(/github\.com[:/]([A-Za-z0-9-]+\/[\w.-]+?)(?:\.git)?$/i);
+    return m?.[1] ? `${m[1].toLowerCase()}#${nums[0]}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function trustAndStart(folder: string, name: string, task: string): Promise<void> {
   trustFolder(folder);
   const env = { ...(await userEnv()), CM_CLAUDE_BIN: CLAUDE_BIN, CM_DATA_DIR: DATA_DIR };
@@ -976,7 +990,8 @@ async function deliverAnswer(ask: Ask, answer: Answer): Promise<void> {
   const yes = 'yes' in answer && answer.yes;
   // Button-only posts: the owner's Approve on a post's exact text is the one way it can go up.
   if (yes && ask.post) {
-    grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder);
+    // For that PR/issue only; a button from before --target names it in its question ("PR #44").
+    grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '');
     console.log(`posts: the owner approved a post's exact text for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
   }
   const id = ask.id;
