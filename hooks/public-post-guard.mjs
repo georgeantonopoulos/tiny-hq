@@ -27,6 +27,7 @@ import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { normTarget } from './post-approvals.mjs';
 
+const DEPLOY_HOW = (name) => `ask the owner first: manager/ask "<what goes public and why>" --why post --tried "<what you checked>" --text "deploy ${name} publicly" --target deploy:${name}. Once they approve, run the deploy on its own within 2 hours, then open its address logged out to check it shows what they approved.`;
 const HOW = 'Put the exact text and where it goes to the owner first: manager/ask "<what and where>" --why post --tried "<what you did>" --text "<the exact text>" --target <owner/repo#number, owner/repo for a new issue, or the page URL>. Once they approve, run the post on its own, with exactly that text written out (-b "<text>"), on that PR or issue (its number, and -R owner/repo outside its own folder), within 2 hours.';
 
 // ---- Shell words ----
@@ -107,7 +108,7 @@ export function substitutions(t) {
 // keywords (do, then, if, !, …) and wrappers that run the rest (sudo, env, xargs, nohup, time, …),
 // skipping those wrappers' own options. An argument such as the pattern in `rg gh src` is not a program.
 const KEYWORDS = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}', 'time']);
-const WRAPPERS = new Set(['sudo', 'env', 'xargs', 'nohup', 'time', 'command', 'exec', 'watch', 'parallel', 'nice', 'timeout', 'caffeinate']);
+const WRAPPERS = new Set(['sudo', 'env', 'xargs', 'nohup', 'time', 'command', 'exec', 'watch', 'parallel', 'nice', 'timeout', 'caffeinate', 'npx', 'bunx']);
 export function programAt(seg) {
   const at = [];
   let k = 0;
@@ -379,6 +380,86 @@ function remoteRepo(cwd) {
   }
 }
 
+// ---- Deploys (button-only, like posts) ----
+// A deploy anyone can open without a login is a public post: a first deploy can land on a public
+// address even when the project was meant to stay private. Counted: vercel production
+// deploys (--prod, promote, rollback, alias, or a first deploy from a folder not yet linked), every
+// netlify deploy (drafts are public too), gh-pages, firebase deploy, surge, wrangler deploys and
+// fly deploy. A vercel preview of a linked project stays allowed (Vercel protects previews).
+// Approved as the fixed text "deploy <project> publicly", for target deploy:<project>.
+const DEPLOY_TOOLS = new Set(['vercel', 'netlify', 'gh-pages', 'firebase', 'surge', 'wrangler', 'fly', 'flyctl']);
+function projectName(cwd) {
+  const root = String(cwd ?? '').replace(/\/\.claude\/worktrees\/[^/]+.*$/, '');
+  try {
+    const p = JSON.parse(readFileSync(join(String(cwd ?? '.'), '.vercel', 'project.json'), 'utf8'));
+    if (typeof p.projectName === 'string' && p.projectName) return p.projectName;
+  } catch {
+    /* not linked to vercel here */
+  }
+  return basename(root);
+}
+const vercelLinked = (cwd) => {
+  try {
+    readFileSync(join(String(cwd ?? '.'), '.vercel', 'project.json'));
+    return true;
+  } catch {
+    return false;
+  }
+};
+// The deploy in one command segment: { why, name } ('' name: can't tell which project), or undefined.
+function deployAt(seg, i, cwd) {
+  let k = i;
+  let tool = basename(seg[k]);
+  // pnpm dlx / yarn dlx / npm exec -- <tool>
+  if (['pnpm', 'yarn', 'npm', 'bun'].includes(tool) && ['dlx', 'exec', 'x'].includes(seg[k + 1])) {
+    k += 2;
+    while (k < seg.length && seg[k].startsWith('-')) k++;
+    tool = basename(seg[k] ?? '');
+  }
+  tool = tool.replace(/@.*$/, ''); // vercel@latest
+  if (!DEPLOY_TOOLS.has(tool)) return undefined;
+  const args = seg.slice(k + 1);
+  const words = args.filter((a) => !a.startsWith('-'));
+  const flag = (...names) => args.some((a) => names.some((n) => a === n || a.startsWith(`${n}=`)));
+  const named = (() => {
+    for (let j = 0; j < args.length; j++) {
+      if (['--name', '--project', '-n', '--site', '-s'].includes(args[j]) && args[j + 1]) return args[j + 1];
+      const m = /^--(name|project|site)=(.+)$/.exec(args[j]);
+      if (m) return m[2];
+    }
+    return undefined;
+  })();
+  const name = String(named ?? projectName(cwd)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
+  if (tool === 'vercel') {
+    const sub = words[0];
+    const READS = new Set(['ls', 'list', 'inspect', 'logs', 'env', 'pull', 'link', 'login', 'logout', 'whoami', 'project', 'projects', 'domains', 'dns', 'certs', 'secrets', 'teams', 'switch', 'help', 'dev', 'build', 'init', 'git', 'integration', 'bisect', 'telemetry', 'remove', 'rm']);
+    if (sub && READS.has(sub)) return undefined;
+    if (sub && !['deploy', 'promote', 'rollback', 'alias', 'redeploy'].includes(sub) && !/^[./~]/.test(sub)) return undefined; // vercel <path> deploys a folder; other words are unknown subcommands
+    const prod = flag('--prod', '--production') || args.some((a) => /^--target=production$/.test(a)) || (args.includes('--target') && args[args.indexOf('--target') + 1] === 'production') || ['promote', 'rollback', 'alias'].includes(sub);
+    if (!prod && vercelLinked(cwd)) return undefined; // a preview of a linked project: protected
+    return { why: prod ? 'a public Vercel production deploy' : 'a first Vercel deploy (it goes to a public production address)', name };
+  }
+  if (tool === 'netlify') return words[0] === 'deploy' ? { why: 'a Netlify deploy (draft addresses are public too)', name } : undefined;
+  if (tool === 'gh-pages') return { why: 'a GitHub Pages deploy', name };
+  if (tool === 'firebase') return words[0] === 'deploy' || words[0] === 'hosting:channel:deploy' ? { why: 'a Firebase deploy', name } : undefined;
+  if (tool === 'surge') return words[0] === 'list' || words[0] === 'login' || words[0] === 'whoami' ? undefined : { why: 'a Surge deploy', name };
+  if (tool === 'wrangler') return (words[0] === 'deploy' || words[0] === 'publish' || (words[0] === 'pages' && ['deploy', 'publish'].includes(words[1]))) ? { why: 'a Cloudflare deploy', name } : undefined;
+  if (tool === 'fly' || tool === 'flyctl') return words[0] === 'deploy' ? { why: 'a Fly deploy', name } : undefined;
+  return undefined;
+}
+export function deploysIn(cmd, cwd) {
+  const out = [];
+  for (const seg of segments(cmd)) programAt(seg).forEach((i) => {
+    const d = deployAt(seg, i, cwd);
+    if (d) out.push(d);
+  });
+  // git push … gh-pages: publishing the Pages branch.
+  for (const seg of segments(cmd)) programAt(seg).forEach((i) => {
+    if (basename(seg[i]) === 'git' && seg.slice(i + 1).includes('push') && seg.slice(i + 1).some((a) => /(^|:)gh-pages$/.test(a))) out.push({ why: 'a push to GitHub Pages', name: projectName(cwd).toLowerCase() });
+  });
+  return out;
+}
+
 // ---- Decide ----
 const BROWSER = /^mcp__(claude-in-chrome|plugin_playwright_playwright|playwright)__/;
 const LOOK = /(screenshot|read_page|get_page_text|find|snapshot|tabs_context|list_connected|console|network|wait_for|tabs_close|tabs_create|resize|gif_creator|select_browser|switch_browser)/;
@@ -393,6 +474,14 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
     const cmd = String(input.command ?? '');
     // Only the owner's Approve writes a pass; no command may touch the file.
     if (PRIVATE_FILES.test(cmd)) return { deny: 'The approved-posts file is written only by the owner\'s Approve on their button; no command may read or change it.' };
+    const deploys = deploysIn(cmd, cwd);
+    if (deploys.length) {
+      const d = deploys[0];
+      if (deploys.length > 1 || segments(cmd).length > 1 || words(cmd).some((t) => SEP.has(t))) return { deny: `Public deploys are button-only: this command does ${d.why} alongside other commands. Run the approved deploy on its own. ${DEPLOY_HOW(d.name || '<project>')}` };
+      if (!d.name) return { deny: `Public deploys are button-only, and the office can't tell which project this deploys. ${DEPLOY_HOW('<project>')}` };
+      if (passes.use(`deploy ${d.name} publicly`, session, cwd, undefined, `deploy:${d.name}`)) return 'pass';
+      return { deny: `Public deploys are button-only: this is ${d.why} of "${d.name}", and the owner hasn't approved "deploy ${d.name} publicly". Keep it private (a preview, or the host's protection on), or ${DEPLOY_HOW(d.name)}` };
+    }
     const found = posts(cmd);
     if (!found.length) return undefined;
     const why = found[0].why;
@@ -487,7 +576,7 @@ if (isMain) {
       }
     } catch {
       // Fail closed for anything that could be a post: a guard problem is never a go-ahead.
-      if (/\b(gh|curl|wget|xh|http)\b|mcp__(claude-in-chrome|plugin_playwright|playwright)__/.test(raw)) refuse('Public-post guard could not check this call; refused to be safe. Try again; if it keeps happening, tell the Claude Manager room.');
+      if (/\b(gh|curl|wget|xh|http|vercel|netlify|gh-pages|firebase|surge|wrangler|fly|flyctl)\b|mcp__(claude-in-chrome|plugin_playwright|playwright)__/.test(raw)) refuse('Public-post guard could not check this call; refused to be safe. Try again; if it keeps happening, tell the Claude Manager room.');
     }
   });
 }

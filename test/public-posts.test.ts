@@ -222,3 +222,31 @@ test('a pass is never used for another place: comments, repeated flags, flag val
   denies(D('gh repo edit --template other/repo --visibility public'), /make other\/repo public/);
   assert.equal(seen.includes('o/r#44'), false);
 });
+
+// A first deploy can land on a public address before anyone meant it to. A deploy anyone can open
+// without a login needs the owner's "deploy <project> publicly", once.
+test('public deploys need the owner\'s Approve for that project; previews of a linked project and reads do not', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const path = join(mkdtempSync(join(tmpdir(), 'th-deploy-')), 'post-approvals.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as { usePass: (t: string, s: string, now: number, p: string, cwd?: string, where?: unknown, target?: string) => boolean };
+  const passes = { use: (t: string, s: string, cwd?: string, where?: unknown, target?: string) => pa.usePass(t, s, Date.now(), path, cwd, where, target), click: () => false, repo: () => 'x/x' };
+  const room = join(mkdtempSync(join(tmpdir(), 'th-room-')), 'garden-planner');
+  mkdirSync(room);
+  const D = (command: string, cwd = room) => decide('Bash', { command }, {}, 's', passes, cwd);
+  for (const c of ['vercel --prod', 'npx vercel deploy --prod --yes', 'vercel', 'pnpm dlx vercel@latest --prod', 'netlify deploy --dir dist', 'npx gh-pages -d dist', 'git push origin gh-pages', 'firebase deploy --only hosting', 'wrangler pages deploy dist', 'fly deploy'])
+    denies(D(c), /deploy garden-planner publicly/);
+  denies(D('vercel --prod && echo done'), /alongside other commands/);
+  for (const c of ['vercel ls', 'vercel env pull', 'vercel login', 'echo vercel --prod', 'netlify status', 'git push origin main'])
+    assert.equal(D(c), undefined, c);
+  // Once linked, a preview is protected and allowed; production still needs the pass.
+  mkdirSync(join(room, '.vercel'));
+  writeFileSync(join(room, '.vercel', 'project.json'), JSON.stringify({ projectName: 'Garden-Planner' }));
+  assert.equal(D('vercel'), undefined);
+  denies(D('vercel --prod'), /deploy garden-planner publicly/);
+  grantPass(path, 'deploy garden-planner publicly', room, Date.now(), 'deploy:garden-planner');
+  denies(D('vercel --prod', '/elsewhere/other-room'), /deploy other-room publicly/);
+  assert.equal(D('vercel --prod'), 'pass');
+  denies(D('vercel --prod'), /hasn't approved/); // once
+});

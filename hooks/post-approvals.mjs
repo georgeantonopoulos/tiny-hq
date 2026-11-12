@@ -31,6 +31,9 @@ export function normTarget(t) {
   let m = s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9-]+)\/([\w.-]+?)(?:\.git)?(?:\/(?:pull|pulls|issues)\/(\d+))?(?:[/?#].*)?$/i);
   if (!m) m = s.match(/^([A-Za-z0-9-]+)\/([\w.-]+?)(?:\.git)?(?:#(\d+))?$/);
   if (m) return `${m[1]}/${m[2]}`.toLowerCase() + (m[3] ? `#${Number(m[3])}` : '');
+  // A public deploy of one project (deploys are button-only, like posts).
+  const d = /^deploy:([A-Za-z0-9._-]{1,100})$/.exec(s);
+  if (d) return `deploy:${d[1].toLowerCase()}`;
   if (!/^https?:\/\//i.test(s)) return '';
   try {
     const u = new URL(s);
@@ -40,7 +43,7 @@ export function normTarget(t) {
     return '';
   }
 }
-const isRepoTarget = (t) => /^[a-z0-9-]+\/[\w.-]+(#\d+)?$/.test(t);
+const isRepoTarget = (t) => /^[a-z0-9-]+\/[\w.-]+(#\d+)?$/.test(t) || t.startsWith('deploy:');
 // A pass's target against where the post actually goes: a PR, issue or repo exactly; a site page, or
 // a page under it, with the same query (a thread's ?id=1 is not ?id=2). A pass with no target (from before targets existed) goes nowhere.
 export function sameTarget(pass, actual) {
