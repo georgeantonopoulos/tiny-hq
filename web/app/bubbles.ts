@@ -105,8 +105,28 @@ export class Bubbles {
   // Pictures their latest message points at: how many, for which message, and how to fetch one.
   private pictures = new Map<string, { at: string; n: number }>();
   loadPicture?: (who: string, i: number) => Promise<string | undefined>;
+  // One loaded copy of each picture of a person's current message, reused when the bubble reopens and
+  // released (revoked) once their message changes, so pictures never pile up in the page's memory.
+  private picUrls = new Map<string, Promise<string | undefined>>();
+  private picture(id: string, at: string, i: number): Promise<string | undefined> {
+    const key = `${id}\n${at}\n${i}`;
+    let url = this.picUrls.get(key);
+    if (!url) {
+      url = this.loadPicture!(id, i).catch(() => undefined);
+      this.picUrls.set(key, url);
+    }
+    return url;
+  }
+  private dropPictures(id: string, at: string): void {
+    for (const [key, url] of this.picUrls) {
+      if (!key.startsWith(`${id}\n${at}\n`)) continue;
+      this.picUrls.delete(key);
+      void url.then((u) => u && URL.revokeObjectURL(u)); // also one still loading when the message changed
+    }
+  }
   setPictures(id: string, at: string, n: number): void {
     const was = this.pictures.get(id);
+    if (was && (was.at !== at || n === 0)) this.dropPictures(id, was.at); // a new message: the old pictures go
     if (n > 0) this.pictures.set(id, { at, n });
     else this.pictures.delete(id);
     if ((was?.n ?? 0) !== n && this.panel?.id === id && this.panel.mode === 'msg') this.openMessage(id);
@@ -288,7 +308,7 @@ export class Bubbles {
         img.alt = `Picture ${i + 1} from ${p.speaker.name}`;
         img.title = 'Tap to see it full size';
         row.append(img);
-        void this.loadPicture(id, i).then((url) => {
+        void this.picture(id, pics.at, i).then((url) => {
           if (url) img.src = url;
           else img.remove();
         });

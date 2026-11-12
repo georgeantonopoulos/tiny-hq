@@ -973,6 +973,18 @@ async function answerAsk(id: string, answer: Answer): Promise<void> {
     throw err;
   }
 }
+// Approved (or, for the room's own question a job rides on, any answer): the job is back to work
+// (nudged again if the room goes quiet).
+function resumeJob(ask: Ask, answer: Answer): void {
+  const resume = jobAnswered(ask, answer);
+  if (!resume) return;
+  saveJobs(JOBS, loadJobs(JOBS).map((j: Job) => {
+    if (j.id !== resume || j.status !== 'waiting') return j;
+    const { waitingFor: _w, ...back } = j;
+    return { ...back, status: 'active' as const, updatedAt: Date.now(), lastNudge: Date.now(), nudgesToday: 0 };
+  }));
+}
+
 // Where a post button from before --target goes: the "#N" in its question, in the asking
 // folder's GitHub repo. Undefined when the question names no single number: its pass then goes nowhere.
 function postTargetGuess(ask: Ask): string | undefined {
@@ -1076,6 +1088,7 @@ async function deliverAnswer(ask: Ask, answer: Answer): Promise<void> {
     const ok = await tellManager(`[Office: the owner answered a question that was over ${roomName(ask.folder)}'s head, but the session that asked has gone, so it came to you] ${answerLine(ask, answer)} Act on it now.`);
     if (ok !== true) throw Object.assign(new Error("Couldn't get your answer to the manager; try again."), { status: 503 });
     console.log(`asks: the owner's answer to "${ask.question}" went to the manager (the asker has gone)`);
+    resumeJob(ask, answer); // a job riding on this button is back to work too
     return;
   }
   // Another answer may be starting this room's session right now: wait for it, then use that session.
@@ -1098,15 +1111,7 @@ async function deliverAnswer(ask: Ask, answer: Answer): Promise<void> {
     ok = await tellManager(`[Office: nobody is in ${roomName(ask.folder)}, so the owner's answer came to you] ${line} ${wantsAction(ask, answer) ? 'Hand this to the room now (delegate; the folder needs trusting first).' : 'Note it; the room picks it up next time it is in.'}`);
   }
   if (ok !== true) throw Object.assign(new Error("Couldn't get your answer into their chat; try again, or open the room."), { status: 503 });
-  // Approved (or, for the room's own question a job rides on, any answer): the job is back to work (nudged again if the room goes quiet).
-  const resume = jobAnswered(ask, answer);
-  if (resume) {
-    saveJobs(JOBS, loadJobs(JOBS).map((j: Job) => {
-      if (j.id !== resume || j.status !== 'waiting') return j;
-      const { waitingFor: _w, ...back } = j;
-      return { ...back, status: 'active' as const, updatedAt: Date.now(), lastNudge: Date.now(), nudgesToday: 0 };
-    }));
-  }
+  resumeJob(ask, answer);
   console.log(`asks: the owner ${'choice' in answer ? `chose "${ask.options?.[answer.choice]}" for` : `${'signIn' in answer ? 'said sign in yourself to' : `said ${yes ? 'yes' : 'no'} to`}`} "${ask.question}"`);
 }
 
