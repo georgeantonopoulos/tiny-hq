@@ -495,6 +495,16 @@ function deployAt(seg, i, cwd) {
   })();
   const here = cwdFlag ? resolve(String(cwd ?? '.'), cwdFlag.replace(/^~(?=\/|$)/, homedir())) : cwd;
   const flag = (...names) => args.some((a) => names.some((n) => a === n || a.startsWith(`${n}=`)));
+  // The folder a deploy uploads as it is, when the command names one: built output can change after
+  // the owner's Approve without a commit, so it's checked below.
+  const valueOf = (...names) => {
+    for (let j = 0; j < args.length; j++) {
+      if (names.includes(args[j]) && args[j + 1]) return args[j + 1];
+      const m = names.map((n) => (args[j].startsWith(`${n}=`) ? args[j].slice(n.length + 1) : undefined)).find((v) => v !== undefined);
+      if (m) return m;
+    }
+    return undefined;
+  };
   const named = (() => {
     for (let j = 0; j < args.length; j++) {
       if (['--name', '--project', '-n', '--site', '-s'].includes(args[j]) && args[j + 1]) return args[j + 1];
@@ -533,13 +543,14 @@ function deployAt(seg, i, cwd) {
     const project = String(named ?? projectName(dir)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
     const prod = flag('--prod', '--production') || args.some((a) => /^--target=production$/.test(a)) || (args.includes('--target') && args[args.indexOf('--target') + 1] === 'production') || ['promote', 'rollback', 'alias'].includes(sub);
     if (!prod && vercelLinked(dir)) return undefined; // a preview of a linked project: protected
-    return { why: prod ? 'a public Vercel production deploy' : 'a first Vercel deploy (it goes to a public production address)', name: project, dir };
+    const prebuilt = args.includes('--prebuilt') ? '.vercel/output' : undefined;
+    return { why: prod ? 'a public Vercel production deploy' : 'a first Vercel deploy (it goes to a public production address)', name: project, dir, ...(prebuilt ? { upload: prebuilt } : {}) };
   }
-  if (tool === 'netlify') return words[0] === 'deploy' ? { why: 'a Netlify deploy (draft addresses are public too)', name, dir: here } : undefined;
-  if (tool === 'gh-pages') return { why: 'a GitHub Pages deploy', name, dir: here };
+  if (tool === 'netlify') return words[0] === 'deploy' ? { why: 'a Netlify deploy (draft addresses are public too)', name, dir: here, upload: valueOf('--dir', '-d') } : undefined;
+  if (tool === 'gh-pages') return { why: 'a GitHub Pages deploy', name, dir: here, upload: valueOf('--dist', '-d') };
   if (tool === 'firebase') return words[0] === 'deploy' || words[0] === 'hosting:channel:deploy' ? { why: 'a Firebase deploy', name, dir: here } : undefined;
-  if (tool === 'surge') return words[0] === 'list' || words[0] === 'login' || words[0] === 'whoami' ? undefined : { why: 'a Surge deploy', name, dir: here };
-  if (tool === 'wrangler') return (words[0] === 'deploy' || words[0] === 'publish' || (words[0] === 'pages' && ['deploy', 'publish'].includes(words[1]))) ? { why: 'a Cloudflare deploy', name, dir: here } : undefined;
+  if (tool === 'surge') return words[0] === 'list' || words[0] === 'login' || words[0] === 'whoami' ? undefined : { why: 'a Surge deploy', name, dir: here, upload: valueOf('--project', '-p') ?? words[0] };
+  if (tool === 'wrangler') return (words[0] === 'deploy' || words[0] === 'publish' || (words[0] === 'pages' && ['deploy', 'publish'].includes(words[1]))) ? { why: 'a Cloudflare deploy', name, dir: here, upload: words[0] === 'pages' ? words[2] : undefined } : undefined;
   if (tool === 'fly' || tool === 'flyctl') return words[0] === 'deploy' ? { why: 'a Fly deploy', name, dir: here } : undefined;
   return undefined;
 }
@@ -555,6 +566,24 @@ export function versionOf(dir) {
     return /^[0-9a-f]{7}$/.test(head) ? { head } : { why: "its version can't be read" };
   } catch {
     return { why: "it isn't a git folder with a commit, so the version the owner approves can't be named" };
+  }
+}
+
+// Why an uploaded folder isn't the approved commit itself: git-ignored, or not tracked (undefined when
+// everything in it is tracked; the clean-tree check already covers changes to tracked files).
+export function uploadOutsideCommit(dir, folder) {
+  const opts = { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] };
+  try {
+    execFileSync('git', ['-C', String(dir ?? '.'), 'check-ignore', '-q', String(folder)], opts);
+    return 'git ignores';
+  } catch {
+    /* not ignored (or not a git folder: versionOf refuses that) */
+  }
+  try {
+    const tracked = execFileSync('git', ['-C', String(dir ?? '.'), 'ls-files', '--', String(folder)], opts).trim();
+    return tracked ? undefined : "isn't committed";
+  } catch {
+    return "can't be checked";
   }
 }
 
@@ -596,8 +625,13 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
       }
       const v = versionOf(d.dir ?? cwd);
       if (!v.head) return { deny: `Public deploys are button-only, one approved version at a time: this is ${d.why} of "${d.name}", and ${v.why}.` };
+      const up = d.upload ? uploadOutsideCommit(d.dir ?? cwd, d.upload) : undefined;
+      if (up) return { deny: `Public deploys are button-only, one approved version at a time: this is ${d.why}, and it uploads ${d.upload}, which ${up}, so it could differ from the commit the owner approves. Let the host build from the approved commit, or commit the built folder.` };
       const text = `deploy ${d.name} at ${v.head} publicly`;
-      if (passes.use(text, session, cwd, undefined, `deploy:${d.name}`)) return 'pass';
+      if (passes.use(text, session, cwd, undefined, `deploy:${d.name}`)) {
+        passes.deployed?.(d.name, v.head);
+        return 'pass';
+      }
       return { deny: `Public deploys are button-only, one approved version at a time: this is ${d.why} of "${d.name}" at ${v.head}, and the owner hasn't approved "${text}". Keep it private (a preview, or the host's protection on), or ${DEPLOY_HOW(d.name, v.head)}` };
     }
     const found = posts(cmd);
@@ -677,6 +711,7 @@ if (isMain) {
         use: (text, session, cwd, where, target) => pa.usePass(text, session, Date.now(), pa.approvalsPath(), cwd, where, target),
         click: (session, tab, site) => pa.useClick(session, tab, site, Date.now(), pa.approvalsPath()),
         target: (session, cwd, target) => pa.useTargetPass(session, Date.now(), pa.approvalsPath(), cwd, target),
+        deployed: (project, commit) => pa.recordDeploy(project, commit),
       };
       const hook = JSON.parse(raw || '{}');
       const file = stateFile(hook.session_id ?? 'none');

@@ -242,8 +242,11 @@ test('public deploys need the owner\'s Approve for that project; previews of a l
   git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'v1');
   const head = git('rev-parse', '--short=7', 'HEAD');
   const D = (command: string, cwd = room) => decide('Bash', { command }, {}, 's', passes, cwd);
-  for (const c of ['vercel --prod', 'npx vercel deploy --prod --yes', 'vercel', 'pnpm dlx vercel@latest --prod', 'netlify deploy --dir dist', 'npx gh-pages -d dist', 'git push origin gh-pages', 'firebase deploy --only hosting', 'wrangler pages deploy dist', 'fly deploy'])
+  for (const c of ['vercel --prod', 'npx vercel deploy --prod --yes', 'vercel', 'pnpm dlx vercel@latest --prod', 'git push origin gh-pages', 'firebase deploy --only hosting', 'fly deploy'])
     denies(D(c), /deploy garden-planner at [0-9a-f]{7} publicly/);
+  // Uploading a folder that isn't in the commit (Codex on the port): refused whatever the pass.
+  for (const c of ['netlify deploy --dir dist', 'npx gh-pages -d dist', 'wrangler pages deploy dist', 'surge dist', 'vercel --prod --prebuilt'])
+    denies(D(c), /isn't committed|git ignores/);
   denies(D('vercel --prod && echo done'), /alongside other commands/);
   for (const c of ['vercel ls', 'vercel env pull', 'vercel login', 'echo vercel --prod', 'netlify status', 'git push origin main'])
     assert.equal(D(c), undefined, c);
@@ -309,4 +312,35 @@ test('a Vercel settings change uses one Approve for that project; reads pass; de
     denies(D(c), /button-only/);
   assert.equal(D(call), 'pass');
   denies(D(call), /hasn't approved/); // once
+});
+
+// Codex on the port: ignored build output could change after the Approve, and the
+// commits-going-out list lost its baseline when passes were pruned.
+test('an uploaded build folder must be in the approved commit, and the last deploy is remembered', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const data = mkdtempSync(join(tmpdir(), 'cm-up-'));
+  const path = join(data, 'post-approvals.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as { usePass: (t: string, s: string, now: number, p: string, cwd?: string, where?: unknown, target?: string) => boolean; recordDeploy: (p: string, c: string, now?: number, path?: string) => void; loadBaselines: (path?: string) => Record<string, { commit: string }> };
+  const baselines = join(data, 'deploy-baselines.json');
+  const passes = { use: (t: string, s: string, cwd?: string, where?: unknown, target?: string) => pa.usePass(t, s, Date.now(), path, cwd, where, target), click: () => false, repo: () => 'x/x', deployed: (p: string, c: string) => pa.recordDeploy(p, c, Date.now(), baselines) };
+  const room = join(data, 'site');
+  mkdirSync(room);
+  const git = (...a: string[]) => execFileSync('git', ['-C', room, ...a], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  writeFileSync(join(room, '.gitignore'), 'dist/\n');
+  mkdirSync(join(room, 'dist'));
+  writeFileSync(join(room, 'dist', 'index.html'), 'approved');
+  mkdirSync(join(room, 'public'));
+  writeFileSync(join(room, 'public', 'index.html'), 'committed');
+  git('add', '-A');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'site');
+  const head = git('rev-parse', '--short=7', 'HEAD');
+  grantPass(path, `deploy site at ${head} publicly`, room, Date.now(), 'deploy:site');
+  const D = (command: string) => decide('Bash', { command }, {}, 's', passes, room);
+  writeFileSync(join(room, 'dist', 'index.html'), 'changed after the Approve'); // ignored: the tree still looks clean
+  denies(D('netlify deploy --prod --dir dist'), /uploads dist, which git ignores/);
+  assert.equal(D('netlify deploy --prod --dir public'), 'pass'); // a committed folder is the approved commit
+  assert.equal(pa.loadBaselines(baselines).site?.commit, head);
 });

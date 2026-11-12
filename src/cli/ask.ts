@@ -14,17 +14,14 @@ import { execFileSync } from 'node:child_process';
 // @ts-expect-error a plain-JS hook module, no type declarations
 import { versionOf } from '../../hooks/public-post-guard.mjs';
 // @ts-expect-error a plain-JS hook module, no type declarations
-import { loadPasses } from '../../hooks/post-approvals.mjs';
+import { loadBaselines } from '../../hooks/post-approvals.mjs';
 
-// The commits a deploy adds since the last approved deploy of this project (its pass names the
-// commit), or the last 10 when there's none.
+// The commits a deploy adds since the last approved deploy of this project (deploy-baselines.json,
+// written when a deploy passes the guard), or the last 10 when there's none.
 function commitsSinceLastDeploy(folder: string, name: string, head: string): string[] {
-  const last = (loadPasses() as { text: string; at: number }[])
-    .map((p) => new RegExp(`^deploy ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} at ([0-9a-f]{7}) publicly$`).exec(p.text)?.[1])
-    .filter((c): c is string => !!c && c !== head)
-    .pop();
+  const last = (loadBaselines() as Record<string, { commit?: string }>)[name]?.commit;
   try {
-    const range = last ? [`${last}..${head}`] : ['-10', head];
+    const range = last && last !== head ? [`${last}..${head}`] : ['-10', head];
     return execFileSync('git', ['-C', folder, 'log', '--format=%h %s', ...range], { encoding: 'utf8', timeout: 3000 }).trim().split('\n').filter(Boolean).slice(0, 15);
   } catch {
     return [];
