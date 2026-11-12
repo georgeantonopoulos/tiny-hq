@@ -188,18 +188,27 @@ export class TerminalPanel {
     onWinResize();
     // Images: the browser only hands text to the terminal, so a pasted or dropped
     // image goes to the Mac, which saves it and pastes its path into Claude.
+    // Pictures and documents (from a phone too): the paperclip in the header picks them;
+    // pasting or dropping works too. A clipboard picture has no name, so it goes as an image.
     const sendImages = (files: File[]) => {
       for (const f of files) {
-        this.meta.textContent = 'Sending image…';
-        void this.api
-          .termImage(r.termId, f)
+        const what = f.type.startsWith('image/') ? 'Picture' : 'File';
+        this.meta.textContent = `Sending ${f.name || what.toLowerCase()}…`;
+        void (f.name && /\.[A-Za-z0-9]{1,5}$/.test(f.name) ? this.api.termFile(r.termId, f) : this.api.termImage(r.termId, f))
           .then(async (res) => {
-            this.meta.textContent = res.ok ? 'Image attached' : `Image not sent: ${((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.status}`;
+            this.meta.textContent = res.ok ? `${what} attached: add what to do with it, then Enter` : `${what} not sent: ${((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.status}`;
           })
-          .catch(() => (this.meta.textContent = 'Image not sent: no link to the Mac'));
+          .catch(() => (this.meta.textContent = `${what} not sent: no link to the Mac`));
       }
     };
-    const images = (list: DataTransferItemList | undefined | null) => [...(list ?? [])].filter((i) => i.kind === 'file' && i.type.startsWith('image/')).map((i) => i.getAsFile()).filter((f): f is File => !!f);
+    const images = (list: DataTransferItemList | undefined | null) => [...(list ?? [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter((f): f is File => !!f);
+    const picker = document.getElementById('term-file') as HTMLInputElement | null;
+    const onPick = () => {
+      const files = [...(picker?.files ?? [])];
+      if (picker) picker.value = '';
+      if (files.length) sendImages(files);
+    };
+    picker?.addEventListener('change', onPick);
     const onPaste = (e: ClipboardEvent) => {
       const files = images(e.clipboardData?.items);
       if (!files.length) return; // plain text: xterm pastes it as usual
@@ -223,6 +232,7 @@ export class TerminalPanel {
       offPhone();
       sizer.disconnect();
       this.body.removeEventListener('paste', onPaste, true);
+      picker?.removeEventListener('change', onPick);
       this.body.removeEventListener('dragover', onDragOver);
       this.body.removeEventListener('drop', onDrop);
     };
@@ -470,7 +480,7 @@ export class TerminalPanel {
     };
     grip.addEventListener('pointerdown', (e) => start(e, grip));
     head?.addEventListener('pointerdown', (e) => {
-      if (!narrow() || (e.target as HTMLElement).closest('button')) return; // buttons stay buttons
+      if (!narrow() || (e.target as HTMLElement).closest('button, label, input')) return; // buttons stay buttons
       start(e, head);
     });
   }

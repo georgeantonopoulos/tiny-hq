@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createDaemon } from '../src/daemon/server.ts';
+import { createDaemon, PASTES_DIR } from '../src/daemon/server.ts';
 import { loadOrCreateToken } from '../src/daemon/token.ts';
 
 function call(port: number, path: string, opts: { method?: string; headers?: Record<string, string>; body?: string; host?: string } = {}) {
@@ -135,6 +135,17 @@ test('terminals: token needed, bad requests refused, input and stream reach the 
     assert.ok(pasted, 'the path goes in as a paste');
     assert.equal(readFileSync(pasted[1]!, 'utf8'), 'fakepng');
     unlinkSync(pasted[1]!);
+    // A document from the paperclip (from a phone too): saved under its own name, path pasted.
+    const doc = (name: string) => call(port, `/api/term/${term.id}/file`, { method: 'POST', headers: { authorization: 'Bearer t', 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(name) }, body: '%PDF-1' });
+    assert.equal((await doc('notes.exe')).status, 415);
+    assert.equal((await doc('../../etc/passwd')).status, 415);
+    const pdf = await doc('Ομάδα notes/../Σελίδα 3.pdf');
+    assert.equal(pdf.status, 200);
+    const filed = /^\x1b\[200~(\/.+\/paste-[^/]+-Σελίδα-3\.pdf) \x1b\[201~$/.exec(written.at(-1)!);
+    assert.ok(filed, written.at(-1));
+    assert.equal(readFileSync(filed[1]!, 'utf8'), '%PDF-1');
+    assert.ok(!filed[1]!.includes('..') && filed[1]!.startsWith(PASTES_DIR));
+    unlinkSync(filed[1]!);
     written.length = 1;
     assert.equal((await post('/api/term/22222222-2222-4222-8222-222222222222/input', { data: 'x' })).status, 404, 'unknown terminal');
     assert.equal((await call(port, `/api/term/${term.id}/input`, { headers })).status, 405);

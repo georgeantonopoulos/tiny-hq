@@ -290,6 +290,7 @@ async function start(): Promise<void> {
     if (r.lastDone && r.lastDone > lastDone) lastDone = r.lastDone;
     let newNews = false;
     for (const [id, line] of Object.entries(r.said)) {
+      office.pictures(id, line.at, line.images ?? 0, (who, i) => api.saidImage(who, i));
       if (heard[id] === line.at) continue;
       if (!firstPoll) newNews = true;
       heard[id] = line.at;

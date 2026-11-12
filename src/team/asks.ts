@@ -60,7 +60,7 @@ export function validAsk(a: unknown): Ask | undefined {
     ...(typeof o.sessionId === 'string' && /^[0-9a-f-]{36}$/.test(o.sessionId) ? { sessionId: o.sessionId } : {}),
     ...(typeof o.job === 'string' && /^[a-z0-9][a-z0-9-]{0,40}$/.test(o.job) ? { job: o.job } : {}),
     ...(validOptions(o.options) && !(typeof o.job === 'string') ? { options: validOptions(o.options) } : {}),
-    ...(typeof o.forJob === 'string' && /^[a-z0-9][a-z0-9-]{0,40}$/.test(o.forJob) && typeof o.job !== 'string' && o.askedFor !== true ? { forJob: o.forJob } : {}),
+    ...(typeof o.forJob === 'string' && /^[a-z0-9][a-z0-9-]{0,40}$/.test(o.forJob) && typeof o.job !== 'string' && (o.askedFor !== true || !!o.trust) ? { forJob: o.forJob } : {}),
     ...(typeof o.why === 'string' && clean(o.why, 20) ? { why: clean(o.why, 20) } : {}),
     ...(typeof o.tried === 'string' && clean(o.tried, 400) ? { tried: clean(o.tried, 400) } : {}),
     // A post's exact text (button-only posts): kept as written, line breaks included.
@@ -74,19 +74,33 @@ export function validAsk(a: unknown): Ask | undefined {
 // One question per room about a job. When `job wait` (or Bring back) wants an Approve
 // button where the room already has its own question up for the owner, the job rides on
 // that question instead: the owner saw two buttons per room, and answering one left the other.
+// The room's own question may come from one of its worktrees (a room asking from
+// <project>/.claude/worktrees/<branch> used to get a second button per job). Each own question carries at most one job; a job takes the free one that reads
+// most like it (same PR number, same words), else the oldest free one, else keeps its own button.
+export const roomOf = (folder: string): string => folder.replace(/\/\.claude\/worktrees\/.*$/, '');
+const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9][a-z0-9-]*/g)?.filter((w) => w.length > 3 || /\d/.test(w)) ?? []);
+const likeness = (a: string, b: string) => {
+  const wb = words(b);
+  return [...words(a)].reduce((n, w) => n + (wb.has(w) ? (/\d/.test(w) ? 3 : 1) : 0), 0);
+};
 export function oneQuestionPerJob(asks: Ask[]): Ask[] {
-  const roomsOwn = new Map<string, Ask>(); // folder -> its oldest question of its own
+  const byAge = [...asks].sort((x, y) => x.createdAt - y.createdAt);
   // (A question someone else put over the room, like the manager's next move, is not the room's own.)
-  for (const a of [...asks].sort((x, y) => x.createdAt - y.createdAt)) if (!a.job && !a.askedFor && !roomsOwn.has(a.folder)) roomsOwn.set(a.folder, a);
+  // A pending "Trust and start" button carries the room's job too (otherwise job wait put a second
+  // "tap Trust and start" button over the same room): the owner's tap starts the room with its task.
+  const own = byAge.filter((a) => !a.job && (!a.askedFor || !!a.trust));
   const ride = new Map<string, string>(); // room's ask id -> job id
-  const out = asks.filter((a) => {
-    const own = a.job ? roomsOwn.get(a.folder) : undefined;
-    const rides = own && (own.forJob ?? ride.get(own.id) ?? a.job) === a.job;
-    if (!own || !rides) return true; // no question of the room's own, or it already carries another job
-    ride.set(own.id, a.job!);
-    return false;
-  });
-  return out.map((a) => (ride.has(a.id) ? { ...a, forJob: ride.get(a.id) } : a));
+  for (const a of own) if (a.forJob) ride.set(a.id, a.forJob);
+  const carried = new Set(ride.values());
+  const pairs: { own: Ask; job: Ask; score: number }[] = [];
+  for (const j of byAge) {
+    if (!j.job || carried.has(j.job)) continue;
+    // A post's Approve carries its pass: it rides only on the room's own button for the very same post.
+    for (const o of own) if (!ride.has(o.id) && roomOf(o.folder) === roomOf(j.folder) && (!j.post || (o.post === j.post && o.target === j.target))) pairs.push({ own: o, job: j, score: likeness(o.question, j.question) });
+  }
+  pairs.sort((x, y) => y.score - x.score || x.job.createdAt - y.job.createdAt || x.own.createdAt - y.own.createdAt);
+  for (const p of pairs) if (!ride.has(p.own.id) && !carried.has(p.job.job!)) (ride.set(p.own.id, p.job.job!), carried.add(p.job.job!));
+  return asks.filter((a) => !(a.job && carried.has(a.job))).map((a) => (ride.has(a.id) && a.forJob !== ride.get(a.id) ? { ...a, forJob: ride.get(a.id) } : a));
 }
 
 export function loadAsks(path: string): Ask[] {
@@ -198,6 +212,32 @@ const OFFICE_ANYWHERE = /on your whiteboard|\(They (clicked|picked|tapped|typed)
 // What the owner typed into a session's chat after `since` (ms), from its transcript lines, if anything.
 // Otherwise an owner who answers by chatting in the room leaves the button up, out of date.
 export function typedSince(lines: string[], since: number): string | undefined {
+  return typedLinesSince(lines, since)[0];
+}
+
+// Does a line the owner typed in the room's chat answer this question? (A chat line that only
+// mentioned the project used to take down a merge button.) A short yes/no/wait, one of
+// its choices, or the same #number or two of the question's own words. Otherwise the button stays:
+// a stale button is better than a lost one.
+const ANSWER_WORD = /^\W*(yes|yep|yeah|yup|ok|okay|sure|go( ahead)?|do it|approved?|approve it|confirmed?|no|nope|don'?t|not (yet|now)|wait|later|hold|merge( it)?|ship it|send it|post it|skip( it)?|leave it|cancel)\b/i;
+const keyWords = (s: string) => new Set((s.toLowerCase().match(/[a-z][a-z0-9-]{4,}/g) ?? []).filter((w) => !['about', 'there', 'which', 'would', 'could', 'should', 'their', 'these', 'those', 'please'].includes(w)));
+export function answersAsk(said: string, ask: Ask): boolean {
+  // What the owner wrote themselves: not a pasted block or an office line that came in with it (a short
+  // reply plus a pasted job report used to share words with the merge question and take its button down).
+  const t = said.replace(/<pasted_content[\s\S]*?<\/pasted_content[^>]*>/g, ' ').replace(/^\s*\[Office[^\n]*$/gm, ' ').trim();
+  if (!t) return false;
+  if (ANSWER_WORD.test(t)) return true;
+  const low = t.toLowerCase();
+  if ((ask.options ?? []).some((o) => low.includes(o.toLowerCase()))) return true;
+  const nums = new Set([...ask.question.matchAll(/#(\d+)/g)].map((m) => m[1]));
+  if ([...t.matchAll(/#(\d+)/g)].some((m) => nums.has(m[1]))) return true;
+  if (t.length > 400) return false; // a long message is about something else, not a reply to a button
+  const mine = keyWords(ask.question);
+  return [...keyWords(t)].filter((w) => mine.has(w)).length >= 2;
+}
+
+export function typedLinesSince(lines: string[], since: number): string[] {
+  const out: string[] = [];
   for (const line of lines) {
     if (!line.includes('"user"')) continue;
     let d: { type?: string; isMeta?: boolean; isSidechain?: boolean; timestamp?: string; origin?: { kind?: string }; message?: { content?: unknown } };
@@ -210,9 +250,9 @@ export function typedSince(lines: string[], since: number): string | undefined {
     if (d.origin?.kind && d.origin.kind !== 'human') continue; // task notifications and the like
     const c = d.message?.content;
     const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((x) => x && (x as { type?: string }).type === 'text').map((x) => (x as { text?: string }).text ?? '').join('') : '';
-    if (text.trim() && !OFFICE_LINE.test(text) && !OFFICE_ANYWHERE.test(text)) return text.trim();
+    if (text.trim() && !OFFICE_LINE.test(text) && !OFFICE_ANYWHERE.test(text)) out.push(text.trim());
   }
-  return undefined;
+  return out;
 }
 
 // The room's own open question (not one someone else put over it), in its folder or one of its
@@ -225,14 +265,21 @@ export function roomsOwnQuestion(asks: Ask[], room: string): Ask | undefined {
 // What `ask cancel` takes down: this folder's questions, plus every question this session put up
 // anywhere (The manager's --room ones are filed under the room's folder, not theirs). With --room, only the
 // asker's own questions over that room; the room's own stay.
-export function afterCancel(asks: Ask[], folder: string, me: string | undefined, room: boolean): Ask[] {
+// `id`: just that one question (and only if it is this folder's or this session's).
+// A bare cancel used to take every question the session had put up anywhere; now it takes this
+// folder's questions from this session (or with no session), and those it put over rooms from the manager's folder.
+export function afterCancel(asks: Ask[], folder: string, me: string | undefined, room: boolean, id?: string, manager = false): Ask[] {
+  // The manager runs the jobs, so it may take down any job's button by its id (job wait has no session).
+  const mine = (a: Ask) => a.folder === folder || (!!me && a.sessionId === me) || (manager && !!a.job);
+  if (id) return asks.filter((a) => !(a.id === id && mine(a)));
   if (room) return asks.filter((a) => !(a.folder === folder && a.askedFor && a.sessionId === me));
-  return asks.filter((a) => a.folder !== folder && !(me && a.sessionId === me));
+  return asks.filter((a) => !((a.folder === folder && (!me || !a.sessionId || a.sessionId === me)) || (!!me && a.sessionId === me && a.askedFor)));
 }
 
 export function answerLine(ask: Ask, answer: Answer | boolean): string | undefined {
   const a: Answer = typeof answer === 'boolean' ? { yes: answer } : answer;
   if (ask.post && 'yes' in a) {
+    // The text the pass is for (--text), not the question's wording; a long one is named, not cut mid-way.
     const said = ask.post.length <= 300 ? `"${ask.post}"` : `"${ask.post.slice(0, 200)}…" (the full --text you gave, ${ask.post.length} characters)`;
     return clean(
       a.yes

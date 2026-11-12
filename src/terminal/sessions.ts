@@ -255,7 +255,25 @@ export const isQuiet = (t: string): boolean => /^\(?quiet\)?\.?$/i.test(t.trim()
 // The last thing a session said, read from the transcript Claude Code already
 // saves (~/.claude/projects/<folder>/<session id>.jsonl). Costs no tokens.
 // `to`: who it was sent to, when the line was a SendMessage (a room reporting to the manager).
-export function lastSaid(sessionId: string, cwd: string, home = homedir()): { text: string; at: string; to?: string } | undefined {
+// Pictures a message points at, so the owner can see what a room made without opening it: absolute
+// or ~ paths to image files on this Mac that exist, at most four, so the bubble can show them.
+export const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
+export function imagesIn(text: string, home = homedir()): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/(?:~|\/(?:Users|Volumes|private|tmp|var\/folders))\/[^\s`'"<>()\[\]|*]+?\.(?:png|jpe?g|gif|webp)\b/gi)) {
+    const p = m[0].startsWith('~') ? join(home, m[0].slice(1)) : m[0];
+    if (out.includes(p)) continue;
+    try {
+      if (statSync(p).isFile()) out.push(p);
+    } catch {
+      /* not on this Mac (or not any more) */
+    }
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
+export function lastSaid(sessionId: string, cwd: string, home = homedir()): { text: string; at: string; to?: string; images?: string[] } | undefined {
   if (!/^[0-9a-f-]{36}$/.test(sessionId)) return undefined;
   const file = join(home, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`);
   let fd: number | undefined;
@@ -266,11 +284,32 @@ export function lastSaid(sessionId: string, cwd: string, home = homedir()): { te
     const buf = Buffer.alloc(len);
     readSync(fd, buf, 0, len, size - len);
     const lines = buf.toString('utf8').split('\n').reverse();
+    // A file sent to the owner with SendUserFile ({ files: [...] }) counts as a picture the message points
+    // at, also when it went a few steps before the final message of the same turn (a before/after
+    // picture sent that way used to be missing from the bubble).
+    const sentFiles = (content: { type?: string; name?: string; input?: unknown }[]) =>
+      content.flatMap((b) => (b.type === 'tool_use' && b.name === 'SendUserFile' ? Object.values((b.input ?? {}) as Record<string, unknown>).flatMap((v) => (Array.isArray(v) ? v : [v])).filter((v): v is string => typeof v === 'string' && IMAGE_EXT.test(v)) : []));
+    let found: { text: string; at: string; to?: string; files: string[] } | undefined;
     for (const line of lines) {
+      if (found && line.includes('"user"')) {
+        // The turn began at the owner's (or another session's) message: stop there. Tool results don't end it.
+        try {
+          const u = JSON.parse(line) as { type?: string; message?: { content?: unknown } };
+          const c = u.message?.content;
+          if (u.type === 'user' && (typeof c === 'string' || (Array.isArray(c) && c.some((x) => (x as { type?: string })?.type === 'text')))) break;
+        } catch {
+          /* cut off */
+        }
+        continue;
+      }
       if (!line.includes('"assistant"')) continue;
       try {
         const r = JSON.parse(line) as { type?: string; timestamp?: string; message?: { content?: { type?: string; text?: string; name?: string; input?: { message?: unknown; to?: unknown } }[] } };
         if (r.type !== 'assistant' || !Array.isArray(r.message?.content)) continue;
+        if (found) {
+          found.files.push(...sentFiles(r.message!.content!));
+          continue;
+        }
         // What it wrote, or what it sent to another session (a project reporting back to the manager).
         const parts = r.message!.content!.flatMap((b) =>
           b.type === 'text' && b.text?.trim() ? [b.text.trim()] : b.type === 'tool_use' && b.name === 'SendMessage' && typeof b.input?.message === 'string' && b.input.message.trim() ? [b.input.message.trim()] : [],
@@ -278,10 +317,15 @@ export function lastSaid(sessionId: string, cwd: string, home = homedir()): { te
         const text = parts.join(' ');
         if (isQuiet(text)) continue; // a quiet turn: the bubble keeps the last real thing said
         const sent = r.message!.content!.filter((b) => b.type === 'tool_use' && b.name === 'SendMessage' && typeof b.input?.to === 'string').pop();
-        if (text) return { text, at: r.timestamp ?? '', ...(sent ? { to: String(sent.input!.to).replace(/\s*\[[^\]]*\]\s*$/, '').trim() } : {}) };
+        if (text) found = { text, at: r.timestamp ?? '', ...(sent ? { to: String(sent.input!.to).replace(/\s*\[[^\]]*\]\s*$/, '').trim() } : {}), files: sentFiles(r.message!.content!) };
       } catch {
         // a line cut off at the start of the window
       }
+    }
+    if (found) {
+      const { files, ...said } = found;
+      const images = imagesIn([said.text, ...files].join(' '), home);
+      return { ...said, ...(images.length ? { images } : {}) };
     }
   } catch {
     // no transcript yet (nothing said)

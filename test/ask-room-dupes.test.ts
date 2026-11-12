@@ -43,3 +43,36 @@ test('ask --room is refused while the room has its own question up', () => {
   assert.throws(() => cli('--room', room, 'Ship it?', '--why', 'choice', '--tried', 'checked the emulator run', '--choices', 'Ship', 'Not yet'), /already has its own question/);
   assert.equal(JSON.parse(readFileSync(join(dir, 'manager', 'asks.json'), 'utf8')).asks.length, 1);
 });
+
+// A merge button asked in one worktree used to go down when the same session cancelled in another,
+// and a chat line that only mentioned the project took it down as an "answer".
+test('ask cancel takes one question by id, or only this folder\'s; unrelated chat lines are not answers', async () => {
+  const { answersAsk } = await import('../src/team/asks.ts');
+  const ROOM_S = 'ce9a86ac-887b-4110-af74-c88217d4e935';
+  const wt = (n: string) => `/Users/g/Dev/Lumen/.claude/worktrees/${n}`;
+  let all = addAsk([], wt('linux-ci-crash'), 'Lumen: merge PR #45?', 1, 'mergeaa45', ROOM_S, undefined, ['Merge #45', 'Wait']);
+  all = addAsk(all, wt('sidecar-proto'), 'May I post on #44?', 2, 'postaa44', ROOM_S);
+  assert.deepEqual(afterCancel(all, wt('sidecar-proto'), ROOM_S, false).map((a) => a.id), ['mergeaa45']);
+  assert.deepEqual(afterCancel(all, wt('sidecar-proto'), ROOM_S, false, 'postaa44').map((a) => a.id), ['mergeaa45']);
+  assert.deepEqual(afterCancel(all, '/Users/g/Dev/Other', undefined, false, 'mergeaa45').map((a) => a.id), ['mergeaa45', 'postaa44']); // not yours
+  const merge = all[0]!;
+  assert.equal(answersAsk('Pip, do I have an open lumen on my Mac? Ready to test', merge), false);
+  assert.equal(answersAsk('11 y\n\n<pasted_content id="x">Job: Lumen Linux CI crash merge tests loader parallel</pasted_content id="x">\n[Office: job "Lumen: fix colour bugs" ...]', merge), false);
+  for (const t of ['yes', 'Merge #45', 'go ahead', 'not yet, wait for CI', 'merge it', 'ok do #45 now'])
+    assert.equal(answersAsk(t, merge), true, t);
+});
+
+// Job wait used to put a second "tap Trust and start" button next to the
+// office's Trust-and-start button, and the manager couldn't cancel it from its folder.
+test('a job wait rides on a pending Trust-and-start button, and the manager can cancel a job button by id', async () => {
+  const { oneQuestionPerJob, validAsk } = await import('../src/team/asks.ts');
+  const room = '/Users/g/Dev/learning-adventures';
+  const trust = validAsk({ id: 'jgyhz98g', folder: room, question: 'Trust and start?', createdAt: 1, sessionId: MANAGER, askedFor: true, trust: { name: 'Garden Planner', task: 'build it' } })!;
+  const wait = validAsk({ id: '36x7btz9', folder: room, question: 'Tap Trust and start', createdAt: 2, job: 'learning-adventures', why: 'permission', tried: 't' })!;
+  const folded = oneQuestionPerJob([trust, wait]);
+  assert.deepEqual(folded.map((a) => [a.id, a.forJob]), [['jgyhz98g', 'learning-adventures']]);
+  assert.equal(validAsk(JSON.parse(JSON.stringify(folded[0])))!.forJob, 'learning-adventures');
+  // The manager's folder takes down a job button by id; another room can't.
+  assert.deepEqual(afterCancel([trust, wait], '/Users/g/Dev/tiny-hq/manager', MANAGER, false, '36x7btz9', true).map((a) => a.id), ['jgyhz98g']);
+  assert.equal(afterCancel([trust, wait], '/Users/g/Dev/other', undefined, false, '36x7btz9').length, 2);
+});

@@ -115,3 +115,39 @@ test('a line typed into a busy session counts as landed once Claude Code queues 
   assert.equal(queuedAfter(old + other + mine, Buffer.byteLength(old)), true);
   assert.equal(queuedAfter(other + '{"type":"queue-operation","operation":"dequeue"}\n', 0), false);
 });
+
+// A room asked three things from its worktree, then put the matching three job waits on the
+// project itself: the owner saw six buttons for three questions.
+test("job waits ride on the room's own questions asked from its worktree, each on the one it matches", () => {
+  const wt = '/g/Lumen/.claude/worktrees/sidecar-proto';
+  const sid = 'ce9a86ac-887b-4110-af74-c88217d4e935';
+  const file = [
+    { id: 'e871icd4', folder: wt, sessionId: sid, createdAt: 1, question: 'Lumen: may I post "@codex review" on PR #43 so Codex checks the fix for its last finding?' },
+    { id: '4d5m566a', folder: wt, sessionId: sid, createdAt: 2, question: 'Lumen: may I post "@codex review" on PR #44 so Codex checks the fix for transparent black?' },
+    { id: 'k3s5jxlx', folder: wt, sessionId: sid, createdAt: 3, question: 'Lumen: may I open the Linux-crash PR (fix/linux-ci-crash into main) with this description?' },
+    { id: 'dydluhyb', folder: '/g/Lumen', createdAt: 4, job: 'lumen-linux-ci-crash', question: 'Approve opening the Linux-fix PR (fix/linux-ci-crash into main) with the title on the button' },
+    { id: '2o1fhz0t', folder: '/g/Lumen', createdAt: 5, job: 'lumen-sidecar-v1', question: 'Approve posting "@codex review" on PR #43 so Codex checks the last fix' },
+    { id: 'p1sxewfv', folder: '/g/Lumen', createdAt: 6, job: 'lumen-colour-bugs-1-3', question: 'Approve posting "@codex review" on PR #44 so Codex checks the transparent-black fix' },
+    { id: 'elsewher', folder: '/g/Other', createdAt: 7, job: 'other-job', question: 'Approve posting on PR #43' },
+  ].map((a) => validAsk(a)!);
+  const folded = oneQuestionPerJob(file);
+  assert.deepEqual(folded.map((a) => [a.id, a.forJob ?? a.job]), [
+    ['e871icd4', 'lumen-sidecar-v1'],
+    ['4d5m566a', 'lumen-colour-bugs-1-3'],
+    ['k3s5jxlx', 'lumen-linux-ci-crash'],
+    ['elsewher', 'other-job'],
+  ]);
+  // Folding again changes nothing, and a fourth job wait in the room keeps its own button.
+  assert.deepEqual(oneQuestionPerJob(folded), folded);
+  const more = addAsk(folded, '/g/Lumen', 'Approve the release', 8, 'fourthjb', undefined, 'lumen-release');
+  assert.equal(more.filter((a) => a.job === 'lumen-release').length, 1);
+});
+
+// The Approve line used to quote the question's wording as the text to post,
+// while the pass is for the exact --text.
+test('a post Approve quotes the exact --text the pass is for, not the question', () => {
+  const ask = validAsk({ id: 'postaaaa', folder: '/g/Lumen', question: 'Lumen: may I post "@codex review" on PR #43 so Codex checks the fix?', createdAt: 1, why: 'post', post: '@codex review' })!;
+  const yes = answerLine(ask, { yes: true })!;
+  assert.match(yes, /post exactly this: "@codex review"\./);
+  assert.match(answerLine(ask, { yes: false })!, /don't post it: "@codex review"\./);
+});

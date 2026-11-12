@@ -12,7 +12,7 @@ import { loadConfig } from '../config.ts';
 import { BRIEF_PROMPT } from './brief.ts';
 import { describeWhen, expired, isDue, lastSlot, loadSchedule, localDay, nextSlot, saveSchedule, schedulePath, withDailyBrief } from '../team/schedule.ts';
 import { queuedAfter } from '../terminal/queued.ts';
-import { addAsk, answerLine, isPassword, roomLine, typedSince, wantsAction, asksPath, jobAnswered, loadAsks, oldestPerFolder, saveAsks, type Answer, type Ask } from '../team/asks.ts';
+import { addAsk, answerLine, isPassword, roomLine, typedLinesSince, answersAsk, wantsAction, asksPath, jobAnswered, loadAsks, oldestPerFolder, saveAsks, type Answer, type Ask } from '../team/asks.ts';
 import { addDismissed, dismissedPath, loadDismissed, removeDismissed } from '../team/dismissed.ts';
 import { goalsPath, loadGoals, setGoal } from '../team/goals.ts';
 import { isTrusted, trustFolder } from '../terminal/trust.ts';
@@ -460,7 +460,11 @@ async function closeLeftovers(list: StatusSession[]): Promise<Set<string>> {
   // A folder with an open question or an unfinished job keeps its sessions (archive projects have no room).
   const busyFolders = [...asks.map((a) => a.folder), ...loadJobs(JOBS).filter((j) => j.status !== 'done').map((j) => j.room)];
   for (const s of leftovers(list, now)) {
-    if ((s.sessionId && asking.has(s.sessionId)) || (s.cwd && busyFolders.some((f) => worksIn(s.cwd!, f))) || (terminals.forSession(s.id)?.viewers() ?? 0) > 0) continue;
+    // A session whose process is gone is closed even with a question or job open (a room's
+    // 4992d0c4 sat on the status page for hours behind its Merge question). Its question stays up;
+    // The owner's answer goes to whoever is in the room then, as it would anyway.
+    const held = (s.sessionId && asking.has(s.sessionId)) || (s.cwd && busyFolders.some((f) => worksIn(s.cwd!, f)));
+    if ((s.alive && held) || (terminals.forSession(s.id)?.viewers() ?? 0) > 0) continue;
     if (now - (leftoverFailed.get(s.id) ?? 0) < 60 * 60_000) continue;
     try {
       await stopSession(s.id);
@@ -494,9 +498,13 @@ async function writeStatus(): Promise<void> {
 
 // What each person on the floor said last (The manager, and each project's most recently
 // active live session), for their speech bubbles. Read from transcripts; no tokens.
-async function said(): Promise<Record<string, { text: string; at: string; to?: string }>> {
+// The pictures each person's last message points at: the page gets only how many, and asks for
+// them by person and number, so it can never name a file on the Mac itself.
+const saidImages = new Map<string, string[]>();
+async function said(): Promise<Record<string, { text: string; at: string; to?: string; images?: number }>> {
   const live = await live2s();
-  const out: Record<string, { text: string; at: string; to?: string }> = {};
+  const out: Record<string, { text: string; at: string; to?: string; images?: number }> = {};
+  saidImages.clear();
   const rooms = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project);
   // Who a message went to, as a person on the floor: the manager, or the room whose
   // session (by name) or lead it was addressed to.
@@ -512,7 +520,9 @@ async function said(): Promise<Record<string, { text: string; at: string; to?: s
     const s = newestIn(path);
     const last = s ? lastSaid(s.sessionId, s.cwd) : undefined;
     if (!last) return;
-    const { to, ...line } = last;
+    const { to, images, ...text } = last;
+    if (images?.length) saidImages.set(id, images);
+    const line = { ...text, ...(images?.length ? { images: images.length } : {}) };
     const toId = to ? who(to) : undefined;
     out[id] = toId && toId !== id ? { ...line, to: toId } : line;
   };
@@ -527,6 +537,8 @@ async function said(): Promise<Record<string, { text: string; at: string; to?: s
 const server = createDaemon({
   token,
   port,
+  // A picture from a person's last message, by its number (see saidImages).
+  saidImage: (who: string, i: number) => saidImages.get(who)?.[i],
   // Over Tailscale (config "remote"): the owner's account plus a paired device; 10 sign-in tries per 10 minutes.
   ...(config.remote ? { remote: { config: config.remote, port: port + 1, devices: new Devices(DEVICES_PATH), signIns: new RateLimit(10, 10 * 60_000), auditPath: REMOTE_AUDIT_PATH } } : {}),
   // The page opens the manager's terminal on this folder.
@@ -975,6 +987,25 @@ function postTargetGuess(ask: Ask): string | undefined {
   }
 }
 
+// Start a room's session with a first message (the same hand-off as the manager's delegate). Throws (503)
+// only when nothing started: a session may start before a failure, and the room must never get two.
+// One start per room at a time: a second answer waits for it and is typed into that session.
+const startingRooms = new Map<string, Promise<void>>();
+function startRoomWith(path: string, name: string, task: string): Promise<void> {
+  const p = startRoomNow(path, name, task).finally(() => startingRooms.delete(path));
+  startingRooms.set(path, p);
+  return p;
+}
+async function startRoomNow(path: string, name: string, task: string): Promise<void> {
+  const env = { ...(await userEnv()), CM_CLAUDE_BIN: CLAUDE_BIN, CM_DATA_DIR: DATA_DIR };
+  const err = await new Promise<string | undefined>((resolve) =>
+    execFile(join(MANAGER_DIR, 'delegate'), [path, name, task], { env, timeout: 60_000 }, (e, _o, stderr) => resolve(e ? String(stderr || e.message).trim().slice(0, 200) : undefined)),
+  );
+  liveCache = undefined;
+  const started = (await liveSessions()).some((x) => worksIn(x.realCwd, path));
+  if (err && !started) throw Object.assign(new Error(`${name}'s session didn't start: ${err}`), { status: 503 });
+  console.log(`asks: started ${name}'s session with the owner's answer`);
+}
 async function trustAndStart(folder: string, name: string, task: string): Promise<void> {
   trustFolder(folder);
   const env = { ...(await userEnv()), CM_CLAUDE_BIN: CLAUDE_BIN, CM_DATA_DIR: DATA_DIR };
@@ -1006,8 +1037,10 @@ async function deliverAnswer(ask: Ask, answer: Answer): Promise<void> {
   // their own click (the room acts on it, no second button), and the manager gets a copy for their notebook.
   const toRoom = roomLine(ask, answer);
   if (toRoom && who && who.id !== 'manager') {
-    // Background sessions in the room (The owner's own terminal sessions aren't in this list).
-    const roomSession = pick(live.filter((x) => worksIn(x.realCwd, who.path) && x.id !== asker?.id), who.path);
+    // Background sessions in the room (the owner's own terminal sessions aren't in this list).
+    const starting = startingRooms.get(who.path);
+    if (starting) await starting.catch(() => undefined);
+    const roomSession = pick((starting ? await liveSessions() : live).filter((x) => worksIn(x.realCwd, who.path) && x.id !== asker?.id), who.path);
     const name = roomName(who.path);
     let reached: string;
     if (roomSession) {
@@ -1023,14 +1056,7 @@ async function deliverAnswer(ask: Ask, answer: Answer): Promise<void> {
       reached = `NOT sent to ${name}: nobody is in and Claude Code doesn't trust that folder yet, so it's yours to hand on with delegate (its Trust and start button carries it)`;
     } else {
       // Nobody in: the room's session starts with their pick (the same hand-off as the manager's delegate).
-      const env = { ...(await userEnv()), CM_CLAUDE_BIN: CLAUDE_BIN, CM_DATA_DIR: DATA_DIR };
-      const err = await new Promise<string | undefined>((resolve) =>
-        execFile(join(MANAGER_DIR, 'delegate'), [who.path, name, toRoom], { env, timeout: 60_000 }, (e, _o, stderr) => resolve(e ? String(stderr || e.message).trim().slice(0, 200) : undefined)),
-      );
-      liveCache = undefined;
-      // Failed, but a session may have started before the failure: only a room with nobody in may retry.
-      const started = (await liveSessions()).some((x) => worksIn(x.realCwd, who.path));
-      if (err && !started) throw Object.assign(new Error(`${name}'s session didn't start: ${err}`), { status: 503 });
+      await startRoomWith(who.path, name, toRoom);
       reached = `started ${name}'s session with it`;
     }
     // The manager hears it too. Their copy can't undo the room's (The owner must never be asked twice), so any
@@ -1052,12 +1078,25 @@ async function deliverAnswer(ask: Ask, answer: Answer): Promise<void> {
     console.log(`asks: the owner's answer to "${ask.question}" went to the manager (the asker has gone)`);
     return;
   }
-  const s = asker ?? (who ? pick(live, who.path) : live[0]);
-  if (!s && !ask.job) {
-    throw Object.assign(new Error('Nobody is in that room any more; the question is gone.'), { status: 410 });
+  // Another answer may be starting this room's session right now: wait for it, then use that session.
+  const inFlight = who ? startingRooms.get(who.path) : undefined;
+  if (inFlight) await inFlight.catch(() => undefined);
+  const nowLive = inFlight && who ? (await liveSessions()).filter((x) => worksIn(x.realCwd, who.path)) : live;
+  const s = asker ?? (who ? pick(nowLive, who.path) : nowLive[0]);
+  let ok: true | string | false | 'later' | undefined;
+  if (s) ok = await typeInto(s, line, who?.id === 'manager', () => undefined, true);
+  else if (who && who.id !== 'manager' && wantsAction(ask, answer) && isTrusted(who.path)) {
+    // Nobody in the room: a yes or a real pick starts the room's session with the owner's answer, and the job's brief when there is one.
+    const job = ask.job ?? ask.forJob;
+    const task = job ? `${line}\n\nJob ${job}: read ${briefPath(MANAGER_NOTES_DIR, job)} first.` : line;
+    await startRoomWith(who.path, roomName(who.path), task);
+    ok = true;
+    void tellManagerNow(`[Office: nobody was in ${roomName(ask.folder)}, so the office started its session with the owner's answer] ${line} Nothing for you to relay; update your notebook.`);
+  } else {
+    // Nobody in, and nothing the room can start on by itself (a no, "not yet", or a folder Claude Code
+    // doesn't trust yet): the manager gets it, so the owner's answer is never dropped.
+    ok = await tellManager(`[Office: nobody is in ${roomName(ask.folder)}, so the owner's answer came to you] ${line} ${wantsAction(ask, answer) ? 'Hand this to the room now (delegate; the folder needs trusting first).' : 'Note it; the room picks it up next time it is in.'}`);
   }
-  // A job's room with nobody in: the manager gets the owner's answer and hands it on.
-  const ok = s ? await typeInto(s, line, who?.id === 'manager', () => undefined, true) : await tellManager(`[Office: nobody is in ${roomName(ask.folder)}, so the owner's answer came to you] ${line} Hand this to the room now.`);
   if (ok !== true) throw Object.assign(new Error("Couldn't get your answer into their chat; try again, or open the room."), { status: 503 });
   // Approved (or, for the room's own question a job rides on, any answer): the job is back to work (nudged again if the room goes quiet).
   const resume = jobAnswered(ask, answer);
@@ -1271,7 +1310,7 @@ async function clearAnsweredInChat(): Promise<void> {
       } catch {
         continue;
       }
-      const said = typedSince(tail.split('\n'), a.createdAt);
+      const said = typedLinesSince(tail.split('\n'), a.createdAt).find((t) => answersAsk(t, a));
       if (said) {
         gone.push(a);
         console.log(`asks: the owner answered "${a.question.slice(0, 80)}" in ${roomName(a.folder)}'s chat ("${said.slice(0, 60)}"); its button is gone`);
@@ -1298,12 +1337,17 @@ async function runJobs(): Promise<void> {
   const jobs = loadJobs(JOBS).filter((j) => j.status !== 'done');
   if (!jobs.length) return;
   const all = (await allSessions()).filter((s) => worksAlive(s.pid ?? 0));
-  const riding = new Set(loadAsks(ASKS).map((a) => a.forJob).filter(Boolean)); // waiting jobs whose room's own question is still up
+  const openAsks = loadAsks(ASKS);
+  const riding = new Set(openAsks.map((a) => a.forJob).filter(Boolean)); // waiting jobs whose room's own question is still up
+  // A room with a "Trust and start" button up is waiting on the owner's tap, which starts its session with
+  // the task: no "no session" reports or nudges until then.
+  const trustPending = (room: string) => openAsks.some((a) => a.trust && worksIn(real(a.folder), room));
   for (const job of jobs) {
     const now = Date.now();
     const here = all.filter((s) => worksIn(s.realCwd, job.room)).sort((a, b) => Number(b.status === 'busy') - Number(a.status === 'busy') || lastActiveAt(b) - lastActiveAt(a));
     const s = here[0];
     const room = s && { status: s.status, state: here.some((x) => x.state === 'blocked' && waitingOn(x.sessionId, x.cwd).kind !== 'unknown') ? 'blocked' : 'idle', lastActive: Math.max(...here.map((x) => lastActiveAt(x))), viewed: here.some((x) => (terminals.forSession(x.id)?.viewers() ?? 0) > 0) };
+    if (!room && trustPending(job.room)) continue;
     const d = decide(job, room, now, riding.has(job.id));
     if (d === 'none') continue;
     const name = roomName(job.room);

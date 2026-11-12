@@ -81,3 +81,20 @@ test("a job waiting on the room's own open question isn't checked every 15 minut
   assert.equal(decide(waiting, quiet, now), 'check');
   assert.equal(decide(waiting, quiet, now, true), 'none');
 });
+
+// With 50 jobs on file (mostly done), the newest one used to be the one cut off, so job list,
+// nudges and the whiteboard never saw it.
+test('a new job is never dropped: open jobs all stay, and only the oldest finished ones make room', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { loadJobs, MAX_JOBS } = await import('../src/team/jobs.ts');
+  const path = join(mkdtempSync(join(tmpdir(), 'cm-jobs-')), 'jobs.json');
+  const mk = (i: number, status: string) => ({ id: `job-${i}`, room: '/r', title: `t${i}`, done: 'd', status, createdAt: i + 1, updatedAt: i + 1 });
+  const jobs = [...Array.from({ length: MAX_JOBS }, (_, i) => mk(i, 'done')), mk(100, 'active'), mk(101, 'waiting')];
+  writeFileSync(path, JSON.stringify({ jobs }));
+  const got = loadJobs(path);
+  assert.equal(got.length, MAX_JOBS);
+  assert.ok(got.some((j) => j.id === 'job-100') && got.some((j) => j.id === 'job-101'));
+  assert.equal(got.some((j) => j.id === 'job-0') || got.some((j) => j.id === 'job-1'), false); // the two oldest done ones went
+});

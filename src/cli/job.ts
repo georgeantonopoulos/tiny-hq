@@ -15,6 +15,7 @@ import { dirname, resolve } from 'node:path';
 import { MANAGER_NOTES_DIR } from '../paths.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
 import { addAsk, asksPath, loadAsks, saveAsks } from '../team/asks.ts';
+import { normTarget } from '../team/posts.ts';
 import { holdWatch, holdWatchId, loadSchedule, saveSchedule, schedulePath } from '../team/schedule.ts';
 import { briefPath, briefTemplate, describeJobs, emptySections, jobsPath, loadJobs, parseUntil, saveJobs, validJob, type Job } from '../team/jobs.ts';
 
@@ -68,12 +69,27 @@ switch (cmd) {
   }
   case 'wait': {
     const proof = takeOnlyOwner(rest);
-    const j = find(proof.rest[0]);
-    const what = proof.rest.slice(1).join(' ').trim();
+    // A post: the button carries the exact text and where it goes, and the owner's Approve gives
+    // the one-time pass, so they never have to click twice.
+    let words = proof.rest;
+    const flag = (name: string) => {
+      const i = words.indexOf(name);
+      if (i < 0) return undefined;
+      const v = words[i + 1] ?? '';
+      words = [...words.slice(0, i), ...words.slice(i + 2)];
+      return v;
+    };
+    const postText = flag('--text');
+    const postTarget = flag('--target');
+    const j = find(words[0]);
+    const what = words.slice(1).join(' ').trim();
     if (!what) fail('usage: job wait <id> "<the one thing the owner must do>" --why <reason> --tried "<what was tried>"');
     // Only the owner's things reach the owner (src/team/only-owner.ts).
     const refused = checkOnlyOwner(proof.why, proof.tried);
     if (refused) fail(`Not waiting on the owner: ${j.id} stays active.\n${refused}`);
+    const isPost = proof.why!.trim().toLowerCase() === 'post';
+    if (isPost && (!postText?.trim() || !normTarget(postTarget)))
+      fail(`Not waiting on the owner: ${j.id} stays active.\nA post needs its exact text and where it goes on the button, so their Approve can let it through: job wait ${j.id} "<what the owner approves>" --why post --tried "<...>" --text "<the exact text>" --target <owner/repo#N, owner/repo for a new issue, or the page URL>`);
     const { holdFor: _hf, holdUntil: _hu, ...unheld } = j;
     dropWatch(j.id);
     put({ ...unheld, status: 'waiting', waitingFor: what.slice(0, 300), updatedAt: Date.now(), lastNudge: undefined, nudgesToday: 0 });
@@ -84,7 +100,7 @@ switch (cmd) {
     } catch {
       /* keep as written */
     }
-    const asks = addAsk(loadAsks(asksPath(MANAGER_NOTES_DIR)), folder, what, Date.now(), undefined, undefined, j.id, undefined, false, undefined, { why: proof.why!.trim().toLowerCase(), tried: proof.tried! });
+    const asks = addAsk(loadAsks(asksPath(MANAGER_NOTES_DIR)), folder, what, Date.now(), undefined, undefined, j.id, undefined, false, undefined, { why: proof.why!.trim().toLowerCase(), tried: proof.tried!, ...(isPost ? { post: postText, target: normTarget(postTarget) } : {}) });
     saveAsks(asksPath(MANAGER_NOTES_DIR), asks);
     const rides = asks.find((a) => a.forJob === j.id);
     if (rides) {

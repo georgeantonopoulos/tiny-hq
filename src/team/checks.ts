@@ -9,6 +9,7 @@
 import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 
 export const KEEP_ON_MANAGER = new Set(['daily-brief']);
 
