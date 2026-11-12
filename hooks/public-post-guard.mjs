@@ -336,6 +336,11 @@ export function repoGoingPublic(post, cwd, repoOf = remoteRepo) {
   const isEdit = verb === 'edit' && visibilityTo(args) === 'public';
   const isCreate = verb === 'create' && hasFlag(args, ['--public']);
   if (!isEdit && !isCreate) return undefined;
+  // Another GitHub host, or a GH_REPO that gh would use instead of the folder's repo: refused, since
+  // the pass is for one repo on github.com.
+  const env = post.seg.slice(0, post.at);
+  if (env.some((w) => /^GH_HOST=/.test(w)) || hasFlag(post.seg.slice(post.at + 1), ['--hostname'])) return '';
+  const envRepo = env.find((w) => /^GH_REPO=/.test(w));
   const named = [];
   for (let j = k + 1; j < args.length; j++) {
     const a = args[j];
@@ -343,7 +348,7 @@ export function repoGoingPublic(post, cwd, repoOf = remoteRepo) {
     if (!a.startsWith('-')) named.push(a);
   }
   if (named.length > 1) return '';
-  const t = named.length ? normTarget(named[0]) : isEdit ? repoOf(cwd) ?? '' : '';
+  const t = named.length ? normTarget(named[0]) : envRepo ? normTarget(envRepo.slice(8)) : isEdit ? repoOf(cwd) ?? '' : '';
   return /^[a-z0-9-]+\/[\w.-]+$/.test(t) ? t : '';
 }
 // The folder's GitHub repo, as gh would pick it: the remote marked by `gh repo set-default`, else

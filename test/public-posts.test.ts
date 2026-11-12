@@ -127,6 +127,12 @@ test('making a repo public needs their Approve of "make owner/repo public", once
   assert.equal(D(flip), 'pass');
   denies(D(flip), /hasn't approved/); // once
   assert.equal(D('gh repo edit --visibility private'), undefined); // making it private isn't a post
+  // A pass for the folder's repo never flips the repo GH_REPO names, or one on another host.
+  grantPass(path, 'make owner/tiny-hq public', room, Date.now(), 'owner/tiny-hq');
+  denies(D('GH_REPO=other/secret gh repo edit --visibility public'), /make other\/secret public/);
+  denies(D('GH_HOST=ghe.example.com gh repo edit owner/tiny-hq --visibility public'), /can't tell for certain/);
+  denies(D('gh repo edit owner/tiny-hq --visibility public --hostname ghe.example.com'), /can't tell for certain/);
+  assert.equal(D('gh repo edit owner/tiny-hq --visibility public'), 'pass'); // the pass was still there
   assert.equal(postingCommand('gh repo edit o/r --visibility=internal'), undefined);
   // From its own folder the repo is the folder's.
   grantPass(path, 'make owner/tiny-hq public', room, Date.now(), 'owner/tiny-hq');
