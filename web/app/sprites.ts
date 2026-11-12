@@ -22,7 +22,7 @@ const BASE = [
   '..SESSSSES..',
   '..SBSMMSBS..',
   '...SSSSSS...',
-  '...CCTTCC...',
+  '...CCCCCC...', // a collar: the tie starts below it, so it never reads as a tongue under the smile
   '..CCCTTCCC..',
   '.ACCCTTCCCA.',
   '.ACCCCCCCCA.',
