@@ -47,6 +47,7 @@ const STYLE_NOTE: Record<Style, string> = {
 
 let data: Welcome;
 let rooms: Room[] = [];
+let roomsLoaded = false; // without the list, room picks are left as they were
 const picked = new Set<string>();
 let step = 0;
 const LAST = 6;
@@ -209,9 +210,11 @@ async function loadRooms(roots?: string[]): Promise<void> {
     const q = roots ? `?roots=${encodeURIComponent(roots.join('\n'))}` : '';
     const r = await call<{ rooms: Room[] }>(`/api/welcome/rooms${q}`);
     const before = new Set(picked);
+    const known = new Set(rooms.map((x) => x.path));
     rooms = r.rooms;
     picked.clear();
-    for (const room of rooms) if (roots ? before.has(room.path) || room.chosen : room.chosen) picked.add(room.path);
+    for (const room of rooms) if (roots && known.has(room.path) ? before.has(room.path) : room.chosen) picked.add(room.path);
+    roomsLoaded = true;
     renderRooms();
   } catch (err) {
     $('rooms-sub').textContent = err instanceof Error ? err.message : String(err);
@@ -384,7 +387,7 @@ async function finish(): Promise<void> {
   try {
     const r = await call<{ url?: string; error?: string }>('/api/welcome/finish', {
       method: 'POST',
-      body: JSON.stringify({ ...data.choices, rooms: { chosen: [...picked] } }),
+      body: JSON.stringify({ ...data.choices, ...(roomsLoaded ? { rooms: { chosen: [...picked] } } : {}) }),
     });
     if (!r.url) throw new Error(r.error ?? 'The office did not open.');
     $('moving-text').textContent = 'Welcome in!';

@@ -57,9 +57,11 @@ test('picked projects get rooms (the busiest 12); the rest go to the archive cup
 test('the welcome server needs its key, serves only its own files, and hands over cleaned answers', async () => {
   let link = '';
   let got: { managerName: string; rooms?: { chosen: string[] } } | undefined;
+  let calls = 0;
   const done = runWelcome(
     async (ch) => {
       got = ch;
+      if (++calls === 1) throw new Error('settings.json is broken'); // the first try fails
       return { url: 'http://127.0.0.1:1/#code=x' };
     },
     (url) => (link = url),
@@ -88,6 +90,12 @@ test('the welcome server needs its key, serves only its own files, and hands ove
   const { rooms } = (await (await fetch(`${origin}/api/welcome/rooms`, { headers: auth })).json()) as { rooms: { path: string; name: string }[] };
   assert.deepEqual(rooms.map((r) => r.name).sort(), ['Garden Planner', 'Recipe Box']);
 
+  // A failed try is reported and can be tried again (not "already setting up"); without a room list
+  // in the answers, room picks are left as they were.
+  const bad = await fetch(`${origin}/api/welcome/finish`, { method: 'POST', headers: auth, body: JSON.stringify({ managerName: 'Maple' }) });
+  assert.equal(bad.status, 500);
+  assert.match(((await bad.json()) as { error: string }).error, /settings\.json is broken/);
+  assert.equal(got?.rooms, undefined);
   const fin = await fetch(`${origin}/api/welcome/finish`, { method: 'POST', headers: auth, body: JSON.stringify({ managerName: 'Maple', rooms: { chosen: [rooms[0]!.path, '/not/offered'] } }) });
   assert.deepEqual(await fin.json(), { url: 'http://127.0.0.1:1/#code=x' });
   assert.equal(got?.managerName, 'Maple');

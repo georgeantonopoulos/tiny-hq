@@ -48,7 +48,17 @@ export function runWelcome(finish: (ch: SetupChoices, offered: Offered[]) => Pro
   const key = randomBytes(24).toString('base64url');
   let offered: Offered[] | undefined;
   let scanning: Promise<Offered[]> | undefined;
-  const scan = (roots: string[]) => (scanning = offeredRooms(roots).then((o) => (offered = o)));
+  let scans = 0;
+  const scan = (roots: string[]) => {
+    const n = ++scans;
+    scanning = offeredRooms(roots)
+      .catch(() => [] as Offered[])
+      .then((o) => {
+        if (n === scans) offered = o; // an older scan finishing late never replaces a newer one
+        return o;
+      });
+    return scanning;
+  };
   scan(currentChoices().projectRoots); // start looking straight away; the page asks for it in step 4
   let done!: () => void;
   const over = new Promise<void>((r) => (done = r));
@@ -74,11 +84,19 @@ export function runWelcome(finish: (ch: SetupChoices, offered: Offered[]) => Pro
         if (req.method === 'POST' && url.pathname === '/api/welcome/finish') {
           if (finishing) return send(res, 409, { error: 'Already setting up.' });
           const body = await readJson(req);
-          const ch = cleanChoices(body, (offered ?? (await scanning) ?? []).map((o) => o.path));
+          const list = offered ?? (await scanning) ?? [];
+          const ch = cleanChoices(body, list.map((o) => o.path));
+          if (typeof ch !== 'string' && (!list.length || !(body as { rooms?: unknown })?.rooms)) delete ch.rooms;
           if (typeof ch === 'string') return send(res, 400, { error: ch });
           finishing = true;
-          const r = await finish(ch, offered ?? []);
-          finishing = false;
+          let r: WelcomeResult;
+          try {
+            r = await finish(ch, offered ?? []);
+          } catch (err) {
+            r = { error: err instanceof Error ? err.message : String(err) };
+          } finally {
+            finishing = false; // a failed try can be tried again
+          }
           send(res, r.error ? 500 : 200, r);
           // Close once the reply is out; open keep-alive connections would hold the server (and setup) open.
           if (!r.error) setTimeout(() => {

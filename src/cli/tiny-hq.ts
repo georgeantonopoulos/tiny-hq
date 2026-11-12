@@ -41,10 +41,12 @@ async function welcome(args: string[]): Promise<number> {
   let failed = false;
   await runWelcome(
     async (ch, offered) => {
+      failed = false; // a retry after a fixed problem counts as a success
       const activity = new Map(offered.map((o, i) => [o.path, offered.length - i]));
       const r = applySetup(ch, { outside: true, activity: (p) => activity.get(p) ?? 0 });
       if (!r.ok) {
         failed = true;
+        console.error(`\n${r.error}`);
         return { error: r.error };
       }
       console.log(`\nSaved. Office: ${ch.officeName}. Manager: ${ch.managerName}. Rooms picked: ${ch.rooms?.chosen.length ?? 0}.`);
