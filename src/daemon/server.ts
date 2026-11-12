@@ -61,8 +61,8 @@ export interface DaemonDeps {
   coffee?: { last: () => unknown; board: () => unknown; remove: (id: string) => boolean };
   // The office's microphone: what the owner said (the page's speech recognition), typed into the manager's chat.
   say?: (text: string, from?: From) => Promise<void>;
-  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void> };
-  // The owner joins (or starts) the Claude Code session in a project's folder, or the manager's.
+  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void> };
+  // the owner joins (or starts) the Claude Code session in a project's folder, or the manager's.
   terminal?: {
     open: (projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number) => Promise<{ termId: string; session: string; fresh: boolean }>;
     get: (termId: string) => Terminal | undefined;

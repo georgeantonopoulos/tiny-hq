@@ -139,7 +139,7 @@ export function usePass(text, session, now = Date.now(), path = approvalsPath(),
 // A change the owner approved for one project in their own words ("create a Vercel share link for
 // <project>"), used up by a host API call the guard can't put in fixed words: the first
 // unused pass for that target from this room, whatever its text. Never used for a deploy itself,
-// which still needs "deploy <project> publicly".
+// which still needs "deploy <project> at <commit> publicly".
 export function useTargetPass(session, now = Date.now(), path = approvalsPath(), cwd, target) {
   return locked(path, () => {
     const list = loadPasses(path);

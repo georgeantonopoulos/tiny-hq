@@ -954,7 +954,7 @@ function openAsks(): Record<string, { id: string; question: string; more?: numbe
   const shown = oldestPerFolder(loadAsks(ASKS)).sort((x, y) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask)));
   for (const { ask, more } of shown) {
     const who = personFor(ask.folder) ?? (offFloorTrust(ask) ? { id: 'manager' } : undefined);
-    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}) };
+    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
   }
   return out;
 }

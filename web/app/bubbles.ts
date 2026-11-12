@@ -34,6 +34,7 @@ export interface AskInfo {
   options?: string[]; // multiple choice; otherwise Approve / No
   post?: string; // a public post's exact text: Approve lets only this go up, once
   target?: string; // where it goes (owner/repo#N, owner/repo, a page): Approve is for there only
+  deploy?: { changes: string; proven: string; commits: string[] }; // a deploy: what changes, what was proven where, the commits going out
   password?: boolean; // a sign-in only the owner can do: Done, I did it / You sign in (saved passkey or password manager) / No
 }
 
@@ -202,7 +203,7 @@ export class Bubbles {
     // Answered from this page: a check that left before the answer landed can still list it. Ignore that.
     if (this.answered.has(ask.id)) return;
     const p = this.person(speaker);
-    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.post === ask.post && p.ask.target === ask.target;
+    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.post === ask.post && p.ask.target === ask.target && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
     if (same) return;
     this.endHappening(speaker.id);
     const isNew = p.ask?.id !== ask.id;
@@ -357,6 +358,22 @@ export class Bubbles {
       body.className = 'post-text';
       body.textContent = ask.post;
       q.append(document.createElement('br'), label, body);
+      // A deploy: what changes for people, what was proven on which device, and the
+      // exact commits going out since the last approved deploy.
+      if (ask.deploy) {
+        const part = (title: string, text: string) => {
+          const t = document.createElement('small');
+          t.className = 'tried';
+          t.textContent = title;
+          const b = document.createElement('div');
+          b.className = 'post-text';
+          b.textContent = text;
+          q.append(document.createElement('br'), t, b);
+        };
+        part('What changes for people:', ask.deploy.changes);
+        part('Proven (seen or heard, on which device):', ask.deploy.proven);
+        if (ask.deploy.commits.length) part(`Commits going out (${ask.deploy.commits.length}):`, ask.deploy.commits.join('\n'));
+      }
     }
     if (ask.tried) {
       const t = document.createElement('small');
