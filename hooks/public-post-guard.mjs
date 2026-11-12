@@ -521,7 +521,12 @@ function deployAt(seg, i, cwd) {
       const endpoint = words.find((w, j) => j > 0 && w.startsWith('/')) ?? '';
       const m = /\/projects\/([A-Za-z0-9._-]+)/.exec(endpoint);
       const project = String(m ? m[1] : named ?? projectName(here)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
-      return { why: `a change to Vercel's settings for "${project}" (${method || 'POST'} ${endpoint || 'an API call'})`, name: project, setting: true };
+      // A write that makes or points a deployment (create, redeploy, promote, rollback, an alias or a
+      // domain) is a deploy: it needs "deploy <project> publicly", never a settings Approve. An endpoint
+      // the guard can't read counts as one too.
+      if (!endpoint || /\/(deployments|aliases|alias|promote|rollback|domains)(\/|\?|$)/.test(endpoint))
+        return { why: `a Vercel deploy through its API (${method || 'POST'} ${endpoint || 'an endpoint it cannot read'})`, name: project };
+      return { why: `a change to Vercel's settings for "${project}" (${method || 'POST'} ${endpoint})`, name: project, setting: true };
     }
     // Any other word is a folder to deploy (`vercel <path>`, as Vercel reads it), so it counts.
     const path = sub && !['deploy', 'promote', 'rollback', 'alias', 'redeploy'].includes(sub) ? sub : sub === 'deploy' ? words[1] : undefined;

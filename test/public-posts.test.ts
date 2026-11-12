@@ -292,6 +292,12 @@ test('a Vercel settings change uses one Approve for that project; reads pass; de
   assert.equal(D('vercel api /v9/projects/garden-planner'), undefined); // a read
   grantPass(path, 'create Vercel protection-bypass share link for garden-planner', room, Date.now(), 'deploy:garden-planner');
   denies(D('vercel --prod'), /deploy garden-planner publicly/); // not a deploy pass
+  // A deploy through the API (Codex): never on a settings Approve, always "deploy <project> publicly".
+  denies(D('vercel api /v13/deployments -X POST --input production-deploy.json'), /deploy garden-planner publicly/);
+  denies(D('vercel api /v10/projects/garden-planner/promote/dpl_1 -X POST'), /deploy garden-planner publicly/);
+  denies(D('vercel api /v2/deployments/dpl_1/aliases -X POST --input alias.json'), /deploy garden-planner publicly/);
+  denies(D('vercel api /v9/projects/garden-planner/domains -X POST --input d.json'), /deploy garden-planner publicly/);
+  denies(D('vercel api -X POST --input x.json'), /deploy garden-planner publicly/); // no endpoint it can read
   denies(D('vercel api /v9/projects/other-thing -X DELETE'), /"other-thing"/); // another project
   assert.equal(D(call), 'pass');
   denies(D(call), /hasn't approved/); // once
