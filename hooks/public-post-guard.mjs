@@ -507,6 +507,22 @@ function deployAt(seg, i, cwd) {
     const sub = words[0];
     const READS = new Set(['ls', 'list', 'inspect', 'logs', 'env', 'pull', 'link', 'login', 'logout', 'whoami', 'project', 'projects', 'domains', 'dns', 'certs', 'secrets', 'teams', 'switch', 'help', 'dev', 'build', 'init', 'git', 'integration', 'bisect', 'telemetry', 'remove', 'rm']);
     if (sub && READS.has(sub)) return undefined;
+    // `vercel api <endpoint>`: a read passes; a change (a method other than GET, or a body) is a change
+    // to the project's settings the owner approves in their own words for target deploy:<project> (a
+    // share link, a protection change). The project is the one in the endpoint, else this folder's.
+    if (sub === 'api') {
+      let method = '';
+      for (let j = 0; j < args.length; j++) {
+        if ((args[j] === '-X' || args[j] === '--method') && args[j + 1]) method = args[j + 1].toUpperCase();
+        else if (/^(-X|--method=)./.test(args[j])) method = args[j].replace(/^(-X|--method=)/, '').toUpperCase();
+      }
+      const body = args.some((a) => /^(--input|-F|-f|--field|--raw-field|-d|--data)(=|$)/.test(a));
+      if ((method === '' || method === 'GET') && !body) return undefined;
+      const endpoint = words.find((w, j) => j > 0 && w.startsWith('/')) ?? '';
+      const m = /\/projects\/([A-Za-z0-9._-]+)/.exec(endpoint);
+      const project = String(m ? m[1] : named ?? projectName(here)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
+      return { why: `a change to Vercel's settings for "${project}" (${method || 'POST'} ${endpoint || 'an API call'})`, name: project, setting: true };
+    }
     // Any other word is a folder to deploy (`vercel <path>`, as Vercel reads it), so it counts.
     const path = sub && !['deploy', 'promote', 'rollback', 'alias', 'redeploy'].includes(sub) ? sub : sub === 'deploy' ? words[1] : undefined;
     const dir = path && !/^https?:/.test(path) ? resolve(String(here ?? '.'), path.replace(/^~(?=\/|$)/, homedir())) : here;
@@ -555,6 +571,10 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
       const d = deploys[0];
       if (deploys.length > 1 || segments(cmd).length > 1 || words(cmd).some((t) => SEP.has(t))) return { deny: `Public deploys are button-only: this command does ${d.why} alongside other commands. Run the approved deploy on its own. ${DEPLOY_HOW(d.name || '<project>')}` };
       if (!d.name) return { deny: `Public deploys are button-only, and the office can't tell which project this deploys. ${DEPLOY_HOW('<project>')}` };
+      if (d.setting) {
+        if (passes.target?.(session, cwd, `deploy:${d.name}`)) return 'pass';
+        return { deny: `Vercel setting changes are button-only: this is ${d.why}, and the owner hasn't approved a change for "${d.name}". Ask with manager/ask "<the change, in plain words>" --why post --tried "<what you checked>" --text "<what exactly changes and who can then reach it>" --target deploy:${d.name}; their Approve lets one such call through within 2 hours.` };
+      }
       if (passes.use(`deploy ${d.name} publicly`, session, cwd, undefined, `deploy:${d.name}`)) return 'pass';
       return { deny: `Public deploys are button-only: this is ${d.why} of "${d.name}", and the owner hasn't approved "deploy ${d.name} publicly". Keep it private (a preview, or the host's protection on), or ${DEPLOY_HOW(d.name)}` };
     }
@@ -634,6 +654,7 @@ if (isMain) {
       defaultPasses = {
         use: (text, session, cwd, where, target) => pa.usePass(text, session, Date.now(), pa.approvalsPath(), cwd, where, target),
         click: (session, tab, site) => pa.useClick(session, tab, site, Date.now(), pa.approvalsPath()),
+        target: (session, cwd, target) => pa.useTargetPass(session, Date.now(), pa.approvalsPath(), cwd, target),
       };
       const hook = JSON.parse(raw || '{}');
       const file = stateFile(hook.session_id ?? 'none');

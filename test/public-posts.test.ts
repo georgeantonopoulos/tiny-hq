@@ -277,3 +277,22 @@ test('a here-document is data unless a shell runs it', () => {
   denies(D(`bash -s <<'EOF'${nl}gh pr comment 4 -b hi${nl}EOF`), /button-only/);
   denies(D(`cat > a <<EOF${nl}hello${nl}EOF${nl}vercel --prod`), /deploy garden-planner publicly/); // after the body: a command again
 });
+
+// An approved Vercel share-link call used to be refused as a deploy. A Vercel settings change uses one Approve for that project, whatever its words.
+test('a Vercel settings change uses one Approve for that project; reads pass; deploys still need their own text', async () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'cm-vapi-')), 'post-approvals.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as { usePass: (t: string, s: string, now: number, p: string, cwd?: string, where?: unknown, target?: string) => boolean; useTargetPass: (s: string, now: number, p: string, cwd?: string, target?: string) => boolean };
+  const passes = { use: (t: string, s: string, cwd?: string, where?: unknown, target?: string) => pa.usePass(t, s, Date.now(), path, cwd, where, target), click: () => false, repo: () => 'x/x', target: (s: string, cwd?: string, target?: string) => pa.useTargetPass(s, Date.now(), path, cwd, target) };
+  const room = '/Users/x/Dev/garden-planner';
+  const D = (command: string, cwd = room) => decide('Bash', { command }, {}, 's', passes, cwd);
+  const call = 'vercel api /v1/projects/garden-planner/protection-bypass -X PATCH --input bypass.json';
+  denies(D(call), /hasn't approved a change for "garden-planner"/);
+  assert.equal(D('vercel api /v9/projects/garden-planner'), undefined); // a read
+  grantPass(path, 'create Vercel protection-bypass share link for garden-planner', room, Date.now(), 'deploy:garden-planner');
+  denies(D('vercel --prod'), /deploy garden-planner publicly/); // not a deploy pass
+  denies(D('vercel api /v9/projects/other-thing -X DELETE'), /"other-thing"/); // another project
+  assert.equal(D(call), 'pass');
+  denies(D(call), /hasn't approved/); // once
+});
