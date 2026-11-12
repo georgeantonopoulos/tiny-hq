@@ -249,4 +249,17 @@ test('public deploys need the owner\'s Approve for that project; previews of a l
   denies(D('vercel --prod', '/elsewhere/other-room'), /deploy other-room publicly/);
   assert.equal(D('vercel --prod'), 'pass');
   denies(D('vercel --prod'), /hasn't approved/); // once
+  // Codex on the port: a deploy inside a shell string, a value-taking option before the subcommand,
+  // and a deploy of another folder (--cwd, or a folder named on the command) are all seen.
+  denies(D(`bash -c 'vercel --prod'`), /deploy garden-planner publicly/);
+  denies(D(`sh -c "npx netlify deploy --dir dist"`), /deploy garden-planner publicly/);
+  denies(D('vercel --token abc deploy --prod'), /deploy garden-planner publicly/);
+  denies(D('vercel --scope team-x --prod'), /deploy garden-planner publicly/);
+  const other = join(room, '..', 'other-project');
+  mkdirSync(other);
+  grantPass(path, 'deploy garden-planner publicly', room, Date.now(), 'deploy:garden-planner');
+  denies(D(`vercel --cwd=${other} --prod`), /deploy other-project publicly/);
+  denies(D(`vercel --cwd ../other-project --prod`), /deploy other-project publicly/);
+  denies(D('vercel ../other-project --prod'), /deploy other-project publicly/);
+  assert.equal(D('vercel --prod'), 'pass', "the room's own pass was still there");
 });

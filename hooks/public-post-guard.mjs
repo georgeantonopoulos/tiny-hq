@@ -22,8 +22,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { normTarget } from './post-approvals.mjs';
 
@@ -75,7 +75,7 @@ function segments(cmd, depth = 0) {
   const RUNS = new Set(['eval', 'xargs', 'watch', 'nohup', 'time', 'sudo', 'env', 'command', 'exec', 'parallel']);
   if (depth < 3) for (const s of [...out]) s.forEach((t, j) => {
     const runner = /^-[a-z]*c$/.test(s[j - 1] ?? '') || RUNS.has(basename(s[0]));
-    if (runner && /\s/.test(t) && /\b(gh|curl|wget|xh|http)\b/.test(t)) out.push(...segments(t, depth + 1));
+    if (runner && /\s/.test(t) && /\b(gh|curl|wget|xh|http|vercel|netlify|gh-pages|firebase|surge|wrangler|fly|flyctl|git)\b/.test(t)) out.push(...segments(t, depth + 1));
     // $( … ) and ` … ` are run wherever they sit, quoted words included ("$(gh pr comment …)").
     for (const inner of substitutions(t)) out.push(...segments(inner, depth + 1));
   });
@@ -388,6 +388,8 @@ function remoteRepo(cwd) {
 // fly deploy. A vercel preview of a linked project stays allowed (Vercel protects previews).
 // Approved as the fixed text "deploy <project> publicly", for target deploy:<project>.
 const DEPLOY_TOOLS = new Set(['vercel', 'netlify', 'gh-pages', 'firebase', 'surge', 'wrangler', 'fly', 'flyctl']);
+// Options these tools read a value for (`--token abc deploy`: "abc" is not the subcommand).
+const DEPLOY_VALUE_FLAGS = new Set(['--token', '-t', '--scope', '-S', '--team', '-T', '--cwd', '--local-config', '-A', '--global-config', '-Q', '--meta', '-m', '--env', '-e', '--build-env', '-b', '--regions', '--archive', '--target', '--name', '-n', '--project', '-P', '--site', '-s', '--auth', '-a', '--app', '--dir', '-d', '--alias', '--config', '-c', '--only', '--message', '--branch', '--domain', '--functions', '--filter', '--context']);
 function projectName(cwd) {
   const root = String(cwd ?? '').replace(/\/\.claude\/worktrees\/[^/]+.*$/, '');
   try {
@@ -419,7 +421,20 @@ function deployAt(seg, i, cwd) {
   tool = tool.replace(/@.*$/, ''); // vercel@latest
   if (!DEPLOY_TOOLS.has(tool)) return undefined;
   const args = seg.slice(k + 1);
-  const words = args.filter((a) => !a.startsWith('-'));
+  const words = [];
+  for (let j = 0; j < args.length; j++) {
+    if (DEPLOY_VALUE_FLAGS.has(args[j])) { j++; continue; }
+    if (!args[j].startsWith('-')) words.push(args[j]);
+  }
+  // The folder the deploy really runs in: --cwd, else the hook's folder.
+  const cwdFlag = (() => {
+    for (let j = 0; j < args.length; j++) {
+      if (args[j] === '--cwd' && args[j + 1]) return args[j + 1];
+      if (args[j].startsWith('--cwd=')) return args[j].slice(6);
+    }
+    return undefined;
+  })();
+  const here = cwdFlag ? resolve(String(cwd ?? '.'), cwdFlag.replace(/^~(?=\/|$)/, homedir())) : cwd;
   const flag = (...names) => args.some((a) => names.some((n) => a === n || a.startsWith(`${n}=`)));
   const named = (() => {
     for (let j = 0; j < args.length; j++) {
@@ -429,15 +444,18 @@ function deployAt(seg, i, cwd) {
     }
     return undefined;
   })();
-  const name = String(named ?? projectName(cwd)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
+  const name = String(named ?? projectName(here)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
   if (tool === 'vercel') {
     const sub = words[0];
     const READS = new Set(['ls', 'list', 'inspect', 'logs', 'env', 'pull', 'link', 'login', 'logout', 'whoami', 'project', 'projects', 'domains', 'dns', 'certs', 'secrets', 'teams', 'switch', 'help', 'dev', 'build', 'init', 'git', 'integration', 'bisect', 'telemetry', 'remove', 'rm']);
     if (sub && READS.has(sub)) return undefined;
-    if (sub && !['deploy', 'promote', 'rollback', 'alias', 'redeploy'].includes(sub) && !/^[./~]/.test(sub)) return undefined; // vercel <path> deploys a folder; other words are unknown subcommands
+    // Any other word is a folder to deploy (`vercel <path>`, as Vercel reads it), so it counts.
+    const path = sub && !['deploy', 'promote', 'rollback', 'alias', 'redeploy'].includes(sub) ? sub : sub === 'deploy' ? words[1] : undefined;
+    const dir = path && !/^https?:/.test(path) ? resolve(String(here ?? '.'), path.replace(/^~(?=\/|$)/, homedir())) : here;
+    const project = String(named ?? projectName(dir)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
     const prod = flag('--prod', '--production') || args.some((a) => /^--target=production$/.test(a)) || (args.includes('--target') && args[args.indexOf('--target') + 1] === 'production') || ['promote', 'rollback', 'alias'].includes(sub);
-    if (!prod && vercelLinked(cwd)) return undefined; // a preview of a linked project: protected
-    return { why: prod ? 'a public Vercel production deploy' : 'a first Vercel deploy (it goes to a public production address)', name };
+    if (!prod && vercelLinked(dir)) return undefined; // a preview of a linked project: protected
+    return { why: prod ? 'a public Vercel production deploy' : 'a first Vercel deploy (it goes to a public production address)', name: project };
   }
   if (tool === 'netlify') return words[0] === 'deploy' ? { why: 'a Netlify deploy (draft addresses are public too)', name } : undefined;
   if (tool === 'gh-pages') return { why: 'a GitHub Pages deploy', name };
@@ -576,7 +594,7 @@ if (isMain) {
       }
     } catch {
       // Fail closed for anything that could be a post: a guard problem is never a go-ahead.
-      if (/\b(gh|curl|wget|xh|http|vercel|netlify|gh-pages|firebase|surge|wrangler|fly|flyctl)\b|mcp__(claude-in-chrome|plugin_playwright|playwright)__/.test(raw)) refuse('Public-post guard could not check this call; refused to be safe. Try again; if it keeps happening, tell the Claude Manager room.');
+      if (/\b(gh|curl|wget|xh|http|vercel|netlify|gh-pages|firebase|surge|wrangler|fly|flyctl)\b|mcp__(claude-in-chrome|plugin_playwright|playwright)__/.test(raw)) refuse('Public-post guard could not check this call; refused to be safe. Try again; if it keeps happening, tell the manager.');
     }
   });
 }
