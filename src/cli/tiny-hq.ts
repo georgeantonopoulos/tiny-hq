@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { CONFIG_PATH, DATA_DIR, DEFAULT_PORT, MANAGER_DIR, NODE_FLAGS, REPO_ROOT } from '../paths.ts';
-import { STYLES, cleanName, loadConfig, type ManagerStyle } from '../config.ts';
+import { DEFAULT_CONFIG, STYLES, cleanName, loadConfig, type ManagerStyle } from '../config.ts';
 import { LABEL, OPEN_LABEL, openPlist, plist } from '../daemon/launchd.ts';
 import { HOOKS, MARK, installedHooks, loadAgent, loadInstalled, readSettings, skillLink, unlinkSkill, unloadAgent, withoutHooks, writeSettings, type HookSpec } from './install.ts';
 import { applySetup, currentChoices, has, tilde, untilde } from './setup.ts';
@@ -110,10 +110,11 @@ async function typedSetup(args: string[], defaults: boolean): Promise<number> {
   console.log('\nTiny HQ setup. Press Enter to keep the answer in [brackets]; run `tiny-hq setup` again any time.\n');
   const ownerName = cleanName(await ask('1. Your name (what your manager calls you)', before.ownerName), before.ownerName);
 
-  const roots = (await ask('2. Your project folders, comma-separated', before.projectRoots.map(tilde).join(', ')))
+  const typedRoots = (await ask('2. Your project folders, comma-separated', (before.projectRoots.length ? before.projectRoots : DEFAULT_CONFIG.projectRoots.filter((p) => existsSync(p))).map(tilde).join(', ')))
     .split(',')
     .map((p) => untilde(p.trim()))
     .filter((p) => p.startsWith('/'));
+  const roots = typedRoots.length ? typedRoots : before.projectRoots;
   const missing = roots.filter((p) => !existsSync(p));
   if (missing.length) console.log(`   (not there yet, kept anyway: ${missing.map(tilde).join(', ')})`);
 

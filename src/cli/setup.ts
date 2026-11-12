@@ -4,11 +4,11 @@
 import { chmodSync, existsSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { CONFIG_PATH, DATA_DIR, REPO_ROOT } from '../paths.ts';
 import { DEFAULT_CONFIG, STYLES, cleanName, loadConfig, saveConfig, type Config, type ManagerStyle } from '../config.ts';
 import { LABEL, OPEN_LABEL, openPlist, plist } from '../daemon/launchd.ts';
-import { discoverProjects, isGone, isPlainPath } from '../discovery/scan.ts';
+import { discoverProjects, findRepos, isGone, isPlainPath, scanClaude } from '../discovery/scan.ts';
 import { MAX_ROOMS } from '../office/layout.ts';
 import { HOOKS, MARK, installedHooks, linkSkill, loadAgent, loadInstalled, readSettings, saveInstalled, skillLink, unlinkSkill, unloadAgent, withHooks, writeSettings, type HookSpec } from './install.ts';
 
@@ -43,13 +43,14 @@ export function currentChoices(): SetupChoices {
   } catch {
     // a broken settings file is reported when saving
   }
-  const found = c.projectRoots.filter((p) => existsSync(p));
+  // First time, no folder is assumed: the owner picks where their projects live (suggestions help).
+  const found = first ? [] : c.projectRoots.filter((p) => existsSync(p));
   return {
     officeName: c.officeName,
     ownerName: cleanName(macName, c.ownerName),
     managerName: c.managerName,
     managerStyle: c.managerStyle,
-    projectRoots: found.length ? found : c.projectRoots,
+    projectRoots: found,
     extras: { ...c.extras },
     briefing: !!c.briefingTime,
     phone: !!c.remote,
@@ -57,6 +58,36 @@ export function currentChoices(): SetupChoices {
     hooks: inst ? inst.hooks : had.length ? HOOKS.filter((h) => had.some((x) => x.endsWith(`${MARK} ${h.id}`))).map((h) => h.id) : HOOKS.map((h) => h.id),
     skill: inst ? inst.skill : true,
   };
+}
+
+// Folders that look like where the owner keeps projects, for one-tap picking: common places that
+// hold git projects, and the parent folders of projects worked on in Claude Code. Never assumed:
+// the page only suggests them.
+export function suggestedFolders(home = homedir()): { path: string; label: string; count: number }[] {
+  const seen = new Map<string, number>();
+  const common = ['Dev', 'Developer', 'Projects', 'Sites', 'code', 'Code', 'src', 'GitHub', 'Documents/GitHub', 'Documents/Projects', 'repos', 'Repos', 'workspace', 'Work'].map((d) => join(home, d));
+  for (const dir of common) if (existsSync(dir)) seen.set(dir, findRepos([dir], 3).length);
+  try {
+    const parents = new Map<string, number>();
+    for (const h of scanClaude(home)) {
+      const parent = dirname(h.path);
+      if (parent !== home && parent.startsWith(home + '/') && !parent.includes('/.')) parents.set(parent, (parents.get(parent) ?? 0) + 1);
+    }
+    for (const [dir, n] of parents) if (n >= 2 && existsSync(dir) && ![...seen.keys()].some((s) => dir.startsWith(s + '/'))) seen.set(dir, Math.max(n, findRepos([dir], 1).length));
+  } catch {
+    // no Claude Code history yet
+  }
+  return [...seen.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([path, count]) => ({ path, label: tilde(path), count }));
+}
+
+// The Mac's own folder chooser. Undefined when the owner cancels.
+export function chooseFolder(prompt = 'Choose the folder where you keep your projects'): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile('osascript', ['-e', 'activate', '-e', `POSIX path of (choose folder with prompt ${JSON.stringify(prompt)} default location (path to home folder))`], { timeout: 300_000 }, (err, out) => {
+      const p = String(out ?? '').trim().replace(/\/$/, '');
+      resolve(err || !isPlainPath(p) ? undefined : p);
+    });
+  });
 }
 
 // A project the welcome page offers as a room.
@@ -102,7 +133,7 @@ export function cleanChoices(raw: unknown, offered: readonly string[]): SetupCho
     ownerName: cleanName(r.ownerName, def.ownerName),
     managerName: cleanName(r.managerName, def.managerName),
     managerStyle: STYLES.includes(r.managerStyle as ManagerStyle) ? (r.managerStyle as ManagerStyle) : def.managerStyle,
-    projectRoots: roots.length ? roots : def.projectRoots,
+    projectRoots: roots,
     extras: { github: bool(x.github, def.extras.github), coffee: bool(x.coffee, def.extras.coffee), happenings: bool(x.happenings, def.extras.happenings) },
     briefing: bool(r.briefing, def.briefing),
     phone: bool(r.phone, def.phone),
@@ -146,7 +177,7 @@ export function applySetup(ch: SetupChoices, opts: { outside: boolean; activity?
     ownerName: ch.ownerName,
     managerName: ch.managerName,
     managerStyle: ch.managerStyle,
-    projectRoots: ch.projectRoots.length ? ch.projectRoots : before.projectRoots,
+    projectRoots: ch.projectRoots, // may be empty: rooms then come from Claude Code history only
     extras: ch.extras,
   };
   if (ch.briefing) config.briefingTime = before.briefingTime ?? DEFAULT_CONFIG.briefingTime;

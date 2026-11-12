@@ -3,6 +3,10 @@
 // "Open my office". It serves only the files in web/welcome and three calls:
 //   GET  /api/welcome        the suggested answers, the extras and Claude Code helpers to switch on or off
 //   GET  /api/welcome/rooms  the projects found, for picking rooms (a scan can take a few seconds)
+//   GET  /api/welcome/folders     folders that look like where projects live (suggestions only)
+//   POST /api/welcome/pick-folder the Mac's own folder chooser
+//   GET  /api/welcome/tools       the handy tools and whether each is here; POST …/tools/install and
+//                                 …/tools/sign-in act on one tool from the fixed list
 //   POST /api/welcome/finish the answers; replies with the office's link once it's set up and running
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -13,7 +17,8 @@ import { extname, join, sep } from 'node:path';
 import { STYLES } from '../config.ts';
 import { SECURITY_HEADERS, WEB_ROOT } from '../daemon/web.ts';
 import { HOOKS } from './install.ts';
-import { cleanChoices, currentChoices, has, offeredRooms, tilde, type Offered, type SetupChoices } from './setup.ts';
+import { chooseFolder, cleanChoices, currentChoices, has, offeredRooms, suggestedFolders, tilde, type Offered, type SetupChoices } from './setup.ts';
+import { brewPath, install, openSignIn, TOOLS, toolStates } from './tools.ts';
 
 const ROOT = join(WEB_ROOT, 'welcome');
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.ts': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
@@ -63,6 +68,7 @@ export function runWelcome(finish: (ch: SetupChoices, offered: Offered[]) => Pro
   let done!: () => void;
   const over = new Promise<void>((r) => (done = r));
   let finishing = false;
+  let installing = false;
 
   const server = createServer(async (req, res) => {
     try {
@@ -71,7 +77,25 @@ export function runWelcome(finish: (ch: SetupChoices, offered: Offered[]) => Pro
         if (!keyOk(req, key)) return send(res, 401, { error: 'This setup link has expired. Run tiny-hq setup again.' });
         if (req.method === 'GET' && url.pathname === '/api/welcome') {
           const c = currentChoices();
-          return send(res, 200, { choices: c, roots: c.projectRoots.map(tilde), styles: STYLES, extras: EXTRAS, helpers: HELPERS, gh: has('gh') });
+          return send(res, 200, { choices: c, roots: c.projectRoots.map((path) => ({ path, label: tilde(path) })), styles: STYLES, extras: EXTRAS, helpers: HELPERS, gh: has('gh') });
+        }
+        if (req.method === 'GET' && url.pathname === '/api/welcome/folders') return send(res, 200, { folders: suggestedFolders() });
+        if (req.method === 'POST' && url.pathname === '/api/welcome/pick-folder') {
+          const path = await chooseFolder();
+          return send(res, 200, path ? { path, label: tilde(path) } : { cancelled: true });
+        }
+        if (req.method === 'GET' && url.pathname === '/api/welcome/tools') return send(res, 200, { tools: toolStates(), brew: !!brewPath() });
+        if (req.method === 'POST' && (url.pathname === '/api/welcome/tools/install' || url.pathname === '/api/welcome/tools/sign-in')) {
+          const id = String(((await readJson(req)) as { id?: unknown } | undefined)?.id ?? '');
+          if (!TOOLS.some((t) => t.id === id)) return send(res, 400, { error: 'Unknown tool.' });
+          if (url.pathname.endsWith('/sign-in')) return send(res, 200, { error: openSignIn(id) });
+          if (installing) return send(res, 409, { error: 'One install at a time; another is still going.' });
+          installing = true;
+          try {
+            return send(res, 200, { error: await install(id) });
+          } finally {
+            installing = false;
+          }
         }
         if (req.method === 'GET' && url.pathname === '/api/welcome/rooms') {
           const more = url.searchParams.get('roots');

@@ -95,7 +95,15 @@ test('the welcome server needs its key, serves only its own files, and hands ove
   const state = (await (await fetch(`${origin}/api/welcome`, { headers: auth })).json()) as { choices: { officeName: string }; helpers: { id: string }[] };
   assert.equal(state.choices.officeName, 'Tiny HQ');
   assert.deepEqual(state.helpers.map((h) => h.id), ['name-tag', 'waiting', 'public-posts', 'skill']);
-  const { rooms } = (await (await fetch(`${origin}/api/welcome/rooms`, { headers: auth })).json()) as { rooms: { path: string; name: string }[] };
+  // First time, no folder is assumed; the page suggests where projects look to be.
+  assert.deepEqual((state as unknown as { choices: { projectRoots: string[] } }).choices.projectRoots, []);
+  const { folders } = (await (await fetch(`${origin}/api/welcome/folders`, { headers: auth })).json()) as { folders: { path: string; count: number }[] };
+  assert.deepEqual(folders, [{ path: join(home, 'Dev'), label: '~/Dev', count: 2 }]);
+  const tools = (await (await fetch(`${origin}/api/welcome/tools`, { headers: auth })).json()) as { tools: { id: string }[] };
+  assert.deepEqual(tools.tools.map((t) => t.id), ['gh', 'codex', 'obsidian', 'tailscale']);
+  const odd = await fetch(`${origin}/api/welcome/tools/install`, { method: 'POST', headers: auth, body: JSON.stringify({ id: 'rm -rf' }) });
+  assert.equal(odd.status, 400, 'only tools from the list');
+  const { rooms } = (await (await fetch(`${origin}/api/welcome/rooms?roots=${encodeURIComponent(join(home, 'Dev'))}`, { headers: auth })).json()) as { rooms: { path: string; name: string }[] };
   assert.deepEqual(rooms.map((r) => r.name).sort(), ['Garden Planner', 'Recipe Box']);
 
   // A failed try is reported and can be tried again (not "already setting up"); without a room list

@@ -16,7 +16,7 @@ interface Choices {
   skill: boolean;
 }
 interface Item { id: string; title: string; what: string }
-interface Welcome { choices: Choices; roots: string[]; styles: Style[]; extras: Item[]; helpers: Item[]; gh: boolean }
+interface Welcome { choices: Choices; roots: { path: string; label: string }[]; styles: Style[]; extras: Item[]; helpers: Item[]; gh: boolean }
 interface Room { path: string; name: string; where: string; lastActive: number; recent: number; repo?: string; chosen: boolean }
 
 const MAX_ROOMS = 12; // the floor holds 12 rooms; more picks wait in the archive cupboard
@@ -50,7 +50,7 @@ let rooms: Room[] = [];
 let roomsLoaded = false; // without the list, room picks are left as they were
 const picked = new Set<string>();
 let step = 0;
-const LAST = 6;
+const LAST = 7;
 
 // ---- The office front (an SVG drawn in little blocks) ----
 function el(tag: string, attrs: Record<string, string | number>, parent: Element, text?: string): SVGElement {
@@ -148,6 +148,7 @@ function show(n: number): void {
   $('back').hidden = n === 0;
   $('next').textContent = n === 0 ? "Let's go" : n === LAST ? 'Open my office' : 'Next';
   if (n === LAST) renderSummary();
+  if (n === 6 && !toolsLoaded) void loadTools();
   drawFront();
   const first = document.querySelector<HTMLElement>(`.step.on input:not([type=search]), .step.on .style-card[aria-checked=true]`);
   first?.focus({ preventScroll: true });
@@ -348,6 +349,181 @@ function buildToggles(): void {
   }
 }
 
+// ---- Project folders ----
+const labels = new Map<string, string>(); // folder path -> "~/Dev"
+const label = (p: string) => labels.get(p) ?? p;
+
+function setRoots(roots: string[]): void {
+  data.choices.projectRoots = [...new Set(roots)];
+  renderFolders();
+  void loadRooms(data.choices.projectRoots);
+}
+
+function renderFolders(): void {
+  const box = $('folders');
+  box.replaceChildren();
+  for (const p of data.choices.projectRoots) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = label(p);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '×';
+    x.setAttribute('aria-label', `Stop looking in ${label(p)}`);
+    x.addEventListener('click', () => setRoots(data.choices.projectRoots.filter((r) => r !== p)));
+    chip.appendChild(x);
+    box.appendChild(chip);
+  }
+  renderSuggestions();
+}
+
+let suggested: { path: string; label: string; count: number }[] = [];
+function renderSuggestions(): void {
+  const list = $('suggest-list');
+  list.replaceChildren();
+  const left = suggested.filter((s) => !data.choices.projectRoots.includes(s.path));
+  $('suggest').hidden = !left.length;
+  for (const s of left) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `+ ${s.label}`;
+    const n = document.createElement('small');
+    n.textContent = `${s.count} project${s.count === 1 ? '' : 's'}`;
+    b.appendChild(n);
+    b.addEventListener('click', () => {
+      labels.set(s.path, s.label);
+      setRoots([...data.choices.projectRoots, s.path]);
+    });
+    list.appendChild(b);
+  }
+}
+
+async function pickFolder(): Promise<void> {
+  const btn = $<HTMLButtonElement>('pick-folder');
+  btn.disabled = true;
+  $('pick-note').textContent = 'A folder window is open on your Mac. It may be behind this one.';
+  try {
+    const r = await call<{ path?: string; label?: string; cancelled?: boolean }>('/api/welcome/pick-folder', { method: 'POST', body: '{}' });
+    if (r.path) {
+      labels.set(r.path, r.label ?? r.path);
+      setRoots([...data.choices.projectRoots, r.path]);
+    }
+  } catch (e) {
+    $('pick-note').textContent = e instanceof Error ? e.message : String(e);
+    btn.disabled = false;
+    return;
+  }
+  $('pick-note').textContent = '';
+  btn.disabled = false;
+}
+
+// ---- Handy tools ----
+interface ToolState { id: string; name: string; what: string; url: string; installed: boolean; signedIn?: boolean; canInstall: boolean; signIn: boolean }
+let tools: ToolState[] = [];
+let toolsLoaded = false;
+const toolErrors = new Map<string, string>();
+let busyTool = '';
+
+async function loadTools(): Promise<void> {
+  try {
+    const r = await call<{ tools: ToolState[]; brew: boolean }>('/api/welcome/tools');
+    tools = r.tools;
+    toolsLoaded = true;
+    $('brew-note').hidden = r.brew;
+    renderTools();
+  } catch (e) {
+    $('tools-sub').textContent = e instanceof Error ? e.message : String(e);
+  }
+}
+
+function renderTools(): void {
+  const box = $('tools');
+  box.replaceChildren();
+  for (const t of tools) {
+    const card = document.createElement('div');
+    card.className = 'tool';
+    const txt = document.createElement('div');
+    txt.className = 'txt';
+    const name = document.createElement('strong');
+    name.textContent = t.name;
+    const what = document.createElement('small');
+    what.textContent = t.what;
+    txt.append(name, what);
+    const err = toolErrors.get(t.id);
+    if (err) {
+      const e = document.createElement('small');
+      e.className = 'err';
+      e.textContent = err;
+      txt.appendChild(e);
+    }
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+    if (t.installed) {
+      const have = document.createElement('span');
+      have.className = 'have';
+      have.textContent = '✓ Installed';
+      acts.appendChild(have);
+      if (t.signIn && t.signedIn !== true) acts.appendChild(button(t.signedIn === false ? 'Sign in' : 'Sign in…', 'ghost', () => void signIn(t)));
+    } else if (t.canInstall) {
+      acts.appendChild(button(busyTool === t.id ? 'Installing…' : 'Install', 'get', () => void installTool(t), !!busyTool));
+    } else {
+      const a = document.createElement('a');
+      a.className = 'get';
+      a.href = t.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = 'Get it';
+      acts.appendChild(a);
+    }
+    if (!t.installed && t.canInstall) {
+      const more = document.createElement('a');
+      more.className = 'ghost';
+      more.href = t.url;
+      more.target = '_blank';
+      more.rel = 'noopener';
+      more.textContent = 'About';
+      acts.appendChild(more);
+    }
+    card.append(txt, acts);
+    box.appendChild(card);
+  }
+}
+
+function button(text: string, cls: string, onClick: () => void, disabled = false): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls;
+  b.textContent = text;
+  b.disabled = disabled;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+async function installTool(t: ToolState): Promise<void> {
+  busyTool = t.id;
+  toolErrors.delete(t.id);
+  renderTools();
+  try {
+    const r = await call<{ error?: string }>('/api/welcome/tools/install', { method: 'POST', body: JSON.stringify({ id: t.id }) });
+    if (r.error) toolErrors.set(t.id, r.error);
+  } catch (e) {
+    toolErrors.set(t.id, e instanceof Error ? e.message : String(e));
+  }
+  busyTool = '';
+  await loadTools();
+}
+
+async function signIn(t: ToolState): Promise<void> {
+  try {
+    const r = await call<{ error?: string }>('/api/welcome/tools/sign-in', { method: 'POST', body: JSON.stringify({ id: t.id }) });
+    if (r.error) toolErrors.set(t.id, r.error);
+    else toolErrors.set(t.id, 'Terminal is open: follow the steps there, then come back. This page checks again when you return.');
+  } catch (e) {
+    toolErrors.set(t.id, e instanceof Error ? e.message : String(e));
+  }
+  renderTools();
+}
+
 // ---- Summary and finish ----
 function renderSummary(): void {
   const c = data.choices;
@@ -361,6 +537,8 @@ function renderSummary(): void {
     ['Rooms', names.length ? `${names.length}: ${names.slice(0, 6).join(', ')}${names.length > 6 ? `, and ${names.length - 6} more` : ''}` : 'none yet; they appear as you use Claude Code'],
     ['Extras', on.length ? on.join(', ') : 'none'],
     ['Helpers', `${helpers} of ${data.helpers.length}`],
+    ['Folders', c.projectRoots.length ? c.projectRoots.map(label).join(', ') : 'none; rooms come from your Claude Code history'],
+    ...(toolsLoaded ? [['Tools', tools.filter((t) => t.installed).map((t) => t.name).join(', ') || 'none yet'] as [string, string]] : []),
   ];
   const ul = $('summary');
   ul.replaceChildren();
@@ -413,7 +591,18 @@ async function start(): Promise<void> {
   for (const id of ['officeName', 'ownerName', 'managerName'] as const) bindText(id);
   buildStyles();
   buildToggles();
-  $<HTMLTextAreaElement>('roots').value = data.roots.join('\n');
+  for (const r of data.roots) labels.set(r.path, r.label);
+  renderFolders();
+  void call<{ folders: typeof suggested }>('/api/welcome/folders').then((r) => {
+    suggested = r.folders;
+    for (const f of suggested) labels.set(f.path, f.label);
+    renderSuggestions();
+  }).catch(() => {});
+  $('pick-folder').addEventListener('click', () => void pickFolder());
+  // Back from Terminal (a sign-in) or a website: check the tools again.
+  window.addEventListener('focus', () => {
+    if (step === 6 && toolsLoaded && !busyTool) void loadTools();
+  });
   $('room-filter').addEventListener('input', renderRooms);
   $('room-filter').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') e.preventDefault(); // searching, not moving on
@@ -425,11 +614,6 @@ async function start(): Promise<void> {
   $('rooms-none').addEventListener('click', () => {
     picked.clear();
     renderRooms();
-  });
-  $('rescan').addEventListener('click', () => {
-    const roots = $<HTMLTextAreaElement>('roots').value.split('\n').map((s) => s.trim()).filter(Boolean);
-    if (roots.length) data.choices.projectRoots = roots;
-    void loadRooms(roots);
   });
   $('back').addEventListener('click', () => show(Math.max(0, step - 1)));
   $('card').addEventListener('submit', (e) => {

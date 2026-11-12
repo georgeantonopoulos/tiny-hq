@@ -54,7 +54,18 @@
 
         <!-- 3: rooms -->
         <section class="step" data-step="3" data-label="Rooms">
-          <h1>Which projects get a room?</h1>
+          <h1>Where do you keep your projects?</h1>
+          <p class="soft">Choose the folder (or folders) your projects live in. Projects you've opened in Claude Code show up wherever they are.</p>
+          <div class="folders" id="folders"></div>
+          <div class="folder-actions">
+            <button type="button" class="secondary pick" id="pick-folder"><span class="folder-icon" aria-hidden="true"></span>Choose a folder…</button>
+            <span class="soft small" id="pick-note"></span>
+          </div>
+          <div class="suggest" id="suggest" hidden>
+            <span class="soft small">Looks like projects might be in:</span>
+            <div class="suggest-list" id="suggest-list"></div>
+          </div>
+          <h2>Which ones get a room?</h2>
           <p class="soft" id="rooms-sub">Looking around for your projects…</p>
           <div class="room-tools">
             <input id="room-filter" type="search" placeholder="Find a project" aria-label="Find a project" />
@@ -62,12 +73,6 @@
             <button type="button" class="link" id="rooms-none">Clear</button>
           </div>
           <div class="rooms" id="rooms" role="group" aria-label="Projects"><div class="loading"><span></span><span></span><span></span></div></div>
-          <details class="more-folders">
-            <summary>My projects are somewhere else</summary>
-            <p class="soft">Folders to look in, one per line (for example <code>~/Work</code>).</p>
-            <textarea id="roots" rows="3" spellcheck="false"></textarea>
-            <button type="button" class="secondary" id="rescan">Look again</button>
-          </details>
         </section>
 
         <!-- 4: extras -->
@@ -84,8 +89,16 @@
           <div class="toggles" id="helpers"></div>
         </section>
 
-        <!-- 6: ready -->
-        <section class="step" data-step="6" data-label="Move in">
+        <!-- 6: tools -->
+        <section class="step" data-step="6" data-label="Tools">
+          <h1>Handy tools</h1>
+          <p class="soft" id="tools-sub">These make the office better. All optional: install what you like, now or later.</p>
+          <div class="tools" id="tools"><div class="loading"><span></span><span></span><span></span></div></div>
+          <p class="soft small" id="brew-note" hidden>One-click installs use <a href="https://brew.sh" target="_blank" rel="noopener">Homebrew</a>, which isn't on this Mac yet. You can still get each tool from its website.</p>
+        </section>
+
+        <!-- 7: ready -->
+        <section class="step" data-step="7" data-label="Move in">
           <h1 id="ready-title">Ready to move in</h1>
           <ul class="summary" id="summary"></ul>
           <p class="error" id="error" role="alert" hidden></p>
