@@ -1,7 +1,6 @@
 {
   "name": "tiny-hq",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
   "description": "A little office for your Claude Code projects: a room per project, a manager who hands out jobs and gets them finished, question buttons instead of chat, and safe defaults.",
   "license": "MIT",
   "type": "module",
