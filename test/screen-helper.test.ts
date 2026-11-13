@@ -29,6 +29,8 @@ test('the office stops the helper when its time is up, or when nobody turned it 
   assert.equal(shouldStop(true, undefined), true, 'running with nobody having turned it on');
   assert.equal(shouldStop(false, undefined), false, 'already off');
   assert.equal(writeMarker(path, 'x', 10_000, 0).until, MAX_MINUTES * 60_000, 'capped');
+  assert.equal(writeMarker(path, 'x', 5, 0, 4242).awake, 4242);
+  assert.equal(readMarker(path)!.awake, 4242, 'the caffeinate pid is kept so it can be stopped with the helper');
   clearMarker(path);
   assert.equal(readMarker(path), undefined);
 });

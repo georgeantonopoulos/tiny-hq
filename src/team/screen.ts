@@ -4,7 +4,7 @@
 // `manager/screen off`, and the office turns it off once its time is up (30 minutes by default), or
 // if it is running without anyone having turned it on. When it is off, `peekaboo` runs in the room's
 // own process, which has no permission, so it fails safely.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { SCREEN_LABEL } from '../daemon/launchd.ts';
@@ -12,23 +12,24 @@ import { SCREEN_LABEL } from '../daemon/launchd.ts';
 export const DEFAULT_MINUTES = 30;
 export const MAX_MINUTES = 120;
 
-export type ScreenOn = { until: number; by: string; at: number };
+export type ScreenOn = { until: number; by: string; at: number; awake?: number }; // awake: pid of the caffeinate keeping the display on
 
 export const markerPath = (dataDir: string): string => join(dataDir, 'screen-on.json');
 
 export function readMarker(path: string): ScreenOn | undefined {
   try {
     const o = JSON.parse(readFileSync(path, 'utf8')) as Partial<ScreenOn>;
-    if (typeof o.until === 'number' && typeof o.at === 'number' && typeof o.by === 'string') return { until: o.until, by: o.by, at: o.at };
+    if (typeof o.until === 'number' && typeof o.at === 'number' && typeof o.by === 'string') return { until: o.until, by: o.by, at: o.at, ...(typeof o.awake === 'number' ? { awake: o.awake } : {}) };
   } catch {
     // none, or unreadable
   }
   return undefined;
 }
 
-export function writeMarker(path: string, by: string, minutes: number, now = Date.now()): ScreenOn {
-  const m = Math.min(Math.max(Math.round(minutes) || DEFAULT_MINUTES, 1), MAX_MINUTES);
-  const on = { until: now + m * 60_000, by: by.slice(0, 80), at: now };
+export const minutesOf = (minutes: number): number => Math.min(Math.max(Math.round(minutes) || DEFAULT_MINUTES, 1), MAX_MINUTES);
+
+export function writeMarker(path: string, by: string, minutes: number, now = Date.now(), awake?: number): ScreenOn {
+  const on: ScreenOn = { until: now + minutesOf(minutes) * 60_000, by: by.slice(0, 80), at: now, ...(awake ? { awake } : {}) };
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, JSON.stringify(on) + '\n', { mode: 0o600 });
   return on;
@@ -75,16 +76,53 @@ export function stopHelper(): void {
   }
 }
 
+// A Mac whose display goes off locks itself, and a locked Mac can't be captured (every capture fails
+// with "audio/video capture failure"). While the helper is on, caffeinate keeps the display awake for
+// the same time. It runs on its own: wrapping the helper's program in it would tie the macOS
+// permissions to caffeinate instead.
+export function keepAwake(minutes: number): number | undefined {
+  try {
+    const p = spawn('/usr/bin/caffeinate', ['-d', '-i', '-t', String(minutesOf(minutes) * 60)], { detached: true, stdio: 'ignore' });
+    p.unref();
+    return p.pid;
+  } catch {
+    return undefined;
+  }
+}
+
+export function letSleep(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    // Only ever our caffeinate: a pid may have been reused.
+    if (execFileSync('ps', ['-o', 'comm=', '-p', String(pid)], { encoding: 'utf8' }).trim().endsWith('caffeinate')) process.kill(pid, 'SIGTERM');
+  } catch {
+    // already gone
+  }
+}
+
+// A locked Mac can't be captured; only the owner can unlock it.
+export function macLocked(): boolean {
+  try {
+    return /<key>IOConsoleLocked<\/key>\s*<true\/>/.test(execFileSync('ioreg', ['-n', 'Root', '-d1', '-a'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+  } catch {
+    return false;
+  }
+}
+
 // The office's regular check: true when it stopped the helper.
 export function tidyScreen(dataDir: string, now = Date.now()): boolean {
   const path = markerPath(dataDir);
   const marker = readMarker(path);
   const running = helperRunning();
   if (!shouldStop(running, marker, now)) {
-    if (!running && marker) clearMarker(path);
+    if (!running && marker) {
+      letSleep(marker.awake);
+      clearMarker(path);
+    }
     return false;
   }
   stopHelper();
+  letSleep(marker?.awake);
   clearMarker(path);
   return true;
 }
