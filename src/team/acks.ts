@@ -1,0 +1,101 @@
+// After the owner clicks a button, the room must visibly take it up. A click can land in a session that
+// only answers "Please run /login · API Error", and nobody would hear. So the office notes each answer
+// it types into a session and watches that session's transcript: a reply (anything it writes or does)
+// is the acknowledgement; an API or sign-in error, or silence past ACK_MS, means it wasn't picked up,
+// and the manager is told.
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+export const ACK_MS = 90_000;
+const GIVE_UP_MS = 30 * 60_000; // a check that can't be read for this long is dropped
+
+export type PendingAck = { sessionId: string; cwd: string; room: string; question: string; answer: string; at: number };
+export type AckResult = { status: 'ok' } | { status: 'wait' } | { status: 'failed'; why: string };
+
+export const acksPath = (notesDir: string): string => join(notesDir, 'acks.json');
+
+export function loadAcks(path: string): PendingAck[] {
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as { acks?: unknown };
+    return (Array.isArray(raw.acks) ? raw.acks : []).filter(
+      (a): a is PendingAck => !!a && typeof a === 'object' && typeof (a as PendingAck).sessionId === 'string' && typeof (a as PendingAck).cwd === 'string' && typeof (a as PendingAck).at === 'number',
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function saveAcks(path: string, acks: PendingAck[]): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ acks: acks.slice(-50) }, null, 2) + '\n', { mode: 0o600 });
+  renameSync(tmp, path);
+}
+
+export function addAck(path: string, a: PendingAck): void {
+  saveAcks(path, [...loadAcks(path).filter((x) => !(x.sessionId === a.sessionId && x.question === a.question)), a]);
+}
+
+// What Claude Code writes in place of a reply when it can't reach the model or isn't signed in.
+const BROKEN = /API Error|Please run \/login|Invalid API key|OAuth token has expired|Credit balance is too low|usage limit reached|overloaded_error/i;
+
+type Rec = { type?: string; timestamp?: string; isSidechain?: boolean; isApiErrorMessage?: boolean; message?: { content?: unknown } };
+
+// Did the session take it up? Reads the transcript records written after the answer was typed.
+export function ackFrom(records: Rec[], at: number, now = Date.now()): AckResult {
+  for (const r of records) {
+    if (r.type !== 'assistant' || r.isSidechain || !r.timestamp || Date.parse(r.timestamp) < at - 2_000) continue;
+    const content = Array.isArray(r.message?.content) ? (r.message!.content as { type?: string; text?: string }[]) : [];
+    const text = content.filter((c) => c?.type === 'text').map((c) => c.text ?? '').join(' ').trim();
+    if (r.isApiErrorMessage || (BROKEN.test(text) && text.length < 300)) return { status: 'failed', why: `it only answered "${text.slice(0, 120)}"` };
+    if (text || content.some((c) => c?.type === 'tool_use')) return { status: 'ok' };
+  }
+  return now - at >= ACK_MS ? { status: 'failed', why: `it hasn't written or done anything in the ${Math.round((now - at) / 1000)} s since` } : { status: 'wait' };
+}
+
+export function transcriptRecords(sessionId: string, cwd: string, home = homedir()): Rec[] | undefined {
+  if (!/^[0-9a-f-]{36}$/.test(sessionId)) return undefined;
+  const file = join(home, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`);
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, 'r');
+    const size = fstatSync(fd).size;
+    const len = Math.min(size, 512 * 1024);
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, size - len);
+    return buf
+      .toString('utf8')
+      .split('\n')
+      .flatMap((l) => {
+        try {
+          return [JSON.parse(l) as Rec];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// The office's check: returns the answers that weren't picked up (and drops them and the taken-up ones).
+export function checkAcks(path: string, now = Date.now(), read = transcriptRecords, onOk: (a: PendingAck) => void = () => undefined): (PendingAck & { why: string })[] {
+  const failed: (PendingAck & { why: string })[] = [];
+  const keep: PendingAck[] = [];
+  for (const a of loadAcks(path)) {
+    const recs = read(a.sessionId, a.cwd);
+    if (!recs) {
+      if (now - a.at < GIVE_UP_MS) keep.push(a);
+      continue;
+    }
+    const r = ackFrom(recs, a.at, now);
+    if (r.status === 'wait') keep.push(a);
+    else if (r.status === 'failed') failed.push({ ...a, why: r.why });
+    else onOk(a);
+  }
+  saveAcks(path, keep);
+  return failed;
+}
