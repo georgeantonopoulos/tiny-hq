@@ -29,7 +29,10 @@ test('usage counts each step once, from the transcript usage fields', () => {
 test("the manager's rules carry the do-less changes; a bare cancel is refused", () => {
   const g = readFileSync(new URL('../manager/CLAUDE.template.md', import.meta.url), 'utf8');
   for (const s of ['No relays', 'notify_when_idle', '{{cli}}/usage', 'Explain before you ask', 'Never cut work to save usage', 'a bare cancel is refused']) assert.ok(g.includes(s), s);
-  assert.match(readFileSync(new URL('../src/cli/ask.ts', import.meta.url), 'utf8'), /if \(!id && !askedFor\) \{/);
+  const ask = readFileSync(new URL('../src/cli/ask.ts', import.meta.url), 'utf8');
+  assert.match(ask, /if \(!id && !askedFor\) \{/);
+  // A typo in the id is refused even with --room, never read as "all of them".
+  assert.ok(ask.indexOf('if (args[1] && !id) {') < ask.indexOf('if (!id && !askedFor) {'));
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { files: string[] };
   assert.ok(pkg.files.includes('manager/usage'));
 });

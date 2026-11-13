@@ -79,6 +79,10 @@ if (args[0] === 'list') {
   const id = args[1] && /^[a-z0-9]{6,16}$/.test(args[1]) ? args[1] : undefined;
   // A bare cancel could take down several buttons, one about something else entirely. Name the question
   // to take down. (`--room <folder> cancel` stays: it only takes down the manager's question over that one room.)
+  if (args[1] && !id) {
+    console.error('usage: ask cancel <question id from ask list>  (that is not a question id)');
+    process.exit(2);
+  }
   if (!id && !askedFor) {
     console.error('usage: ask cancel <question id>  (one question at a time; ids from `ask list`)');
     const mine = asks.filter((a) => a.folder === folder || a.sessionId === me);
