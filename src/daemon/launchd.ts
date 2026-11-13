@@ -13,9 +13,11 @@ import { NODE_FLAGS, REPO_ROOT } from '../paths.ts';
 
 export const LABEL = 'com.tiny-hq.daemon';
 export const OPEN_LABEL = 'com.tiny-hq.open';
-// The optional screen helper (`tiny-hq screen on`): runs Peekaboo's daemon, which holds the Mac's
-// Screen Recording and Accessibility permissions, so every room's `peekaboo` command can screenshot
-// and click desktop apps without the permission depending on Claude Code's versioned binary path.
+// The optional screen helper (set up once with `tiny-hq screen setup`): runs Peekaboo's daemon, which
+// holds the Mac's Screen Recording and Accessibility permissions, so every room's `peekaboo` command
+// can screenshot and click desktop apps without the permission depending on Claude Code's versioned
+// binary path. It never starts at login: a room turns it on while it tests (manager/screen on), and
+// the office stops it when its time is up (src/team/screen.ts).
 export const SCREEN_LABEL = 'com.tiny-hq.screen';
 
 export function screenPlist(peekaboo: string, home = homedir()): string {
@@ -31,8 +33,8 @@ export function screenPlist(peekaboo: string, home = homedir()): string {
   <array>
 ${args.map((a) => `    <string>${esc(a)}</string>`).join('\n')}
   </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
   <key>ProcessType</key><string>Interactive</string>
   <key>StandardOutPath</key><string>${esc(logFile)}</string>
   <key>StandardErrorPath</key><string>${esc(logFile)}</string>

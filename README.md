@@ -65,7 +65,7 @@ tiny-hq setup       # change your answers (the welcome page again)
 tiny-hq doctor      # check the set-up and say what's missing
 tiny-hq stop        # stop the office (your Claude sessions keep running)
 tiny-hq pair        # a one-time link for your phone (after phone access is set up)
-tiny-hq screen on   # let rooms screenshot and click desktop apps (needs `brew install peekaboo`; off: tiny-hq screen off)
+tiny-hq screen setup  # let rooms screenshot and click desktop apps while they test (needs `brew install peekaboo`; tiny-hq screen remove takes it out)
 tiny-hq uninstall   # take out the hooks, skill link and login items (--all also deletes ~/.tiny-hq)
 npx tiny-hq-office@latest  # update
 ```

@@ -26,6 +26,7 @@
     "manager/job",
     "manager/profiles",
     "manager/schedule",
+    "manager/screen",
     "manager/CLAUDE.template.md",
     "manager/.claude/settings.json",
     "manager/.claude/output-styles",

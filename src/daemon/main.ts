@@ -18,6 +18,7 @@ import { goalsPath, loadGoals, setGoal } from '../team/goals.ts';
 import { isTrusted, trustFolder } from '../terminal/trust.ts';
 import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
+import { tidyScreen } from '../team/screen.ts';
 import { createDaemon, fromWords, type From } from './server.ts';
 import { Devices, RateLimit } from './remote.ts';
 import { FloorCache } from '../office/cache.ts';
@@ -1552,6 +1553,7 @@ server.listen(port, '127.0.0.1', () => {
         logAsks();
         await clearAnsweredInChat();
         await retireExtraRoomSessions();
+        if (tidyScreen(DATA_DIR)) console.log('screen helper: time up, stopped');
         await tellGithub();
         freshGags();
         coffeeBreak();

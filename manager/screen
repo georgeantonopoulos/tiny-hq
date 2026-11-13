@@ -1,0 +1,7 @@
+#!/bin/sh
+# A room turns the screen helper on while it tests a desktop app, and off after.
+# The office stops it by itself when its time is up (30 minutes unless --minutes says otherwise).
+#   ./screen on [--minutes N] [--by "<your name>"]   |   ./screen off   |   ./screen status
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/screen.ts" "$@"

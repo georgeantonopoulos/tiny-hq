@@ -147,11 +147,12 @@ export function addAsk(asks: Ask[], folder: string, question: string, now = Date
   return oneQuestionPerJob([...asks.filter((x) => x.folder !== folder), ...mine]);
 }
 
-// The asks to show: per folder the oldest still open (the rest wait their turn), and how many wait.
-// The room's own questions come before ones someone else put over it (The manager's next move).
+// The asks to show: per folder the newest still open (older ones wait behind it), and how many wait.
+// Oldest-first showed what had gone stale, and the manager's newer question over a room hid behind
+// the room's older one.
 export function oldestPerFolder(asks: Ask[]): { ask: Ask; more: number }[] {
   const out = new Map<string, { ask: Ask; more: number }>();
-  for (const a of [...asks].sort((x, y) => Number(!!x.askedFor) - Number(!!y.askedFor) || x.createdAt - y.createdAt)) {
+  for (const a of [...asks].sort((x, y) => y.createdAt - x.createdAt)) {
     const cur = out.get(a.folder);
     if (cur) cur.more++;
     else out.set(a.folder, { ask: a, more: 0 });
