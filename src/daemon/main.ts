@@ -19,7 +19,7 @@ import { isTrusted, trustFolder } from '../terminal/trust.ts';
 import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
 import { tidyScreen } from '../team/screen.ts';
-import { acksPath, addAck, checkAcks } from '../team/acks.ts';
+import { ackTold, acksPath, addAck, checkAcks } from '../team/acks.ts';
 import { createDaemon, fromWords, type From } from './server.ts';
 import { Devices, RateLimit } from './remote.ts';
 import { FloorCache } from '../office/cache.ts';
@@ -985,7 +985,8 @@ async function runAcks(): Promise<void> {
     for (const a of checkAcks(ACKS, Date.now(), undefined, taken)) {
       console.error(`acks: the owner's answer to "${a.question}" in ${a.room} wasn't picked up: ${a.why}`);
       const told = await tellManager(`[Office: the owner's click wasn't picked up] They answered "${a.question}" over ${a.room}'s head, and the office typed it into ${a.room}'s chat, but ${a.why}. Find out why now (a sign-in or API error is an office fault), get it acted on, and tell the owner plainly in one line what happened. Their answer was: ${a.answer}`).catch(() => false);
-      if (told !== true) console.error(`acks: couldn't tell the manager about ${a.room} either (${told})`);
+      if (told === true) ackTold(ACKS, a);
+      else console.error(`acks: couldn't tell the manager about ${a.room} yet (${told}); trying again on the next check`);
     }
   } catch (e) {
     console.error('acks:', e);
