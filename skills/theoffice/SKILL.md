@@ -24,7 +24,7 @@ Each room keeps one session: the newest. When a newer session starts in your roo
 
 - **The owner**, directly, when they open your room and type.
 - **The manager**, your boss. They hand out work and keep track of every room. Reply with SendMessage (see "Reporting to the manager" for the address).
-- **Another room, only when the task truly needs it** (say your change breaks their build). Message that room's session by its name (ListAgents shows them) and copy the manager in one line. Never chat with other rooms otherwise.
+- **Another room, only when the task truly needs it** (say your change breaks their build). Message that room's session by its name (ListAgents shows them). Don't copy the manager unless it changes a job's outcome or needs the owner. Never chat with other rooms otherwise.
 - **Never start other Claude sessions.** If more hands are needed, tell the manager.
 
 ## Finish the job
@@ -54,7 +54,7 @@ When the owner (or the manager for them) asks you for a report, put it on the ow
 
 ## Reporting to the manager
 
-Whenever you finish a task, whoever gave it (the manager, or the owner directly in your room), send the manager three lines or fewer, signed with your office name, so the manager always knows what moved:
+Every message wakes the manager and makes them re-read their whole conversation, so message them only when a task or job **finishes**, **fails**, or **the owner must decide or act**. One message per finished task, never one per sub-step. Progress goes in `~/.tiny-hq/app/manager/job note <id> "<what happened>"`, where the manager looks when they need it. No "copying the manager", no review verdicts on their own, no "nothing for the owner" notes. When you finish, whoever gave the task (the manager, or the owner directly in your room), send the manager three lines or fewer, signed with your office name:
 
 1. what you did,
 2. what's left,
@@ -64,8 +64,8 @@ Example: `Rosa: Fixed the export bug; tests pass. Left: release notes. Owner: OK
 
 - **Blocked** (a permission prompt, or a question only the owner can answer): tell the manager in one line what's needed; don't wait silently.
 - **A tool call was refused** (a permission prompt you can't answer, or "denied" by the safety check) on a step of the owner's job: that is not the end, and never write "the owner must run …". Ask for their yes with a button (below), naming the exact command and why; when "The owner: yes, go ahead…" arrives in your chat, retry it.
-- **Need the owner's yes?** Don't ask them to type it in chat, and never tell them to type a command. From your project folder run `~/.tiny-hq/app/manager/ask "<one-line yes/no question>" --why <reason> --tried "<what you tried>"`, then stop. The owner sees a question mark over your head and taps it for Approve / No; their click arrives in your own chat as "The owner: yes, go ahead…" (or no), and that is their answer. If the answer is one of a few options rather than yes/no, offer them: `ask "<question>" --why choice --tried "..." --choices "<option 1>" "<option 2>" …` (2 to 6, short); their pick arrives as "The owner chose: …". Tell the manager in one line that you've asked.
-- **Long task (several phases):** one-line progress note to the manager after each phase, so they can tell "working" from "stuck". Short tasks: report once at the end.
+- **Need the owner's yes?** Don't ask them to type it in chat, and never tell them to type a command. From your project folder run `~/.tiny-hq/app/manager/ask "<one-line yes/no question>" --why <reason> --tried "<what you tried>"`, then stop. The owner sees a question mark over your head and taps it for Approve / No; their click arrives in your own chat as "The owner: yes, go ahead…" (or no), and that is their answer. If the answer is one of a few options rather than yes/no, offer them: `ask "<question>" --why choice --tried "..." --choices "<option 1>" "<option 2>" …` (2 to 6, short); their pick arrives as "The owner chose: …". No need to tell the manager; they see the button.
+- **Long task (several phases):** a `manager/job note` after each phase, not a message. Report to the manager once, at the end.
 - **Which manager:** send to exactly what `~/.tiny-hq/manager/manager-address.txt` says (the live manager's socket address, like `uds:/tmp/cc-socks/1234.sock`; SendMessage takes it as-is). Only if that file is missing, send to `Manager`. Never ask the owner which manager.
 - **Approvals:** never say "the owner approved" as a bare claim. Say where it came from. The manager only treats an approval as real when it was typed by the owner in the manager's own chat or comes from one of the owner's own terminal sessions.
 

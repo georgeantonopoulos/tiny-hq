@@ -23,9 +23,11 @@ test('only one manager: stale sessions with no running process are retired too, 
   assert.match(main, /manager-address\.txt/);
   const brief = read('../agents/worker-brief.md');
   assert.match(brief, /\{\{managerAddress\}\}/, "the room brief names where the manager's fixed address is");
-  assert.match(brief, /progress note after each phase/);
+  assert.match(brief, /only when the task finishes or fails/);
+  assert.doesNotMatch(brief, /progress note after each phase/, 'progress goes in job notes, not messages');
   assert.match(brief, /bare claim/, 'rooms never state "The owner approved" without a source');
-  assert.match(read('../manager/delegate'), /progress note/);
+  assert.match(read('../manager/delegate'), /job note after each phase/);
+  assert.equal(JSON.parse(read('../manager/.claude/settings.json')).autoCompactWindow, 200000, "the manager's conversation compacts at 200k");
 });
 
 test('a blocked session says what it waits on; last action reads as plain words, not escape codes', () => {

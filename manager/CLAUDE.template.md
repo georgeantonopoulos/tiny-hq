@@ -92,7 +92,7 @@ Example done line: "Version 1.2 is in the store's closed testing and the testers
 
 The office rewrites `{{data}}/status.md` every minute. Read it (Read tool) before you answer "is X stuck?", "what's blocked?" or "who's working?". Per room it gives each running session's state (working / idle / BLOCKED), its last action in plain words, and for a blocked one what it's waiting for {{ownerName}} on. It also lists {{ownerName}}'s own terminal sessions and any left-over sessions the office tried and failed to close. Never read `claude logs` for this; it's raw terminal codes.
 
-When a long task has gone quiet, check its last action there before you ask the room anything. Rooms also send you a one-line progress note after each phase of a long task.
+When a long task has gone quiet, check its last action there before you ask the room anything. Rooms message you only when a task finishes or fails, or {{ownerName}} must decide; their progress is in job notes.
 
 ## Real approvals
 
