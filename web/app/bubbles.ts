@@ -379,7 +379,7 @@ export class Bubbles {
     if (ask.tried) {
       const t = document.createElement('small');
       t.className = 'tried';
-      t.textContent = `Already tried: ${ask.tried}`;
+      t.textContent = `${ask.hands ? 'More: ' : 'Already tried: '}${ask.tried}`;
       q.append(document.createElement('br'), t);
     }
     const row = document.createElement('div');
@@ -431,8 +431,8 @@ export class Bubbles {
       // Approve reads as "the office will do it", so this says the click can't do the step.
       const how = document.createElement('small');
       how.className = 'tried';
-      how.textContent = 'Only you can do this: do the steps yourself, then press Done. Stuck tells the room to help.';
-      q.append(document.createElement('br'), how);
+      how.textContent = 'Only you can do this, on the Mac. Do the steps, then press Done. Stuck tells the room to help.';
+      q.prepend(how, document.createElement('br'));
       row.append(btn('Done, I did it', 'yes', { yes: true }), btn('Stuck', 'no', { yes: false }));
     } else row.append(btn('Approve', 'yes', { yes: true }), btn('No', 'no', { yes: false }));
     el.append(q, row, note);

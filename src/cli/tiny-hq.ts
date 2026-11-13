@@ -313,7 +313,7 @@ function screen(args: string[]): number {
   }
   loadAgent(SCREEN_LABEL, screenPlist(bin));
   console.log(
-    `The screen helper is on: it starts when you log in. Once, give it Screen Recording and Accessibility in System Settings ▸ Privacy & Security (the peekaboo program inside ${tilde(dirname(dirname(realpathSync(bin))))}); after a Homebrew upgrade of Peekaboo, tick them again. \`tiny-hq screen off\` removes it.`,
+    `The screen helper is on: it starts when you log in. Once, open System Settings ▸ Privacy & Security (on recent macOS, under Device Control and Data Access) and switch on the peekaboo program inside ${tilde(dirname(dirname(realpathSync(bin))))} in both Screen & System Audio Recording and Accessibility; after a Homebrew upgrade of Peekaboo, switch them on again. \`tiny-hq screen off\` removes it.`,
   );
   return 0;
 }
