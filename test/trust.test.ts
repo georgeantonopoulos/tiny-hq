@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isTrusted, trustFolder } from '../src/terminal/trust.ts';
@@ -61,4 +61,37 @@ test('trust: delegate in an untrusted folder puts up the button instead of start
   trustFolder(room, join(home, '.claude.json'));
   execFileSync(delegate, [room, 'Orbit', 'Take it offline'], { env });
   assert.equal(readFileSync(join(home, 'started'), 'utf8').trim(), 'started');
+});
+
+// A new owner's rooms are usually folders Claude Code hasn't trusted, and the first click on one failed
+// with "run claude there and accept the trust prompt". The room panel now asks, and only that click trusts.
+test('trust: a Mac where Claude Code never wrote its settings file gets one, private', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-trust-new-'));
+  const file = join(dir, 'claude.json');
+  trustFolder('/Users/x/Dev/app', file);
+  assert.equal(isTrusted('/Users/x/Dev/app', file), true);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  writeFileSync(file, '{ not json');
+  assert.throws(() => trustFolder('/Users/x/Dev/other', file), 'a broken file is never overwritten');
+});
+
+test('trust: opening a room trusts the folder only on the trust click, and never for a running session', () => {
+  const main = readFileSync(new URL('../src/daemon/main.ts', import.meta.url), 'utf8');
+  const at = main.indexOf('async function openTerminal(');
+  assert.ok(at > 0);
+  const block = main.slice(at, main.indexOf('\n}\n', at));
+  assert.match(block, /if \(!live && !isManager && !isTrusted\(projectPath\)\) \{\s*if \(!trust\) throw [^\n]*trust: true \}\);\s*trustFolder\(projectPath\);/);
+  assert.equal(block.match(/trustFolder\(/g)?.length, 1);
+});
+
+test('trust: a linked ~/.claude.json stays a link; the file it points to gets the change', async () => {
+  const { lstatSync, symlinkSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'cm-trust-link-'));
+  const real = join(dir, 'dotfiles-claude.json');
+  writeFileSync(real, '{}');
+  const link = join(dir, 'claude.json');
+  symlinkSync(real, link);
+  trustFolder('/Users/x/Dev/app', link);
+  assert.ok(lstatSync(link).isSymbolicLink());
+  assert.equal(isTrusted('/Users/x/Dev/app', real), true);
 });

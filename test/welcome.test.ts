@@ -120,3 +120,17 @@ test('the welcome server needs its key, serves only its own files, and hands ove
   assert.deepEqual((got as { rooms?: { chosen: string[] } } | undefined)?.rooms?.chosen, [rooms[0]!.path]);
   await done; // the server closes once the office is open
 });
+
+test('the welcome page keeps its key for the tab, so a reload does not lose setup', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { stripTypeScriptTypes } = await import('node:module');
+  const src = readFileSync(new URL('../web/welcome/welcome.ts', import.meta.url), 'utf8');
+  const fn = /function welcomeKey\(\)[\s\S]*?\n\}\n/.exec(src)?.[0];
+  assert.ok(fn, 'welcomeKey is in the page');
+  const store = new Map<string, string>();
+  const sessionStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+  const run = (hash: string) => new Function('location', 'sessionStorage', `${stripTypeScriptTypes(fn)}; return welcomeKey();`)({ hash }, sessionStorage);
+  assert.equal(run('#key=abc123'), 'abc123', 'first open: from the link');
+  assert.equal(run(''), 'abc123', 'reload with the key gone from the address bar: kept');
+  assert.equal(run('#key=new456'), 'new456', 'a new link wins');
+});

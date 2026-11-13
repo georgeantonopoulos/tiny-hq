@@ -4,7 +4,7 @@
 // "Workspace not trusted" and nobody could fix it without the owner typing a command.
 // Now the office asks them with a button, and their Approve marks the folder trusted here.
 
-import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 
@@ -27,12 +27,26 @@ export function isTrusted(folder: string, file = claudeConfig()): boolean {
 
 // Marks one folder trusted, keeping everything else in the file as it was. Only ever called from
 // The owner's own Approve click.
-export function trustFolder(folder: string, file = claudeConfig()): void {
+export function trustFolder(folder: string, at = claudeConfig()): void {
   if (!folder.startsWith('/') || /[\x00-\x1f]/.test(folder)) throw new Error('not a plain folder path');
-  const cfg = JSON.parse(readFileSync(file, 'utf8')) as Config & Record<string, unknown>;
+  // A linked ~/.claude.json (a dotfiles folder) is written where it points, so the link stays.
+  let file = at;
+  try {
+    file = realpathSync(at);
+  } catch {
+    // not there yet
+  }
+  let raw: string | undefined;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  // No file yet (Claude Code never started under this account): start one, private like Claude Code's.
+  const cfg = (raw === undefined ? {} : JSON.parse(raw)) as Config & Record<string, unknown>;
   const projects = (cfg.projects ??= {});
   projects[folder] = { ...(projects[folder] ?? {}), hasTrustDialogAccepted: true };
   const tmp = `${file}.office-trust.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: statSync(file).mode & 0o777 });
+  writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: raw === undefined ? 0o600 : statSync(file).mode & 0o777 });
   renameSync(tmp, file);
 }

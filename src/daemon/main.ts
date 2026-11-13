@@ -224,13 +224,20 @@ function pick<T extends { realCwd: string; cwd: string; sessionId?: string; stat
 
 // The owner's way into a folder: the Claude Code session there, in a terminal on the page.
 const terminals = new Terminals();
-async function openTerminal(projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number) {
+async function openTerminal(projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number, trust = false) {
   const isManager = projectPath === MANAGER_DIR;
   const room = isManager ? undefined : (floors.latest()?.rooms ?? []).find((r) => r.kind === 'project' && r.project?.path === projectPath);
   if (!isManager && !room) throw Object.assign(new Error('Not a project on the floor.'), { status: 404 });
   // The session list read a moment ago is good enough (saves a second on every open).
   const live = mode === 'new' ? undefined : pick(await live2s(), projectPath);
   if (!live && mode === 'resume') throw Object.assign(new Error('No session running there.'), { status: 409 });
+  // Claude Code won't start in a folder nobody has trusted yet, and a new owner's rooms usually
+  // aren't: the page asks them, and only their click (trust) marks the folder trusted.
+  if (!live && !isManager && !isTrusted(projectPath)) {
+    if (!trust) throw Object.assign(new Error(`Claude Code hasn't been told to trust ${projectPath} yet.`), { status: 428, trust: true });
+    trustFolder(projectPath);
+    console.log(`terminal: the owner trusted ${projectPath} from the room panel`);
+  }
   const session = isManager ? await theManager(mode === 'new') : (live ?? (await startSession(projectPath, room!.name, undefined, models[projectPath], briefFor(room!))));
   if (!live) liveCache = undefined; // the next status check sees the new session
   // Someone is already watching this session: share that view (instant).

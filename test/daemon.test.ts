@@ -68,6 +68,35 @@ test('daemon: localhost only, token required, survives bad bodies', async () => 
   }
 });
 
+test("terminals: a folder Claude Code doesn't trust yet comes back as a trust question; only trust: true trusts", async () => {
+  const port = await freePort();
+  const trusted: boolean[] = [];
+  const d = createDaemon({
+    token: 't',
+    port,
+    terminal: {
+      open: async (_p, _mode, _c, _r, trust) => {
+        trusted.push(trust === true);
+        if (!trust) throw Object.assign(new Error("Claude Code hasn't been told to trust /Users/x/Dev/app yet."), { status: 428, trust: true });
+        return { termId: '11111111-1111-4111-8111-111111111111', session: 'abcdef12', fresh: true };
+      },
+      get: () => undefined,
+    },
+  });
+  await new Promise<void>((r) => d.listen(port, '127.0.0.1', r));
+  const post = (body: unknown) => call(port, '/api/term/open', { method: 'POST', headers: { authorization: 'Bearer t', 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const asked = await post({ projectPath: '/Users/x/Dev/app' });
+    assert.equal(asked.status, 428);
+    assert.equal(JSON.parse(asked.body).trust, true, 'the page is told to ask');
+    assert.equal((await post({ projectPath: '/Users/x/Dev/app', trust: 'yes' })).status, 428, 'only true counts');
+    assert.equal((await post({ projectPath: '/Users/x/Dev/app', trust: true })).status, 200);
+    assert.deepEqual(trusted, [false, false, true]);
+  } finally {
+    d.close();
+  }
+});
+
 test('terminals: token needed, bad requests refused, input and stream reach the session', async () => {
   const port = await freePort();
   const written: string[] = [];

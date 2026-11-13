@@ -74,7 +74,7 @@ export class TerminalPanel {
     };
   }
 
-  async open(projectPath: string, name: string, mode: 'join' | 'new' | 'resume' = 'join', confirmed = false): Promise<void> {
+  async open(projectPath: string, name: string, mode: 'join' | 'new' | 'resume' = 'join', confirmed = false, trusted = false): Promise<void> {
     this.leave(false);
     this.addTab(projectPath, name);
     const mine = ++this.opening;
@@ -112,7 +112,7 @@ export class TerminalPanel {
     // Something on screen straight away while Claude gets ready.
     xterm.write(`\x1b[2m  ${mode === 'new' ? `Pulling up a chair at ${name}…` : `Walking over to ${name}…`}\x1b[0m\r\n`);
     this.busy(true);
-    const r = await this.api.openTerminal(projectPath, mode, xterm.cols, xterm.rows, confirmed);
+    const r = await this.api.openTerminal(projectPath, mode, xterm.cols, xterm.rows, confirmed, trusted);
     if (mine !== this.opening) {
       // The owner left or opened something else meanwhile: let this one go.
       xterm.dispose(); // the session's viewer stays on the Mac for next time
@@ -124,6 +124,13 @@ export class TerminalPanel {
     if ('error' in r && mode === 'resume') {
       xterm.dispose();
       this.leave();
+      return;
+    }
+    // Claude Code hasn't been told to trust this folder: ask here instead of sending the owner to a terminal.
+    if ('error' in r && r.trust) {
+      xterm.dispose();
+      this.meta.textContent = '';
+      this.trustBox(projectPath, name, mode, confirmed);
       return;
     }
     if ('error' in r) {
@@ -402,6 +409,27 @@ export class TerminalPanel {
     const yes = document.createElement('button');
     yes.textContent = 'Yes, open it';
     yes.onclick = () => void this.open(projectPath, name, mode, true);
+    const no = document.createElement('button');
+    no.className = 'ghost';
+    no.textContent = 'Cancel';
+    no.onclick = () => this.leave();
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.append(yes, no);
+    box.append(p, row);
+    this.body.replaceChildren(box);
+  }
+
+  // Claude Code asks once per folder whether to trust it, and a session the office starts can't show
+  // that question, so the page asks it. Only this click marks the folder trusted.
+  private trustBox(projectPath: string, name: string, mode: 'join' | 'new' | 'resume', confirmed: boolean): void {
+    const box = document.createElement('div');
+    box.className = 'term-confirm';
+    const p = document.createElement('p');
+    p.textContent = `Claude Code hasn't been told to trust ${projectPath} yet. It asks this once for each folder: trusting it lets Claude read the files there and run commands in it.`;
+    const yes = document.createElement('button');
+    yes.textContent = 'Trust and open';
+    yes.onclick = () => void this.open(projectPath, name, mode, confirmed, true);
     const no = document.createElement('button');
     no.className = 'ghost';
     no.textContent = 'Cancel';
