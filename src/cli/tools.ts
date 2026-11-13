@@ -50,11 +50,12 @@ export const TOOLS: Tool[] = [
     brew: [['brew', 'install', '--cask', 'obsidian']],
   },
   {
+    // Pinned to one reviewed commit: a click installs exactly that, never whatever the repo holds later.
     id: 'obmem',
     name: 'Project memory (Obsidian memory bank)',
     what: 'Rooms write down decisions, fixes and open questions in an Obsidian vault, so the next session remembers them. Its guide shows how to connect it to Claude Code.',
     url: 'https://github.com/georgeantonopoulos/obsidian-cli-memory-bank-skill#install',
-    brew: [['brew', 'install', 'pipx'], ['pipx', 'install', 'git+https://github.com/georgeantonopoulos/obsidian-cli-memory-bank-skill.git']],
+    brew: [['brew', 'install', 'pipx'], ['pipx', 'install', 'git+https://github.com/georgeantonopoulos/obsidian-cli-memory-bank-skill.git@ebd9e4e15a79586de6772428afd105d81ccf5a75']],
   },
   {
     id: 'tailscale',
