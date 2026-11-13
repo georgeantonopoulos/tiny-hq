@@ -29,10 +29,17 @@ export function isTrusted(folder: string, file = claudeConfig()): boolean {
 // The owner's own Approve click.
 export function trustFolder(folder: string, file = claudeConfig()): void {
   if (!folder.startsWith('/') || /[\x00-\x1f]/.test(folder)) throw new Error('not a plain folder path');
-  const cfg = JSON.parse(readFileSync(file, 'utf8')) as Config & Record<string, unknown>;
+  let raw: string | undefined;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  // No file yet (Claude Code never started under this account): start one, private like Claude Code's.
+  const cfg = (raw === undefined ? {} : JSON.parse(raw)) as Config & Record<string, unknown>;
   const projects = (cfg.projects ??= {});
   projects[folder] = { ...(projects[folder] ?? {}), hasTrustDialogAccepted: true };
   const tmp = `${file}.office-trust.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: statSync(file).mode & 0o777 });
+  writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: raw === undefined ? 0o600 : statSync(file).mode & 0o777 });
   renameSync(tmp, file);
 }

@@ -209,15 +209,16 @@ export class Api {
 
   // A terminal on a project's Claude Code session (joins the live one, or starts one).
   // `confirm`: the owner said yes on the phone (the daemon asks for it on every remote open).
-  async openTerminal(projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number, confirm = false): Promise<{ termId: string; session: string; fresh: boolean } | { error: string; confirm?: boolean }> {
+  // `trust`: the owner clicked "Trust and open" for a folder Claude Code doesn't trust yet.
+  async openTerminal(projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number, confirm = false, trust = false): Promise<{ termId: string; session: string; fresh: boolean } | { error: string; confirm?: boolean; trust?: boolean }> {
     let r: Response;
     try {
-      r = await fetch('/api/term/open', { method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ projectPath, mode, cols, rows, ...(confirm ? { confirm: true } : {}) }) });
+      r = await fetch('/api/term/open', { method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ projectPath, mode, cols, rows, ...(confirm ? { confirm: true } : {}), ...(trust ? { trust: true } : {}) }) });
     } catch (err) {
       return { error: `couldn't reach the Mac (${String((err as Error)?.message ?? err)})` };
     }
-    const body = (await r.json().catch(() => ({}))) as { termId?: string; session?: string; fresh?: boolean; error?: string; confirm?: boolean };
-    if (!r.ok || !body.termId) return { error: body.error ?? `refused (${r.status})`, ...(body.confirm ? { confirm: true } : {}) };
+    const body = (await r.json().catch(() => ({}))) as { termId?: string; session?: string; fresh?: boolean; error?: string; confirm?: boolean; trust?: boolean };
+    if (!r.ok || !body.termId) return { error: body.error ?? `refused (${r.status})`, ...(body.confirm ? { confirm: true } : {}), ...(body.trust ? { trust: true } : {}) };
     return { termId: body.termId, session: body.session ?? '', fresh: !!body.fresh };
   }
 

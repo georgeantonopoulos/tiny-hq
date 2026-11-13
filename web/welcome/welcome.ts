@@ -23,9 +23,20 @@ const MAX_ROOMS = 12; // the floor holds 12 rooms; more picks wait in the archiv
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const SVG = 'http://www.w3.org/2000/svg';
 
-// The one-time key from the link; then it's taken out of the address bar.
-const key = new URLSearchParams(location.hash.slice(1)).get('key') ?? '';
+// The key from the link; then it's taken out of the address bar. This tab keeps it, so reloading the
+// page (or coming back to it) doesn't lose setup.
+const key = welcomeKey();
 history.replaceState(null, '', location.pathname);
+
+function welcomeKey(): string {
+  const fromLink = new URLSearchParams(location.hash.slice(1)).get('key') ?? '';
+  try {
+    if (fromLink) sessionStorage.setItem('welcome-key', fromLink);
+    return fromLink || (sessionStorage.getItem('welcome-key') ?? '');
+  } catch {
+    return fromLink; // storage blocked: the link still works once
+  }
+}
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const r = await fetch(path, { ...init, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' } });

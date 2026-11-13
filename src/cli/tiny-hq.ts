@@ -12,7 +12,7 @@ import { existsSync, lstatSync, readFileSync, readlinkSync, rmSync, statSync, un
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { CONFIG_PATH, DATA_DIR, DEFAULT_PORT, MANAGER_DIR, NODE_FLAGS, REPO_ROOT } from '../paths.ts';
+import { CLAUDE_BIN, CONFIG_PATH, DATA_DIR, DEFAULT_PORT, MANAGER_DIR, NODE_FLAGS, REPO_ROOT } from '../paths.ts';
 import { DEFAULT_CONFIG, STYLES, cleanName, loadConfig, type ManagerStyle } from '../config.ts';
 import { LABEL, OPEN_LABEL, openPlist, plist } from '../daemon/launchd.ts';
 import { HOOKS, MARK, installedHooks, loadAgent, loadInstalled, readSettings, skillLink, unlinkSkill, unloadAgent, withoutHooks, writeSettings, type HookSpec } from './install.ts';
@@ -241,10 +241,13 @@ async function doctor(): Promise<number> {
   for (const id of inst?.hooks ?? []) rows.push([hooks.some((h) => h.endsWith(`${MARK} ${id}`)), `hook: ${id}`, 'run `tiny-hq setup` to put it back']);
   if (inst?.skill) rows.push([existsSync(join(skillLink(), 'SKILL.md')), 'theoffice skill', 'run `tiny-hq setup` to link it again']);
   rows.push([existsSync(join(MANAGER_DIR, 'CLAUDE.md')) || !(await up()), "the manager's instructions", 'restart the office: `tiny-hq stop`, then `tiny-hq open`']);
+  // The office lists sessions with `claude agents --json`; older Claude Code doesn't have it.
+  const recent = (spawnSync(CLAUDE_BIN, ['agents', '--help'], { encoding: 'utf8', timeout: 30_000 }).stdout ?? '').includes('--json');
+  rows.push([recent, `Claude Code is new enough (${tilde(CLAUDE_BIN)})`, 'update it: `claude update`, or reinstall from https://claude.com/claude-code']);
   // Claude Code must be signed in, or no room (and no manager) can start.
   const signedIn = (() => {
     try {
-      return (JSON.parse(spawnSync('claude', ['auth', 'status'], { encoding: 'utf8', timeout: 30_000 }).stdout) as { loggedIn?: unknown }).loggedIn === true;
+      return (JSON.parse(spawnSync(CLAUDE_BIN, ['auth', 'status'], { encoding: 'utf8', timeout: 30_000 }).stdout) as { loggedIn?: unknown }).loggedIn === true;
     } catch {
       return false;
     }

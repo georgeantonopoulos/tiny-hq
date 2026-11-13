@@ -9,7 +9,7 @@
 //   GET  /api/floor[?refresh=1]       the office floor plan built from discovery
 //   GET  /api/sessions                which project and manager sessions are running
 //   POST /api/model {projectPath, model: opus|sonnet|haiku}   the model for a room's Claude
-//   POST /api/term/open {projectPath, mode: join|new, cols, rows, confirm?}   a terminal on that folder's Claude session
+//   POST /api/term/open {projectPath, mode: join|new, cols, rows, confirm?, trust?}   a terminal on that folder's Claude session
 //   GET  /api/term/:id/stream (SSE), POST /api/term/:id/{input,resize,close}
 //   GET  /, /app/*, /style.css, /vendor/*   the office page (no data in it)
 
@@ -64,7 +64,7 @@ export interface DaemonDeps {
   asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void> };
   // the owner joins (or starts) the Claude Code session in a project's folder, or the manager's.
   terminal?: {
-    open: (projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number) => Promise<{ termId: string; session: string; fresh: boolean }>;
+    open: (projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number, trust?: boolean) => Promise<{ termId: string; session: string; fresh: boolean }>;
     get: (termId: string) => Terminal | undefined;
   };
   // Reaching the office over the owner's Tailscale network (see remote.ts).
@@ -428,7 +428,7 @@ export function createDaemon(deps: DaemonDeps): Server {
       }
     }
     if (deps.terminal && req.method === 'POST' && url.pathname === '/api/term/open') {
-      let b: { projectPath?: unknown; mode?: unknown; cols?: unknown; rows?: unknown; confirm?: unknown };
+      let b: { projectPath?: unknown; mode?: unknown; cols?: unknown; rows?: unknown; confirm?: unknown; trust?: unknown };
       try {
         b = ((await readJson(req)) ?? {}) as typeof b;
       } catch {
@@ -440,11 +440,12 @@ export function createDaemon(deps: DaemonDeps): Server {
       // From a phone, a terminal is a full shell as the owner: the page must have asked them first.
       if (remote && b.confirm !== true) return send(res, 428, { error: 'confirm on the phone first', confirm: true });
       try {
-        const r = await deps.terminal.open(b.projectPath, mode, Number(b.cols), Number(b.rows));
-        if (remote) audit(rc!.auditPath, { event: 'terminal', project: b.projectPath.slice(0, 200), session: r.session, device: device!.id });
+        const r = await deps.terminal.open(b.projectPath, mode, Number(b.cols), Number(b.rows), b.trust === true);
+        if (remote) audit(rc!.auditPath, { event: 'terminal', project: b.projectPath.slice(0, 200), session: r.session, device: device!.id, ...(b.trust === true ? { trusted: true } : {}) });
         return send(res, 200, r);
       } catch (err) {
-        return send(res, (err as { status?: number }).status ?? 500, { error: String((err as Error).message ?? err).slice(0, 300) });
+        const e = err as { status?: number; trust?: boolean };
+        return send(res, e.status ?? 500, { error: String((err as Error).message ?? err).slice(0, 300), ...(e.trust ? { trust: true } : {}) });
       }
     }
     const im = /^\/api\/term\/([0-9a-f-]{36})\/image$/.exec(url.pathname);
