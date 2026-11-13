@@ -12,6 +12,7 @@
     "darwin"
   ],
   "bin": {
+    "tiny-hq-office": "bin/tiny-hq.mjs",
     "tiny-hq": "bin/tiny-hq.mjs"
   },
   "files": [
