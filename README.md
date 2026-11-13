@@ -44,7 +44,7 @@ It runs on your Mac, on your own Claude Code plan. There is no server of ours, n
 You need macOS, [Node](https://nodejs.org) 22.17 or newer, and [Claude Code](https://claude.com/claude-code). The GitHub CLI (`gh`) is optional, for the GitHub keeper.
 
 ```sh
-npx tiny-hq
+npx tiny-hq-office
 ```
 
 This copies the office to `~/.tiny-hq/app`, adds a `tiny-hq` command to `~/.local/bin`, and opens a welcome page in your browser. In a few short steps you:
@@ -67,7 +67,7 @@ tiny-hq stop        # stop the office (your Claude sessions keep running)
 tiny-hq pair        # a one-time link for your phone (after phone access is set up)
 tiny-hq screen on   # let rooms screenshot and click desktop apps (needs `brew install peekaboo`; off: tiny-hq screen off)
 tiny-hq uninstall   # take out the hooks, skill link and login items (--all also deletes ~/.tiny-hq)
-npx tiny-hq@latest  # update
+npx tiny-hq-office@latest  # update
 ```
 
 ## Settings

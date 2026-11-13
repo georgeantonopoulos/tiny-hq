@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Tiny HQ's front door: `npx tiny-hq` (or `npx tiny-hq install`) copies the office into
+// Tiny HQ's front door: `npx tiny-hq-office` (or `npx tiny-hq-office install`) copies the office into
 // ~/.tiny-hq/app, puts a `tiny-hq` command in ~/.local/bin, and runs the setup wizard. Every other
 // command (`tiny-hq open`, `doctor`, `uninstall`…) is handed to the installed copy.
 //
@@ -60,7 +60,7 @@ function copyApp() {
   }
   for (const dep of RUNTIME) {
     const pkg = findDep(dep);
-    if (!pkg) fail(`couldn't find ${dep}; try again with: npx tiny-hq@latest`);
+    if (!pkg) fail(`couldn't find ${dep}; try again with: npx tiny-hq-office@latest`);
     cpSync(pkg, join(next, 'node_modules', dep), { recursive: true, dereference: true });
   }
   rmSync(`${APP}.old`, { recursive: true, force: true });
@@ -112,5 +112,5 @@ if (!cmd || cmd === 'install' || cmd === 'update') {
   copyApp();
   hand(cmd === 'update' && existsSync(join(HOME, 'config.json')) ? ['doctor'] : ['setup', ...rest]);
 }
-if (!existsSync(join(APP, 'src', 'cli', 'tiny-hq.ts'))) fail('Tiny HQ isn\'t installed yet. Run: npx tiny-hq');
+if (!existsSync(join(APP, 'src', 'cli', 'tiny-hq.ts'))) fail('Tiny HQ isn\'t installed yet. Run: npx tiny-hq-office');
 hand([cmd, ...rest]);
