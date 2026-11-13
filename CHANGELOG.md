@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.0: setup in the browser, and a first install that works
+
+The first version on npm, so `npx tiny-hq` installs it.
+
+**New**
+
+- **Setup is a welcome page in your browser:** name the office, hire the manager, pick your project folders with the Mac's folder picker, choose which projects get rooms, and switch the extras and helpers on or off. Suggested tools (GitHub CLI, a usage meter, Codex, Obsidian, project memory, Tailscale) can be installed from there. `tiny-hq setup --terminal` asks the same questions in the terminal.
+- **Links you can tap:** web addresses in speech bubbles and in a room's chat open in a new tab.
+- **Pictures and files:** bubbles can show a picture, and you can attach a file to a room's chat.
+- **Rooms write plainly:** they lead with the answer, say where you answered from (the Mac or your phone), and only call something working once they've seen or heard it.
+
+**Safer**
+
+- **Public deploys are button-only,** like posts. Each Approve covers one exact version and lists every commit going out.
+- **Each post Approve is for one place:** making a repo public, or changing a hosting setting, needs its own yes.
+
+**Fixed for a first install**
+
+- Opening a room no longer fails when an older Claude Code is also on the Mac. The office uses the same Claude Code that setup checked, and `tiny-hq doctor` says which one.
+- A room in a folder Claude Code hasn't trusted yet asks **Trust and open**, instead of failing with "Workspace not trusted".
+- Reloading the welcome page keeps your setup going.
+- Projects you leave out of the rooms stay in the archive cupboard after a restart.
+
 ## 0.1.0: first release
 
 Tiny HQ is a little office for your Claude Code projects: a room for every busy project, each one its own Claude Code session, and a manager that hands out work and makes sure it gets finished.
