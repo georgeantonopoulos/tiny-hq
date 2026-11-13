@@ -87,6 +87,33 @@ test('job wait for a post needs its text and place, and its button carries them 
   assert.deepEqual(oneQuestionPerJob([own('@codex review'), jobAsk]).map((x) => [x.id, x.forJob]), [['ownaaaaa', 'codex44']]);
 });
 
+// A deploy button is for one exact commit, says what changes and what
+// was proven on which device, and lists the commits going out.
+test('a deploy button names the commit, what changes and what was proven, and lists the commits', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const dir = join(mkdtempSync(join(tmpdir(), 'th-dep-')), 'garden-planner');
+  mkdirSync(join(dir, 'manager'), { recursive: true });
+  const git = (...a: string[]) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  writeFileSync(join(dir, '.gitignore'), 'manager/\n');
+  for (const m of ['first', 'second']) {
+    writeFileSync(join(dir, 'f.txt'), m);
+    git('add', '-A');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', m);
+  }
+  const head = git('rev-parse', '--short=7', 'HEAD');
+  const base = ['Make the game public?', '--why', 'post', '--tried', 'Played it on the phone', '--target', 'deploy:garden-planner'];
+  assert.equal(run('ask', dir, ...base, '--text', 'deploy garden-planner publicly', '--changes', 'x', '--proven', 'y').code, 2, 'the text must name the commit');
+  assert.equal(run('ask', dir, ...base, '--text', 'deploy garden-planner at 0000000 publicly', '--changes', 'x', '--proven', 'y').code, 2, 'only the commit the folder is at');
+  assert.equal(run('ask', dir, ...base, '--text', `deploy garden-planner at ${head} publicly`, '--changes', 'New voice').code, 2, 'says what was proven');
+  const ok = run('ask', dir, ...base, '--text', `deploy garden-planner at ${head} publicly`, '--changes', 'The narrator has a new voice', '--proven', 'Heard it on the phone and in Chrome on the Mac');
+  assert.equal(ok.code, 0, ok.out);
+  const a = asks(dir)[0] as { post?: string; deploy?: { changes: string; proven: string; commits: string[] } };
+  assert.equal(a.post, `deploy garden-planner at ${head} publicly`);
+  assert.equal(a.deploy!.proven, 'Heard it on the phone and in Chrome on the Mac');
+  assert.deepEqual(a.deploy!.commits.map((c) => c.slice(8)), ['second', 'first']);
+});
+
 test('left-over sessions are the office\'s to close, never the owner\'s', () => {
   const now = 10 * LEFTOVER_QUIET_MS;
   const ids = leftovers(

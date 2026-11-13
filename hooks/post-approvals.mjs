@@ -139,7 +139,7 @@ export function usePass(text, session, now = Date.now(), path = approvalsPath(),
 // A change the owner approved for one project in their own words ("create a Vercel share link for
 // <project>"), used up by a host API call the guard can't put in fixed words: the first
 // unused pass for that target from this room, whatever its text. Never used for a deploy itself,
-// which still needs "deploy <project> publicly".
+// which still needs "deploy <project> at <commit> publicly".
 export function useTargetPass(session, now = Date.now(), path = approvalsPath(), cwd, target) {
   return locked(path, () => {
     const list = loadPasses(path);
@@ -149,6 +149,27 @@ export function useTargetPass(session, now = Date.now(), path = approvalsPath(),
     save(path, list);
     return true;
   });
+}
+
+// The last approved deploy of each project: passes are pruned after
+// a day, so the commits-going-out list on the next deploy button reads from here, kept for good.
+export const baselinesPath = (dataDir = process.env.CM_DATA_DIR ?? join(homedir(), '.tiny-hq')) => join(dataDir, 'deploy-baselines.json');
+export function loadBaselines(path = baselinesPath()) {
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch {
+    return {};
+  }
+}
+export function recordDeploy(project, commit, now = Date.now(), path = baselinesPath()) {
+  try {
+    const all = loadBaselines(path);
+    all[String(project)] = { commit: String(commit), at: now };
+    save(path, all);
+  } catch {
+    /* the deploy already passed; a missing baseline only lengthens the next list */
+  }
 }
 
 // The Post click after typing approved text: only in the same session, tab and site, within a few

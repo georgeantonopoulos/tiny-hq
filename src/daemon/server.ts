@@ -60,9 +60,9 @@ export interface DaemonDeps {
   // The coffee room (src/team/coffee.ts): the last break (who said what) and the board.
   coffee?: { last: () => unknown; board: () => unknown; remove: (id: string) => boolean };
   // The office's microphone: what the owner said (the page's speech recognition), typed into the manager's chat.
-  say?: (text: string) => Promise<void>;
-  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }) => Promise<void> };
-  // The owner joins (or starts) the Claude Code session in a project's folder, or the manager's.
+  say?: (text: string, from?: From) => Promise<void>;
+  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void> };
+  // the owner joins (or starts) the Claude Code session in a project's folder, or the manager's.
   terminal?: {
     open: (projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number) => Promise<{ termId: string; session: string; fresh: boolean }>;
     get: (termId: string) => Terminal | undefined;
@@ -79,6 +79,15 @@ export interface DaemonDeps {
 const CODE_TTL_MS = 60_000;
 
 const MAX_BODY = 64 * 1024;
+
+// Which device the owner used, so their messages say whether they came from their phone or the
+// Mac: the office's own address is the Mac; over Tailscale, a phone by its browser.
+export type From = 'mac' | 'phone' | 'other';
+export function fromOf(req: IncomingMessage, remote: boolean): From {
+  if (!remote) return 'mac';
+  return /Android|iPhone|iPad|Mobile/i.test(String(req.headers['user-agent'] ?? '')) ? 'phone' : 'other';
+}
+export const fromWords = (f?: From) => (f === 'phone' ? 'on their phone' : f === 'mac' ? 'at the Mac' : f === 'other' ? 'on another device (not the Mac)' : '');
 
 const IMAGE_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
 
@@ -296,7 +305,7 @@ export function createDaemon(deps: DaemonDeps): Server {
       }
       if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > 4000) return send(res, 400, { error: 'text required (up to 4000 characters)' });
       try {
-        await deps.say(b.text);
+        await deps.say(b.text, fromOf(req, remote));
         if (remote) audit(rc!.auditPath, { event: 'say', chars: b.text.length, device: device!.id });
         return send(res, 200, { ok: true });
       } catch (err) {
@@ -396,7 +405,7 @@ export function createDaemon(deps: DaemonDeps): Server {
       const answer = b.signIn === true ? ({ signIn: true } as const) : typeof b.yes === 'boolean' ? { yes: b.yes } : Number.isInteger(b.choice) && (b.choice as number) >= 0 && (b.choice as number) < 6 ? { choice: b.choice as number } : undefined;
       if (!answer) return send(res, 400, { error: 'yes (true/false), signIn (true) or choice (0-5) required' });
       try {
-        await deps.asks.answer(am[1]!, answer);
+        await deps.asks.answer(am[1]!, answer, fromOf(req, remote));
         if (remote) audit(rc!.auditPath, { event: 'answer', ask: am[1]!, ...answer, device: device!.id });
         return send(res, 200, { ok: true });
       } catch (err) {

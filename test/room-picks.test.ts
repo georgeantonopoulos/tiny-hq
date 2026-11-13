@@ -47,7 +47,7 @@ test('only a real go-ahead starts a session in an empty room', () => {
 
 test('the office delivers it: the room first, then the manager with a note not to relay', () => {
   const main = readFileSync(new URL('../src/daemon/main.ts', import.meta.url), 'utf8');
-  const at = main.indexOf('const toRoom = roomLine(ask, answer);');
+  const at = main.indexOf('const toRoom = ((t) => (t ? t + where : t))(roomLine(ask, answer));');
   assert.ok(at > 0, 'deliverAnswer types the room line');
   const block = main.slice(at, at + 6000);
   assert.ok(block.indexOf('typeInto(roomSession') < block.indexOf('tellManager(copy)'), 'room first, the manager second');

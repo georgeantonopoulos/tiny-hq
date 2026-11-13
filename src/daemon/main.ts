@@ -18,7 +18,7 @@ import { goalsPath, loadGoals, setGoal } from '../team/goals.ts';
 import { isTrusted, trustFolder } from '../terminal/trust.ts';
 import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
-import { createDaemon } from './server.ts';
+import { createDaemon, fromWords, type From } from './server.ts';
 import { Devices, RateLimit } from './remote.ts';
 import { FloorCache } from '../office/cache.ts';
 import { discoverProjects, isGone } from '../discovery/scan.ts';
@@ -614,7 +614,7 @@ const server = createDaemon({
     void allowance.refresh();
     return { meters: meters(allowance) };
   },
-  say: (text) => say(text),
+  say: (text, from) => say(text, from),
   lastDone: () => loadJobs(JOBS).reduce((m, j) => (j.status === 'done' ? Math.max(m, j.updatedAt) : m), 0) || undefined,
   // The owner clicked Action on a whiteboard suggestion: typed into the manager's own chat, as the owner's ask.
   boardAction: async (room, next) => {
@@ -954,11 +954,11 @@ function openAsks(): Record<string, { id: string; question: string; more?: numbe
   const shown = oldestPerFolder(loadAsks(ASKS)).sort((x, y) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask)));
   for (const { ask, more } of shown) {
     const who = personFor(ask.folder) ?? (offFloorTrust(ask) ? { id: 'manager' } : undefined);
-    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}) };
+    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
   }
   return out;
 }
-async function answerAsk(id: string, answer: Answer): Promise<void> {
+async function answerAsk(id: string, answer: Answer, from?: From): Promise<void> {
   const ask = loadAsks(ASKS).find((a) => a.id === id);
   if (!ask) throw Object.assign(new Error('That question was already answered or withdrawn.'), { status: 404 });
   if (!answerLine(ask, answer)) throw Object.assign(new Error("That answer doesn't fit this question; reload the page."), { status: 400 });
@@ -967,7 +967,7 @@ async function answerAsk(id: string, answer: Answer): Promise<void> {
   saveAsks(ASKS, loadAsks(ASKS).filter((a) => a.id !== id));
   const restore = () => saveAsks(ASKS, [...loadAsks(ASKS).filter((a) => a.id !== id), ask]);
   try {
-    await deliverAnswer(ask, answer);
+    await deliverAnswer(ask, answer, from);
   } catch (err) {
     if ((err as { status?: number }).status !== 410) restore();
     throw err;
@@ -1028,8 +1028,10 @@ async function trustAndStart(folder: string, name: string, task: string): Promis
   );
   console.log(`asks: the owner trusted ${folder}; started ${name}'s session`);
 }
-async function deliverAnswer(ask: Ask, answer: Answer): Promise<void> {
-  const line = answerLine(ask, answer)!; // checked by answerAsk
+async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<void> {
+  // Where they answered from: a room that hears about a problem knows which device they saw it on.
+  const where = from ? ` (They answered ${fromWords(from)}.)` : '';
+  const line = answerLine(ask, answer)! + where; // checked by answerAsk
   const yes = 'yes' in answer && answer.yes;
   // Button-only posts: the owner's Approve on a post's exact text is the one way it can go up.
   if (yes && ask.post) {
@@ -1047,7 +1049,7 @@ async function deliverAnswer(ask: Ask, answer: Answer): Promise<void> {
   const asker = ask.sessionId ? (await liveSessions()).find((x) => x.sessionId === ask.sessionId) : undefined;
   // A question the manager put over a room (ask --room): the owner's answer goes into the room's own chat as
   // their own click (the room acts on it, no second button), and the manager gets a copy for their notebook.
-  const toRoom = roomLine(ask, answer);
+  const toRoom = ((t) => (t ? t + where : t))(roomLine(ask, answer));
   if (toRoom && who && who.id !== 'manager') {
     // Background sessions in the room (the owner's own terminal sessions aren't in this list).
     const starting = startingRooms.get(who.path);
@@ -1182,13 +1184,13 @@ function boardJobs(): { id: string; room: string; title: string; done: string; s
 // to sessions inside the Claude Code app, and the manager runs outside it),
 // and the words are typed into the manager's chat as the owner's own message.
 const MAX_SAY = 4000;
-async function say(text: string): Promise<void> {
+async function say(text: string, from?: From): Promise<void> {
   const words = text.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_SAY);
   if (!words) throw Object.assign(new Error('Nothing was heard.'), { status: 400 });
   const g = await theManager();
   const live = (await liveSessions()).find((x) => x.id === g.id);
   if (!live) throw Object.assign(new Error("The manager's session isn't running yet; try again in a moment."), { status: 503 });
-  const ok = await typeInto(live, `The owner (spoken, through the office mic): ${words}`, true, () => undefined, true);
+  const ok = await typeInto(live, `The owner (spoken, through the office mic${from ? `, ${fromWords(from)}` : ''}): ${words}`, true, () => undefined, true);
   if (ok !== true) throw Object.assign(new Error("Couldn't get your words into the manager's chat; try again."), { status: 503 });
   console.log('mic: the owner spoke to the manager');
 }

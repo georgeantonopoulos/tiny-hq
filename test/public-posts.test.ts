@@ -234,9 +234,19 @@ test('public deploys need the owner\'s Approve for that project; previews of a l
   const passes = { use: (t: string, s: string, cwd?: string, where?: unknown, target?: string) => pa.usePass(t, s, Date.now(), path, cwd, where, target), click: () => false, repo: () => 'x/x' };
   const room = join(mkdtempSync(join(tmpdir(), 'th-room-')), 'garden-planner');
   mkdirSync(room);
+  const git = (...a: string[]) => execFileSync('git', ['-C', room, ...a], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  writeFileSync(join(room, 'index.html'), 'v1');
+  writeFileSync(join(room, '.gitignore'), '.vercel\n');
+  git('add', '-A');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'v1');
+  const head = git('rev-parse', '--short=7', 'HEAD');
   const D = (command: string, cwd = room) => decide('Bash', { command }, {}, 's', passes, cwd);
-  for (const c of ['vercel --prod', 'npx vercel deploy --prod --yes', 'vercel', 'pnpm dlx vercel@latest --prod', 'netlify deploy --dir dist', 'npx gh-pages -d dist', 'git push origin gh-pages', 'firebase deploy --only hosting', 'wrangler pages deploy dist', 'fly deploy'])
-    denies(D(c), /deploy garden-planner publicly/);
+  for (const c of ['vercel --prod', 'npx vercel deploy --prod --yes', 'vercel', 'pnpm dlx vercel@latest --prod', 'git push origin gh-pages', 'firebase deploy --only hosting', 'fly deploy'])
+    denies(D(c), /deploy garden-planner at [0-9a-f]{7} publicly/);
+  // Uploading a folder that isn't in the commit (Codex on the port): refused whatever the pass.
+  for (const c of ['netlify deploy --dir dist', 'npx gh-pages -d dist', 'wrangler pages deploy dist', 'surge dist', 'vercel --prod --prebuilt'])
+    denies(D(c), /isn't committed|git ignores/);
   denies(D('vercel --prod && echo done'), /alongside other commands/);
   for (const c of ['vercel ls', 'vercel env pull', 'vercel login', 'echo vercel --prod', 'netlify status', 'git push origin main'])
     assert.equal(D(c), undefined, c);
@@ -244,24 +254,28 @@ test('public deploys need the owner\'s Approve for that project; previews of a l
   mkdirSync(join(room, '.vercel'));
   writeFileSync(join(room, '.vercel', 'project.json'), JSON.stringify({ projectName: 'Garden-Planner' }));
   assert.equal(D('vercel'), undefined);
-  denies(D('vercel --prod'), /deploy garden-planner publicly/);
-  grantPass(path, 'deploy garden-planner publicly', room, Date.now(), 'deploy:garden-planner');
-  denies(D('vercel --prod', '/elsewhere/other-room'), /deploy other-room publicly/);
-  assert.equal(D('vercel --prod'), 'pass');
-  denies(D('vercel --prod'), /hasn't approved/); // once
+  denies(D('vercel --prod'), /deploy garden-planner at [0-9a-f]{7} publicly/);
   // Codex on the port: a deploy inside a shell string, a value-taking option before the subcommand,
-  // and a deploy of another folder (--cwd, or a folder named on the command) are all seen.
-  denies(D(`bash -c 'vercel --prod'`), /deploy garden-planner publicly/);
-  denies(D(`sh -c "npx netlify deploy --dir dist"`), /deploy garden-planner publicly/);
-  denies(D('vercel --token abc deploy --prod'), /deploy garden-planner publicly/);
-  denies(D('vercel --scope team-x --prod'), /deploy garden-planner publicly/);
+  // and a deploy of another folder (--cwd, or a folder named on the command).
+  denies(D(`bash -c 'vercel --prod'`), /deploy garden-planner at [0-9a-f]{7} publicly/);
+  denies(D(`sh -c "npx netlify deploy --dir dist"`), /deploy garden-planner at [0-9a-f]{7} publicly/);
+  denies(D('vercel --token abc deploy --prod'), /deploy garden-planner at [0-9a-f]{7} publicly/);
+  denies(D('vercel --scope team-x --prod'), /deploy garden-planner at [0-9a-f]{7} publicly/);
   const other = join(room, '..', 'other-project');
   mkdirSync(other);
-  grantPass(path, 'deploy garden-planner publicly', room, Date.now(), 'deploy:garden-planner');
-  denies(D(`vercel --cwd=${other} --prod`), /deploy other-project publicly/);
-  denies(D(`vercel --cwd ../other-project --prod`), /deploy other-project publicly/);
-  denies(D('vercel ../other-project --prod'), /deploy other-project publicly/);
-  assert.equal(D('vercel --prod'), 'pass', "the room's own pass was still there");
+  grantPass(path, `deploy garden-planner at ${head} publicly`, room, Date.now(), 'deploy:garden-planner');
+  denies(D(`vercel --cwd=${other} --prod`), /"other-project"/);
+  denies(D('vercel --cwd ../other-project --prod'), /"other-project"/);
+  denies(D('vercel ../other-project --prod'), /"other-project"/);
+  denies(D('vercel --prod', '/elsewhere/other-room'), /isn't a git folder/);
+  // The Approve is for that commit only, with nothing uncommitted.
+  writeFileSync(join(room, 'index.html'), 'v2, not approved');
+  denies(D('vercel --prod'), /aren't committed/);
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'v2');
+  denies(D('vercel --prod'), /hasn't approved "deploy garden-planner at [0-9a-f]{7} publicly"/);
+  git('reset', '-q', '--hard', head);
+  assert.equal(D('vercel --prod'), 'pass');
+  denies(D('vercel --prod'), /hasn't approved/); // once
 });
 
 // Text written into a file with a here-document used to be read as commands, so a room writing notes
@@ -273,9 +287,9 @@ test('a here-document is data unless a shell runs it', () => {
   assert.equal(D(`cat > notes.md <<'EOF'${nl}vercel --prod${nl}gh pr comment 4 -b hi${nl}EOF`), undefined);
   assert.equal(D(`python3 - <<EOF${nl}print("vercel --prod")${nl}EOF`), undefined);
   assert.equal(D(`cat <<-EOF${nl}\tvercel --prod${nl}\tEOF`), undefined);
-  denies(D(`bash <<EOF${nl}vercel --prod${nl}EOF`), /deploy garden-planner publicly/);
+  denies(D(`bash <<EOF${nl}vercel --prod${nl}EOF`), /button-only/);
   denies(D(`bash -s <<'EOF'${nl}gh pr comment 4 -b hi${nl}EOF`), /button-only/);
-  denies(D(`cat > a <<EOF${nl}hello${nl}EOF${nl}vercel --prod`), /deploy garden-planner publicly/); // after the body: a command again
+  denies(D(`cat > a <<EOF${nl}hello${nl}EOF${nl}vercel --prod`), /button-only/); // after the body: a command again
 });
 
 // An approved Vercel share-link call used to be refused as a deploy. A Vercel settings change uses one Approve for that project, whatever its words.
@@ -291,14 +305,42 @@ test('a Vercel settings change uses one Approve for that project; reads pass; de
   denies(D(call), /hasn't approved a change for "garden-planner"/);
   assert.equal(D('vercel api /v9/projects/garden-planner'), undefined); // a read
   grantPass(path, 'create Vercel protection-bypass share link for garden-planner', room, Date.now(), 'deploy:garden-planner');
-  denies(D('vercel --prod'), /deploy garden-planner publicly/); // not a deploy pass
-  // A deploy through the API (Codex): never on a settings Approve, always "deploy <project> publicly".
-  denies(D('vercel api /v13/deployments -X POST --input production-deploy.json'), /deploy garden-planner publicly/);
-  denies(D('vercel api /v10/projects/garden-planner/promote/dpl_1 -X POST'), /deploy garden-planner publicly/);
-  denies(D('vercel api /v2/deployments/dpl_1/aliases -X POST --input alias.json'), /deploy garden-planner publicly/);
-  denies(D('vercel api /v9/projects/garden-planner/domains -X POST --input d.json'), /deploy garden-planner publicly/);
-  denies(D('vercel api -X POST --input x.json'), /deploy garden-planner publicly/); // no endpoint it can read
+  denies(D('vercel --prod'), /button-only/); // not a deploy pass
   denies(D('vercel api /v9/projects/other-thing -X DELETE'), /"other-thing"/); // another project
+  // A deploy through the API never uses a settings Approve (Codex on the port).
+  for (const c of ['vercel api /v13/deployments -X POST --input prod.json', 'vercel api /v2/aliases -X POST --input a.json', 'vercel api /v10/projects/garden-planner/promote/dpl_1 -X POST', 'vercel api -X POST --input x.json'])
+    denies(D(c), /button-only/);
   assert.equal(D(call), 'pass');
   denies(D(call), /hasn't approved/); // once
+});
+
+// Codex on the port: ignored build output could change after the Approve, and the
+// commits-going-out list lost its baseline when passes were pruned.
+test('an uploaded build folder must be in the approved commit, and the last deploy is remembered', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const data = mkdtempSync(join(tmpdir(), 'cm-up-'));
+  const path = join(data, 'post-approvals.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as { usePass: (t: string, s: string, now: number, p: string, cwd?: string, where?: unknown, target?: string) => boolean; recordDeploy: (p: string, c: string, now?: number, path?: string) => void; loadBaselines: (path?: string) => Record<string, { commit: string }> };
+  const baselines = join(data, 'deploy-baselines.json');
+  const passes = { use: (t: string, s: string, cwd?: string, where?: unknown, target?: string) => pa.usePass(t, s, Date.now(), path, cwd, where, target), click: () => false, repo: () => 'x/x', deployed: (p: string, c: string) => pa.recordDeploy(p, c, Date.now(), baselines) };
+  const room = join(data, 'site');
+  mkdirSync(room);
+  const git = (...a: string[]) => execFileSync('git', ['-C', room, ...a], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  writeFileSync(join(room, '.gitignore'), 'dist/\n');
+  mkdirSync(join(room, 'dist'));
+  writeFileSync(join(room, 'dist', 'index.html'), 'approved');
+  mkdirSync(join(room, 'public'));
+  writeFileSync(join(room, 'public', 'index.html'), 'committed');
+  git('add', '-A');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'site');
+  const head = git('rev-parse', '--short=7', 'HEAD');
+  grantPass(path, `deploy site at ${head} publicly`, room, Date.now(), 'deploy:site');
+  const D = (command: string) => decide('Bash', { command }, {}, 's', passes, room);
+  writeFileSync(join(room, 'dist', 'index.html'), 'changed after the Approve'); // ignored: the tree still looks clean
+  denies(D('netlify deploy --prod --dir dist'), /uploads dist, which git ignores/);
+  assert.equal(D('netlify deploy --prod --dir public'), 'pass'); // a committed folder is the approved commit
+  assert.equal(pa.loadBaselines(baselines).site?.commit, head);
 });

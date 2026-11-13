@@ -10,6 +10,23 @@
 //   ask cancel [<id>]             (one question by its id; bare: your open questions in this folder, and any you put over a room)
 
 import { normTarget } from '../team/posts.ts';
+import { execFileSync } from 'node:child_process';
+// @ts-expect-error a plain-JS hook module, no type declarations
+import { versionOf } from '../../hooks/public-post-guard.mjs';
+// @ts-expect-error a plain-JS hook module, no type declarations
+import { loadBaselines } from '../../hooks/post-approvals.mjs';
+
+// The commits a deploy adds since the last approved deploy of this project (deploy-baselines.json,
+// written when a deploy passes the guard), or the last 10 when there's none.
+function commitsSinceLastDeploy(folder: string, name: string, head: string): string[] {
+  const last = (loadBaselines() as Record<string, { commit?: string }>)[name]?.commit;
+  try {
+    const range = last && last !== head ? [`${last}..${head}`] : ['-10', head];
+    return execFileSync('git', ['-C', folder, 'log', '--format=%h %s', ...range], { encoding: 'utf8', timeout: 3000 }).trim().split('\n').filter(Boolean).slice(0, 15);
+  } catch {
+    return [];
+  }
+}
 import { realpathSync, statSync } from 'node:fs';
 import { MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
@@ -23,7 +40,9 @@ let args = proofArgs.rest;
 // --target <where>: the PR or issue (owner/repo#N), the repo for a new issue (owner/repo), or the page URL.
 let postText: string | undefined;
 let postTarget: string | undefined;
-for (const [flag, set] of [['--text', (v: string) => (postText = v)], ['--target', (v: string) => (postTarget = v)]] as const) {
+let changes: string | undefined;
+let proven: string | undefined;
+for (const [flag, set] of [['--text', (v: string) => (postText = v)], ['--target', (v: string) => (postTarget = v)], ['--changes', (v: string) => (changes = v)], ['--proven', (v: string) => (proven = v)]] as const) {
   const i = args.indexOf(flag);
   if (i >= 0) {
     set(args[i + 1] ?? '');
@@ -97,8 +116,28 @@ if (args[0] === 'list') {
     console.error('A post needs where it goes on the button too: --target owner/repo#<number> for a PR or issue comment or review, owner/repo for a new issue, or the full https:// URL of the page for another site. The owner approves the text for that place only.');
     process.exit(2);
   }
+  // A deploy Approve is for one exact version: the text names the
+  // project and the commit, the folder must be at that commit with everything committed, and the
+  // button says what changes, what was proven on which device, and lists the commits since the last
+  // approved deploy of that project.
+  let deploy: { changes: string; proven: string; commits: string[] } | undefined;
+  const t = normTarget(postTarget);
+  if (why === 'post' && t.startsWith('deploy:') && /^deploy\s/i.test(postText ?? '')) {
+    const name = t.slice(7);
+    const m = new RegExp(`^deploy ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} at ([0-9a-f]{7}) publicly$`).exec((postText ?? '').trim());
+    const v = versionOf(folder);
+    if (!m || !v.head || m[1] !== v.head) {
+      console.error(`A deploy button is for one exact version: commit everything, then run from the project folder\n  ask "<what goes public and why>" --why post --tried "<...>" --text "deploy ${name} at ${v.head ?? '<commit>'} publicly" --target deploy:${name} --changes "<what a person will see or hear differently>" --proven "<what you saw or heard, on which device>"${v.head ? '' : `\n(${v.why})`}`);
+      process.exit(2);
+    }
+    if (!changes?.trim() || !proven?.trim()) {
+      console.error('A deploy button says what changes and what was proven: add --changes "<what a person will see or hear differently>" and --proven "<what you saw or heard, on which device; checking what the code asked for is not proof>".');
+      process.exit(2);
+    }
+    deploy = { changes, proven, commits: commitsSinceLastDeploy(folder, name, m[1]!) };
+  }
   // Claude Code tells its shell which session this is: the answer goes back to exactly this one.
-  saveAsks(path, addAsk(asks, folder, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget) } : {}) }));
+  saveAsks(path, addAsk(asks, folder, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(deploy ? { deploy } : {}) } : {}) }));
   console.log(
     choices
       ? `The owner now sees a question mark over your head; tapping it shows your question with ${choices.length} buttons: ${choices.map((c) => `"${c}"`).join(', ')}. Their pick will arrive in this chat as "The owner chose: ..."; stop here and wait for it.`

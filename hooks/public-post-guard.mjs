@@ -27,7 +27,7 @@ import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { normTarget } from './post-approvals.mjs';
 
-const DEPLOY_HOW = (name) => `ask the owner first: manager/ask "<what goes public and why>" --why post --tried "<what you checked>" --text "deploy ${name} publicly" --target deploy:${name}. Once they approve, run the deploy on its own within 2 hours, then open its address logged out to check it shows what they approved.`;
+const DEPLOY_HOW = (name, head = '<commit>') => `ask the owner first, from the project folder with everything committed: manager/ask "<what goes public and why>" --why post --tried "<what you checked>" --text "deploy ${name} at ${head} publicly" --target deploy:${name} --changes "<what a person will see or hear differently>" --proven "<what you saw or heard, on which device>". Their button lists the commits since the last approved deploy. Once they approve, deploy that exact commit on its own within 2 hours, then open its address logged out to check it shows what they approved.`;
 const HOW = 'Put the exact text and where it goes to the owner first: manager/ask "<what and where>" --why post --tried "<what you did>" --text "<the exact text>" --target <owner/repo#number, owner/repo for a new issue, or the page URL>. Once they approve, run the post on its own, with exactly that text written out (-b "<text>"), on that PR or issue (its number, and -R owner/repo outside its own folder), within 2 hours.';
 
 // ---- Shell words ----
@@ -444,7 +444,8 @@ function remoteRepo(cwd) {
 // deploys (--prod, promote, rollback, alias, or a first deploy from a folder not yet linked), every
 // netlify deploy (drafts are public too), gh-pages, firebase deploy, surge, wrangler deploys and
 // fly deploy. A vercel preview of a linked project stays allowed (Vercel protects previews).
-// Approved as the fixed text "deploy <project> publicly", for target deploy:<project>.
+// Approved as the fixed text "deploy <project> at <commit> publicly", for target deploy:<project>:
+// one Approve per exact commit, nothing uncommitted.
 const DEPLOY_TOOLS = new Set(['vercel', 'netlify', 'gh-pages', 'firebase', 'surge', 'wrangler', 'fly', 'flyctl']);
 // Options these tools read a value for (`--token abc deploy`: "abc" is not the subcommand).
 const DEPLOY_VALUE_FLAGS = new Set(['--token', '-t', '--scope', '-S', '--team', '-T', '--cwd', '--local-config', '-A', '--global-config', '-Q', '--meta', '-m', '--env', '-e', '--build-env', '-b', '--regions', '--archive', '--target', '--name', '-n', '--project', '-P', '--site', '-s', '--auth', '-a', '--app', '--dir', '-d', '--alias', '--config', '-c', '--only', '--message', '--branch', '--domain', '--functions', '--filter', '--context']);
@@ -494,6 +495,16 @@ function deployAt(seg, i, cwd) {
   })();
   const here = cwdFlag ? resolve(String(cwd ?? '.'), cwdFlag.replace(/^~(?=\/|$)/, homedir())) : cwd;
   const flag = (...names) => args.some((a) => names.some((n) => a === n || a.startsWith(`${n}=`)));
+  // The folder a deploy uploads as it is, when the command names one: built output can change after
+  // the owner's Approve without a commit, so it's checked below.
+  const valueOf = (...names) => {
+    for (let j = 0; j < args.length; j++) {
+      if (names.includes(args[j]) && args[j + 1]) return args[j + 1];
+      const m = names.map((n) => (args[j].startsWith(`${n}=`) ? args[j].slice(n.length + 1) : undefined)).find((v) => v !== undefined);
+      if (m) return m;
+    }
+    return undefined;
+  };
   const named = (() => {
     for (let j = 0; j < args.length; j++) {
       if (['--name', '--project', '-n', '--site', '-s'].includes(args[j]) && args[j + 1]) return args[j + 1];
@@ -521,11 +532,9 @@ function deployAt(seg, i, cwd) {
       const endpoint = words.find((w, j) => j > 0 && w.startsWith('/')) ?? '';
       const m = /\/projects\/([A-Za-z0-9._-]+)/.exec(endpoint);
       const project = String(m ? m[1] : named ?? projectName(here)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
-      // A write that makes or points a deployment (create, redeploy, promote, rollback, an alias or a
-      // domain) is a deploy: it needs "deploy <project> publicly", never a settings Approve. An endpoint
-      // the guard can't read counts as one too.
-      if (!endpoint || /\/(deployments|aliases|alias|promote|rollback|domains)(\/|\?|$)/.test(endpoint))
-        return { why: `a Vercel deploy through its API (${method || 'POST'} ${endpoint || 'an endpoint it cannot read'})`, name: project };
+      // A deploy through the API (or a call whose endpoint can't be read) is a deploy, not a setting:
+      // it needs "deploy <project> at <commit> publicly".
+      if (!endpoint || /\/(deployments|aliases|alias|promote|rollback|domains)(\/|\?|$)/.test(endpoint)) return { why: `a Vercel deploy through the API (${method || 'POST'} ${endpoint || 'an endpoint it can\'t read'})`, name: project, dir: here };
       return { why: `a change to Vercel's settings for "${project}" (${method || 'POST'} ${endpoint})`, name: project, setting: true };
     }
     // Any other word is a folder to deploy (`vercel <path>`, as Vercel reads it), so it counts.
@@ -534,16 +543,50 @@ function deployAt(seg, i, cwd) {
     const project = String(named ?? projectName(dir)).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100);
     const prod = flag('--prod', '--production') || args.some((a) => /^--target=production$/.test(a)) || (args.includes('--target') && args[args.indexOf('--target') + 1] === 'production') || ['promote', 'rollback', 'alias'].includes(sub);
     if (!prod && vercelLinked(dir)) return undefined; // a preview of a linked project: protected
-    return { why: prod ? 'a public Vercel production deploy' : 'a first Vercel deploy (it goes to a public production address)', name: project };
+    const prebuilt = args.includes('--prebuilt') ? '.vercel/output' : undefined;
+    return { why: prod ? 'a public Vercel production deploy' : 'a first Vercel deploy (it goes to a public production address)', name: project, dir, ...(prebuilt ? { upload: prebuilt } : {}) };
   }
-  if (tool === 'netlify') return words[0] === 'deploy' ? { why: 'a Netlify deploy (draft addresses are public too)', name } : undefined;
-  if (tool === 'gh-pages') return { why: 'a GitHub Pages deploy', name };
-  if (tool === 'firebase') return words[0] === 'deploy' || words[0] === 'hosting:channel:deploy' ? { why: 'a Firebase deploy', name } : undefined;
-  if (tool === 'surge') return words[0] === 'list' || words[0] === 'login' || words[0] === 'whoami' ? undefined : { why: 'a Surge deploy', name };
-  if (tool === 'wrangler') return (words[0] === 'deploy' || words[0] === 'publish' || (words[0] === 'pages' && ['deploy', 'publish'].includes(words[1]))) ? { why: 'a Cloudflare deploy', name } : undefined;
-  if (tool === 'fly' || tool === 'flyctl') return words[0] === 'deploy' ? { why: 'a Fly deploy', name } : undefined;
+  if (tool === 'netlify') return words[0] === 'deploy' ? { why: 'a Netlify deploy (draft addresses are public too)', name, dir: here, upload: valueOf('--dir', '-d') } : undefined;
+  if (tool === 'gh-pages') return { why: 'a GitHub Pages deploy', name, dir: here, upload: valueOf('--dist', '-d') };
+  if (tool === 'firebase') return words[0] === 'deploy' || words[0] === 'hosting:channel:deploy' ? { why: 'a Firebase deploy', name, dir: here } : undefined;
+  if (tool === 'surge') return words[0] === 'list' || words[0] === 'login' || words[0] === 'whoami' ? undefined : { why: 'a Surge deploy', name, dir: here, upload: valueOf('--project', '-p') ?? words[0] };
+  if (tool === 'wrangler') return (words[0] === 'deploy' || words[0] === 'publish' || (words[0] === 'pages' && ['deploy', 'publish'].includes(words[1]))) ? { why: 'a Cloudflare deploy', name, dir: here, upload: words[0] === 'pages' ? words[2] : undefined } : undefined;
+  if (tool === 'fly' || tool === 'flyctl') return words[0] === 'deploy' ? { why: 'a Fly deploy', name, dir: here } : undefined;
   return undefined;
 }
+// The exact version a deploy sends: the folder's commit, and only
+// when everything in it is committed, so their Approve is for code they can name and nothing slips in
+// after it. { head } or { why } when it can't be told.
+export function versionOf(dir) {
+  try {
+    const opts = { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] };
+    const head = execFileSync('git', ['-C', String(dir ?? '.'), 'rev-parse', '--short=7', 'HEAD'], opts).trim();
+    const dirty = execFileSync('git', ['-C', String(dir ?? '.'), 'status', '--porcelain', '--untracked-files=normal'], opts).trim();
+    if (dirty) return { why: `it has changes that aren't committed (${dirty.split('\n').length} file${dirty.split('\n').length === 1 ? '' : 's'}): commit them first, so the version the owner approves is the version that goes out` };
+    return /^[0-9a-f]{7}$/.test(head) ? { head } : { why: "its version can't be read" };
+  } catch {
+    return { why: "it isn't a git folder with a commit, so the version the owner approves can't be named" };
+  }
+}
+
+// Why an uploaded folder isn't the approved commit itself: git-ignored, or not tracked (undefined when
+// everything in it is tracked; the clean-tree check already covers changes to tracked files).
+export function uploadOutsideCommit(dir, folder) {
+  const opts = { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] };
+  try {
+    execFileSync('git', ['-C', String(dir ?? '.'), 'check-ignore', '-q', String(folder)], opts);
+    return 'git ignores';
+  } catch {
+    /* not ignored (or not a git folder: versionOf refuses that) */
+  }
+  try {
+    const tracked = execFileSync('git', ['-C', String(dir ?? '.'), 'ls-files', '--', String(folder)], opts).trim();
+    return tracked ? undefined : "isn't committed";
+  } catch {
+    return "can't be checked";
+  }
+}
+
 export function deploysIn(cmd, cwd) {
   const out = [];
   for (const seg of segments(cmd)) programAt(seg).forEach((i) => {
@@ -552,7 +595,7 @@ export function deploysIn(cmd, cwd) {
   });
   // git push … gh-pages: publishing the Pages branch.
   for (const seg of segments(cmd)) programAt(seg).forEach((i) => {
-    if (basename(seg[i]) === 'git' && seg.slice(i + 1).includes('push') && seg.slice(i + 1).some((a) => /(^|:)gh-pages$/.test(a))) out.push({ why: 'a push to GitHub Pages', name: projectName(cwd).toLowerCase() });
+    if (basename(seg[i]) === 'git' && seg.slice(i + 1).includes('push') && seg.slice(i + 1).some((a) => /(^|:)gh-pages$/.test(a))) out.push({ why: 'a push to GitHub Pages', name: projectName(cwd).toLowerCase(), dir: cwd });
   });
   return out;
 }
@@ -574,14 +617,22 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
     const deploys = deploysIn(cmd, cwd);
     if (deploys.length) {
       const d = deploys[0];
-      if (deploys.length > 1 || segments(cmd).length > 1 || words(cmd).some((t) => SEP.has(t))) return { deny: `Public deploys are button-only: this command does ${d.why} alongside other commands. Run the approved deploy on its own. ${DEPLOY_HOW(d.name || '<project>')}` };
+      if (deploys.length > 1 || segments(cmd).length > 1 || words(cmd).some((t) => SEP.has(t))) return { deny: `Public deploys are button-only: this command does ${d.why} alongside other commands. Run the approved deploy on its own. ${DEPLOY_HOW(d.name || '<project>', versionOf(d.dir ?? cwd).head)}` };
       if (!d.name) return { deny: `Public deploys are button-only, and the office can't tell which project this deploys. ${DEPLOY_HOW('<project>')}` };
       if (d.setting) {
         if (passes.target?.(session, cwd, `deploy:${d.name}`)) return 'pass';
         return { deny: `Vercel setting changes are button-only: this is ${d.why}, and the owner hasn't approved a change for "${d.name}". Ask with manager/ask "<the change, in plain words>" --why post --tried "<what you checked>" --text "<what exactly changes and who can then reach it>" --target deploy:${d.name}; their Approve lets one such call through within 2 hours.` };
       }
-      if (passes.use(`deploy ${d.name} publicly`, session, cwd, undefined, `deploy:${d.name}`)) return 'pass';
-      return { deny: `Public deploys are button-only: this is ${d.why} of "${d.name}", and the owner hasn't approved "deploy ${d.name} publicly". Keep it private (a preview, or the host's protection on), or ${DEPLOY_HOW(d.name)}` };
+      const v = versionOf(d.dir ?? cwd);
+      if (!v.head) return { deny: `Public deploys are button-only, one approved version at a time: this is ${d.why} of "${d.name}", and ${v.why}.` };
+      const up = d.upload ? uploadOutsideCommit(d.dir ?? cwd, d.upload) : undefined;
+      if (up) return { deny: `Public deploys are button-only, one approved version at a time: this is ${d.why}, and it uploads ${d.upload}, which ${up}, so it could differ from the commit the owner approves. Let the host build from the approved commit, or commit the built folder.` };
+      const text = `deploy ${d.name} at ${v.head} publicly`;
+      if (passes.use(text, session, cwd, undefined, `deploy:${d.name}`)) {
+        passes.deployed?.(d.name, v.head);
+        return 'pass';
+      }
+      return { deny: `Public deploys are button-only, one approved version at a time: this is ${d.why} of "${d.name}" at ${v.head}, and the owner hasn't approved "${text}". Keep it private (a preview, or the host's protection on), or ${DEPLOY_HOW(d.name, v.head)}` };
     }
     const found = posts(cmd);
     if (!found.length) return undefined;
@@ -660,6 +711,7 @@ if (isMain) {
         use: (text, session, cwd, where, target) => pa.usePass(text, session, Date.now(), pa.approvalsPath(), cwd, where, target),
         click: (session, tab, site) => pa.useClick(session, tab, site, Date.now(), pa.approvalsPath()),
         target: (session, cwd, target) => pa.useTargetPass(session, Date.now(), pa.approvalsPath(), cwd, target),
+        deployed: (project, commit) => pa.recordDeploy(project, commit),
       };
       const hook = JSON.parse(raw || '{}');
       const file = stateFile(hook.session_id ?? 'none');

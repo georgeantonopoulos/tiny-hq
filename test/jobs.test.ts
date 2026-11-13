@@ -98,3 +98,10 @@ test('a new job is never dropped: open jobs all stay, and only the oldest finish
   assert.ok(got.some((j) => j.id === 'job-100') && got.some((j) => j.id === 'job-101'));
   assert.equal(got.some((j) => j.id === 'job-0') || got.some((j) => j.id === 'job-1'), false); // the two oldest done ones went
 });
+
+// A long "done when" line used to be cut at 400 characters, mid-sentence.
+test('a long "done when" line is kept whole', () => {
+  const done = `${'A report with the timeline, the cause and every gap. '.repeat(18)}End.`;
+  assert.ok(done.length > 900);
+  assert.equal(validJob({ id: 'audit', room: '/r', title: 't', done, status: 'active', createdAt: 1, updatedAt: 1 })!.done, done.trim());
+});

@@ -23,6 +23,7 @@ export interface Ask {
   askedFor?: true; // put over this room by someone else (The manager's `ask --room`): never the room's own question; the owner's answer goes into the room's chat as their own click (roomLine) and a copy to the session that asked
   post?: string; // --why post: the exact text the owner approves; their Approve gives a one-time pass for it
   target?: string; // --why post: where it goes (owner/repo#N, owner/repo, or a page URL); the pass is only for there
+  deploy?: { changes: string; proven: string; commits: string[] }; // a deploy's button: what changes, what was proven where, the commits since the last approved deploy
 }
 
 export const MAX_OPTIONS = 6;
@@ -45,6 +46,15 @@ function validTrust(t: unknown): { name: string; task: string } | undefined {
 
 const clean = (s: string, n: number) => s.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 
+function validDeploy(d: unknown): Ask['deploy'] | undefined {
+  if (!d || typeof d !== 'object') return undefined;
+  const o = d as Record<string, unknown>;
+  const changes = typeof o.changes === 'string' ? clean(o.changes, 600) : '';
+  const proven = typeof o.proven === 'string' ? clean(o.proven, 600) : '';
+  const commits = Array.isArray(o.commits) ? o.commits.filter((c): c is string => typeof c === 'string').map((c) => clean(c, 160)).filter(Boolean).slice(0, 15) : [];
+  return changes && proven ? { changes, proven, commits } : undefined;
+}
+
 export function validAsk(a: unknown): Ask | undefined {
   if (!a || typeof a !== 'object') return undefined;
   const o = a as Record<string, unknown>;
@@ -66,6 +76,7 @@ export function validAsk(a: unknown): Ask | undefined {
     // A post's exact text (button-only posts): kept as written, line breaks included.
     ...(typeof o.post === 'string' && o.why === 'post' && o.post.trim() ? { post: o.post.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, 5000) } : {}),
     ...(typeof o.target === 'string' && o.why === 'post' && normTarget(o.target) ? { target: normTarget(o.target) } : {}),
+    ...(validDeploy(o.deploy) && o.why === 'post' ? { deploy: validDeploy(o.deploy) } : {}),
     ...(o.askedFor === true && typeof o.sessionId === 'string' ? { askedFor: true as const } : {}),
     ...(validTrust(o.trust) && typeof o.job !== 'string' && !validOptions(o.options) ? { trust: validTrust(o.trust) } : {}),
   };
@@ -128,7 +139,7 @@ export const MAX_ASKS_PER_FOLDER = 5;
 // A new ask joins the folder's open ones. Only the same question again (or a new
 // `job wait` for the same job) replaces its older copy; past five the oldest goes.
 // (It used to replace every ask from the folder: the second question wiped the first.)
-export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string }): Ask[] {
+export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string; deploy?: Ask['deploy'] }): Ask[] {
   const a = validAsk({ id: id.padEnd(6, '0'), folder, question, createdAt: now, sessionId, job, options, ...(askedFor ? { askedFor: true } : {}), ...(trust ? { trust } : {}), ...(proof ?? {}) });
   if (!a) return asks;
   const same = (x: Ask) => x.folder === folder && (x.question === a.question || (!!a.job && x.job === a.job));
