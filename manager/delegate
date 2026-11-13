@@ -33,4 +33,5 @@ When you're done, or if you need the owner, reply to the manager with SendMessag
 set -- --bg -n "$2"
 case "$model" in opus|sonnet|haiku) set -- "$@" --model "$model" ;; esac
 [ -n "$brief" ] && set -- "$@" --append-system-prompt "$brief"
-exec "${CM_CLAUDE_BIN:-claude}" "$@" "$task"
+# "--" ends the options: a task that starts with "-" is still the task, never a Claude option.
+exec "${CM_CLAUDE_BIN:-claude}" "$@" -- "$task"

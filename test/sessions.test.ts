@@ -8,7 +8,7 @@ import { join } from 'node:path';
 const dir = mkdtempSync(join(tmpdir(), 'cm-sessions-'));
 const calls = join(dir, 'calls.txt');
 const fake = join(dir, 'claude');
-writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' "$PWD" "$@" "--" "CM_SECRET=$CM_SECRET" >> '${calls}'\necho 'backgrounded · abcdef12 · test'\n`);
+writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' "$PWD" "$@" "==end==" "CM_SECRET=$CM_SECRET" >> '${calls}'\necho 'backgrounded · abcdef12 · test'\n`);
 chmodSync(fake, 0o755);
 process.env.CM_CLAUDE_BIN = fake;
 process.env.CM_SECRET = 'office-only';
@@ -18,16 +18,16 @@ test('sessions start as plain `claude --bg` in the folder; office settings never
   const s = await startSession(dir, 'My App!$(x)', 'fix the tests');
   assert.equal(s.id, 'abcdef12');
   const lines = readFileSync(calls, 'utf8').trim().split('\n');
-  const first = lines.slice(0, lines.indexOf('--') + 2);
+  const first = lines.slice(0, lines.indexOf('==end==') + 2);
   assert.equal(first[0]?.endsWith(dir.split('/').pop()!), true, 'runs in the project folder');
-  assert.deepEqual(first.slice(1, 5), ['--bg', '-n', 'My Appx', 'fix the tests'], 'no other flags; the name is cleaned');
+  assert.deepEqual(first.slice(1, 6), ['--bg', '-n', 'My Appx', '--', 'fix the tests'], 'no other flags; the name is cleaned; "--" so a task starting with - is never an option');
   assert.ok(!first.includes('--append-system-prompt'));
   assert.ok(first.includes('CM_SECRET='), "the office's own variables don't reach the session");
   // A room's brief and model go in as flags; nothing else changes.
   writeFileSync(calls, '');
   await startSession(dir, 'Lamp', 'look around', 'sonnet', 'You are Gilda.');
   const second = readFileSync(calls, 'utf8').trim().split('\n');
-  assert.deepEqual(second.slice(1, 9), ['--bg', '-n', 'Lamp', '--model', 'sonnet', '--append-system-prompt', 'You are Gilda.', 'look around']);
+  assert.deepEqual(second.slice(1, 10), ['--bg', '-n', 'Lamp', '--model', 'sonnet', '--append-system-prompt', 'You are Gilda.', '--', 'look around']);
 });
 
 test("The manager's bubble: the last thing they said comes from their saved transcript", async () => {

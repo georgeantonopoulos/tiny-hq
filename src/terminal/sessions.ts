@@ -200,7 +200,7 @@ export async function startSession(projectPath: string, name: string, prompt?: s
   const args = ['--bg', '-n', name.replace(/[^\w .-]/g, '').slice(0, 60) || 'project'];
   if (model && MODELS.includes(model)) args.push('--model', model);
   if (brief) args.push('--append-system-prompt', brief);
-  if (prompt) args.push(prompt);
+  if (prompt) args.push('--', prompt); // a prompt starting with "-" is still the prompt, never an option
   const out = await run(args, projectPath);
   const m = /backgrounded\s*·\s*([0-9a-f]{8})/.exec(out);
   if (!m) throw new Error(`claude --bg didn't say which session it started: ${out.slice(0, 200)}`);
