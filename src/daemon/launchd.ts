@@ -13,6 +13,33 @@ import { NODE_FLAGS, REPO_ROOT } from '../paths.ts';
 
 export const LABEL = 'com.tiny-hq.daemon';
 export const OPEN_LABEL = 'com.tiny-hq.open';
+// The optional screen helper (`tiny-hq screen on`): runs Peekaboo's daemon, which holds the Mac's
+// Screen Recording and Accessibility permissions, so every room's `peekaboo` command can screenshot
+// and click desktop apps without the permission depending on Claude Code's versioned binary path.
+export const SCREEN_LABEL = 'com.tiny-hq.screen';
+
+export function screenPlist(peekaboo: string, home = homedir()): string {
+  const socket = join(home, 'Library', 'Application Support', 'Peekaboo', 'bridge.sock');
+  const logFile = join(home, 'Library', 'Logs', 'tiny-hq-screen.log');
+  const args = [peekaboo, 'daemon', 'run', '--mode', 'manual', '--bridge-socket', socket];
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${SCREEN_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args.map((a) => `    <string>${esc(a)}</string>`).join('\n')}
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>${esc(logFile)}</string>
+  <key>StandardErrorPath</key><string>${esc(logFile)}</string>
+</dict>
+</plist>
+`;
+}
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 

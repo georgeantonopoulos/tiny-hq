@@ -8,13 +8,13 @@
 //   tiny-hq uninstall   takes out the hooks, the skill link and the login items (--all also deletes ~/.tiny-hq)
 
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, readlinkSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { CLAUDE_BIN, CONFIG_PATH, DATA_DIR, DEFAULT_PORT, MANAGER_DIR, NODE_FLAGS, REPO_ROOT } from '../paths.ts';
 import { DEFAULT_CONFIG, STYLES, cleanName, loadConfig, type ManagerStyle } from '../config.ts';
-import { LABEL, OPEN_LABEL, openPlist, plist } from '../daemon/launchd.ts';
+import { LABEL, OPEN_LABEL, SCREEN_LABEL, openPlist, plist, screenPlist } from '../daemon/launchd.ts';
 import { HOOKS, MARK, installedHooks, loadAgent, loadInstalled, readSettings, skillLink, unlinkSkill, unloadAgent, withoutHooks, writeSettings, type HookSpec } from './install.ts';
 import { applySetup, currentChoices, has, tilde, untilde } from './setup.ts';
 import { runWelcome } from './welcome.ts';
@@ -272,6 +272,7 @@ async function uninstall(args: string[]): Promise<number> {
   await stop();
   unloadAgent(LABEL);
   unloadAgent(OPEN_LABEL);
+  unloadAgent(SCREEN_LABEL);
   try {
     const s = readSettings();
     if (installedHooks(s).length) writeSettings(withoutHooks(s));
@@ -294,6 +295,29 @@ async function uninstall(args: string[]): Promise<number> {
   return 0;
 }
 
+// The screen helper: lets room sessions screenshot and click desktop apps through Peekaboo.
+// Off unless the owner turns it on; macOS asks them once for Screen Recording and Accessibility.
+function screen(args: string[]): number {
+  if (args[0] === 'off') {
+    console.log(unloadAgent(SCREEN_LABEL) ? 'The screen helper is off.' : 'The screen helper was already off.');
+    return 0;
+  }
+  if (args[0] !== 'on') {
+    console.log('usage: tiny-hq screen on | off');
+    return 1;
+  }
+  const bin = ['/opt/homebrew/bin/peekaboo', '/usr/local/bin/peekaboo'].find((p) => existsSync(p));
+  if (!bin) {
+    console.log('Peekaboo isn\'t installed. Install it with `brew install peekaboo`, then run `tiny-hq screen on` again.');
+    return 1;
+  }
+  loadAgent(SCREEN_LABEL, screenPlist(bin));
+  console.log(
+    `The screen helper is on: it starts when you log in. Once, give it Screen Recording and Accessibility in System Settings ▸ Privacy & Security (the peekaboo program inside ${tilde(dirname(dirname(realpathSync(bin))))}); after a Homebrew upgrade of Peekaboo, tick them again. \`tiny-hq screen off\` removes it.`,
+  );
+  return 0;
+}
+
 const HELP = `Tiny HQ: a little office for your Claude Code projects.
 
   tiny-hq setup        set up your office on a welcome page in the browser (--terminal: answer here)
@@ -301,6 +325,7 @@ const HELP = `Tiny HQ: a little office for your Claude Code projects.
   tiny-hq start | stop run or stop the office in the background
   tiny-hq pair         a one-time link for your phone (after phone access is set up)
   tiny-hq doctor       check the set-up and say what's missing
+  tiny-hq screen on    let rooms screenshot and click desktop apps (needs Peekaboo; off: tiny-hq screen off)
   tiny-hq uninstall    take out the hooks, skill link and login items (--all: delete ~/.tiny-hq too)
   tiny-hq daemon       run the office in this terminal (for debugging)`;
 
@@ -321,6 +346,8 @@ const code = await (async (): Promise<number> => {
       return doctor();
     case 'uninstall':
       return uninstall(rest);
+    case 'screen':
+      return screen(rest);
     case 'daemon':
       return new Promise<number>((res) => spawn(process.execPath, [...NODE_FLAGS, join(REPO_ROOT, 'src', 'daemon', 'main.ts')], { stdio: 'inherit' }).on('exit', (c) => res(c ?? 0)));
     default:
