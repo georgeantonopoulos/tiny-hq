@@ -23,9 +23,11 @@ test('only one manager: stale sessions with no running process are retired too, 
   assert.match(main, /manager-address\.txt/);
   const brief = read('../agents/worker-brief.md');
   assert.match(brief, /\{\{managerAddress\}\}/, "the room brief names where the manager's fixed address is");
-  assert.match(brief, /progress note after each phase/);
+  assert.match(brief, /only when the task finishes or fails/);
+  assert.doesNotMatch(brief, /progress note after each phase/, 'progress goes in job notes, not messages');
   assert.match(brief, /bare claim/, 'rooms never state "The owner approved" without a source');
-  assert.match(read('../manager/delegate'), /progress note/);
+  assert.match(read('../manager/delegate'), /job note after each phase/);
+  assert.equal(JSON.parse(read('../manager/.claude/settings.json')).autoCompactWindow, 200000, "the manager's conversation compacts at 200k");
 });
 
 test('a blocked session says what it waits on; last action reads as plain words, not escape codes', () => {
@@ -99,9 +101,17 @@ test("The manager is sent back once to update their whiteboard when a turn ends 
   const transcript = join(dir, 't.jsonl');
   const prompt = (at: string) => JSON.stringify({ type: 'user', timestamp: at, message: { content: 'Cody: done' } });
   const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-11-08T10:00:05Z', message: { content: [{ type: 'tool_result', content: 'ok' }] } });
-  writeFileSync(transcript, [prompt('2026-11-08T10:00:00Z'), toolResult].join('\n') + '\n');
+  const acted = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'Bash', input: {} }] } });
+  // Only reading, or ending "(quiet)": nothing changed, so the turn isn't sent back.
+  const readOnly = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
+  const quiet = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:06Z', message: { content: [{ type: 'text', text: '(quiet)' }] } });
+  writeFileSync(transcript, [prompt('2026-11-08T10:00:00Z'), readOnly, toolResult].join('\n') + '\n');
   const run = (extra: object = {}) => execFileSync(process.execPath, [new URL('../hooks/manager-whiteboard.mjs', import.meta.url).pathname], { input: JSON.stringify({ transcript_path: transcript, ...extra }), env: { ...process.env, CM_DATA_DIR: dir } }).toString();
   utimesSync(notebook, new Date('2026-11-08T09:00:00Z'), new Date('2026-11-08T09:00:00Z')); // before the turn
+  assert.equal(run(), '', 'a turn that only read is not sent back');
+  writeFileSync(transcript, [prompt('2026-11-08T10:00:00Z'), acted, toolResult, quiet].join('\n') + '\n');
+  assert.equal(run(), '', 'a turn that ended "(quiet)" is not sent back');
+  writeFileSync(transcript, [prompt('2026-11-08T10:00:00Z'), acted, toolResult].join('\n') + '\n');
   assert.equal(JSON.parse(run()).decision, 'block');
   assert.equal(run({ stop_hook_active: true }), '', 'the second stop always goes through');
   utimesSync(notebook, new Date('2026-11-08T10:00:03Z'), new Date('2026-11-08T10:00:03Z')); // written during the turn

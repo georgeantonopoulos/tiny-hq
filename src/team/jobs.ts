@@ -249,7 +249,7 @@ export function nudgeLine(job: Job, cli: string, brief = `~/.tiny-hq/manager/job
 export function checkLine(job: Job, cli: string, brief = `~/.tiny-hq/manager/jobs/${job.id}.md`): string {
   return clean(
     `[Office: job "${job.title}" (${job.id}) is waiting on the owner: ${job.waitingFor ?? 'not said'}] Check now whether they have done it: for an email, look in their sent mail for it (if an email connector is set up) (and any reply); for a website step, look at the page. ` +
-      `If they have: run ${cli} go ${job.id}, add a line to the brief's Progress (${cli} note ${job.id} "<what you found>"), tell the manager in one line, and carry on with the next step (brief: ${brief}). ` +
+      `If they have: run ${cli} go ${job.id}, add a line to the brief's Progress (${cli} note ${job.id} "<what you found>"), and carry on with the next step (brief: ${brief}). ` +
       `If they haven't: change nothing, tell no one, and reply with exactly (quiet) and nothing else.`,
     2000,
   );

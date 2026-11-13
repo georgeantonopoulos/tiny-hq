@@ -27,7 +27,7 @@ brief=''
 [ -n "$brief_file" ] && [ -f "$brief_file" ] && brief=$(cat "$brief_file")
 task="$3
 
-On a long task, send the manager a one-line progress note (SendMessage, signed with your name) after each phase, not only at the end.
+On a long task, note progress with manager/job note after each phase (not a message to the manager).
 
 When you're done, or if you need the owner, reply to the manager with SendMessage in three lines or fewer: what you did, what's left, and anything the owner must decide."
 set -- --bg -n "$2"

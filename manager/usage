@@ -1,0 +1,6 @@
+#!/bin/sh
+# Where the Claude usage went, per room, measured from the transcripts (measure before claiming).
+#   ./usage   (the last 7 days)   |   ./usage --hours N
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/usage.ts" "$@"
