@@ -10,8 +10,11 @@ import { dirname, join } from 'node:path';
 export const ACK_MS = 90_000;
 const GIVE_UP_MS = 30 * 60_000; // a check that can't be read for this long is dropped
 
-export type PendingAck = { sessionId: string; cwd: string; room: string; question: string; answer: string; at: number };
-export type AckResult = { status: 'ok' } | { status: 'wait' } | { status: 'failed'; why: string };
+// `why`: it wasn't picked up, and the manager hasn't been told yet (kept until they are).
+// `shownAt`: when the answer first showed in its chat, kept so a transcript read that no longer reaches
+// back that far still knows.
+export type PendingAck = { sessionId: string; cwd: string; room: string; question: string; answer: string; at: number; why?: string; shownAt?: number };
+export type AckResult = { status: 'ok' } | { status: 'wait'; shownAt?: number } | { status: 'failed'; why: string };
 
 export const acksPath = (notesDir: string): string => join(notesDir, 'acks.json');
 
@@ -34,7 +37,9 @@ export function saveAcks(path: string, acks: PendingAck[]): void {
 }
 
 export function addAck(path: string, a: PendingAck): void {
-  saveAcks(path, [...loadAcks(path).filter((x) => !(x.sessionId === a.sessionId && x.question === a.question)), a]);
+  // A newer answer to the same question replaces the watch on the older one, but never a miss the
+  // manager hasn't been told about yet.
+  saveAcks(path, [...loadAcks(path).filter((x) => x.why || !(x.sessionId === a.sessionId && x.question === a.question)), a]);
 }
 
 // What Claude Code writes in place of a reply when it can't reach the model or isn't signed in.
@@ -42,16 +47,39 @@ const BROKEN = /API Error|Please run \/login|Invalid API key|OAuth token has exp
 
 type Rec = { type?: string; timestamp?: string; isSidechain?: boolean; isApiErrorMessage?: boolean; message?: { content?: unknown } };
 
-// Did the session take it up? Reads the transcript records written after the answer was typed.
-export function ackFrom(records: Rec[], at: number, now = Date.now()): AckResult {
-  for (const r of records) {
-    if (r.type !== 'assistant' || r.isSidechain || !r.timestamp || Date.parse(r.timestamp) < at - 2_000) continue;
+const textOf = (content: unknown): string =>
+  typeof content === 'string' ? content : Array.isArray(content) ? content.map((c: { type?: string; text?: string }) => (c?.type === 'text' ? (c.text ?? '') : '')).join(' ') : '';
+const squash = (t: string) => t.replace(/\s+/g, ' ').trim();
+
+// Did the session take it up? Only what it did after the answer itself shows in its chat counts: a
+// busy room takes a typed answer later, and its work on the task before is not an acknowledgement.
+// Silence is timed from when the answer showed; an answer that never shows fails after GIVE_UP_MS.
+export function ackFrom(records: Rec[], at: number, now = Date.now(), answer = '', seen?: number): AckResult {
+  const key = squash(answer).slice(0, 60);
+  let from = -1;
+  let shownAt = seen ?? at;
+  // Seen before: everything the session wrote from then on counts, even once the answer itself is
+  // older than what the transcript read reaches.
+  if (seen !== undefined) from = records.findIndex((r) => !!r.timestamp && Date.parse(r.timestamp) >= seen) - 1;
+  if (seen !== undefined && from < -1) from = records.length - 1; // nothing new yet
+  for (let i = 0; seen === undefined && i < records.length; i++) {
+    const r = records[i]!;
+    if (r.type !== 'user' || r.isSidechain || !r.timestamp || Date.parse(r.timestamp) < at - 2_000) continue;
+    if (!key || squash(textOf(r.message?.content)).includes(key)) {
+      from = i;
+      shownAt = Date.parse(r.timestamp);
+      break;
+    }
+  }
+  if (from < 0 && seen === undefined) return now - at >= GIVE_UP_MS ? { status: 'failed', why: `the answer never showed up in its chat in the ${Math.round((now - at) / 60_000)} minutes since` } : { status: 'wait' };
+  for (const r of records.slice(from + 1)) {
+    if (r.type !== 'assistant' || r.isSidechain) continue;
     const content = Array.isArray(r.message?.content) ? (r.message!.content as { type?: string; text?: string }[]) : [];
     const text = content.filter((c) => c?.type === 'text').map((c) => c.text ?? '').join(' ').trim();
     if (r.isApiErrorMessage || (BROKEN.test(text) && text.length < 300)) return { status: 'failed', why: `it only answered "${text.slice(0, 120)}"` };
     if (text || content.some((c) => c?.type === 'tool_use')) return { status: 'ok' };
   }
-  return now - at >= ACK_MS ? { status: 'failed', why: `it hasn't written or done anything in the ${Math.round((now - at) / 1000)} s since` } : { status: 'wait' };
+  return now - shownAt >= ACK_MS ? { status: 'failed', why: `it hasn't written or done anything in the ${Math.round((now - shownAt) / 1000)} s since it got the answer` } : { status: 'wait', shownAt };
 }
 
 export function transcriptRecords(sessionId: string, cwd: string, home = homedir()): Rec[] | undefined {
@@ -81,21 +109,35 @@ export function transcriptRecords(sessionId: string, cwd: string, home = homedir
   }
 }
 
-// The office's check: returns the answers that weren't picked up (and drops them and the taken-up ones).
+// The office's check: returns the answers that weren't picked up and the manager hasn't been told
+// about yet. They stay in the file, and come back on every check, until ackTold says the manager has
+// them; taken-up ones are dropped.
 export function checkAcks(path: string, now = Date.now(), read = transcriptRecords, onOk: (a: PendingAck) => void = () => undefined): (PendingAck & { why: string })[] {
   const failed: (PendingAck & { why: string })[] = [];
   const keep: PendingAck[] = [];
   for (const a of loadAcks(path)) {
+    if (a.why) {
+      keep.push(a);
+      failed.push({ ...a, why: a.why });
+      continue;
+    }
     const recs = read(a.sessionId, a.cwd);
     if (!recs) {
       if (now - a.at < GIVE_UP_MS) keep.push(a);
       continue;
     }
-    const r = ackFrom(recs, a.at, now);
-    if (r.status === 'wait') keep.push(a);
-    else if (r.status === 'failed') failed.push({ ...a, why: r.why });
-    else onOk(a);
+    const r = ackFrom(recs, a.at, now, a.answer, a.shownAt);
+    if (r.status === 'wait') keep.push(r.shownAt !== undefined ? { ...a, shownAt: r.shownAt } : a);
+    else if (r.status === 'failed') {
+      keep.push({ ...a, why: r.why });
+      failed.push({ ...a, why: r.why });
+    } else onOk(a);
   }
   saveAcks(path, keep);
   return failed;
+}
+
+// The manager has been told about this miss: stop reporting it.
+export function ackTold(path: string, a: Pick<PendingAck, 'sessionId' | 'question' | 'at'>): void {
+  saveAcks(path, loadAcks(path).filter((x) => !(x.sessionId === a.sessionId && x.question === a.question && x.at === a.at)));
 }
