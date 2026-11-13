@@ -60,3 +60,18 @@ test('a miss is kept and reported on every check until the manager has been told
   assert.deepEqual(loadAcks(path).map((a) => a.question), ['Nothing now?'], 'still waiting on the silent one');
   assert.deepEqual(checkAcks(path, at + 1_000 + ACK_MS + 1, read).map((m) => m.question), ['Nothing now?']);
 });
+
+test('once the answer has shown, a later read that no longer reaches back to it still counts the reply', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'acks-')), 'acks.json');
+  const id = '44444444-4444-4444-8444-444444444444';
+  addAck(path, { cwd: '/Users/owner/Dev/recipe-box', room: 'Recipe Box', answer: ANSWER, at, sessionId: id, question: 'Merge #17?' });
+  let recs: unknown[] = [typed(2), said(3, [{ type: 'tool_use', name: 'Bash', input: {} }], { isSidechain: true })];
+  const read = () => recs as never;
+  assert.deepEqual(checkAcks(path, at + 10_000, read), []);
+  assert.equal(loadAcks(path)[0]!.shownAt, at + 2_000, 'when it showed is kept');
+  // A big tool result pushed the answer out of the transcript read; the reply after it still counts.
+  recs = [said(40, [{ type: 'text', text: 'Merged #17.' }])];
+  assert.deepEqual(checkAcks(path, at + 50_000, read), []);
+  assert.deepEqual(loadAcks(path), [], 'taken up');
+  assert.equal(ackFrom([], at, at + 2_000 + ACK_MS, ANSWER, at + 2_000).status, 'failed', 'silence still counts from when it showed');
+});
