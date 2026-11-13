@@ -45,7 +45,7 @@ export function addAck(path: string, a: PendingAck): void {
 // What Claude Code writes in place of a reply when it can't reach the model or isn't signed in.
 const BROKEN = /API Error|Please run \/login|Invalid API key|OAuth token has expired|Credit balance is too low|usage limit reached|overloaded_error/i;
 
-type Rec = { type?: string; timestamp?: string; isSidechain?: boolean; isApiErrorMessage?: boolean; message?: { content?: unknown } };
+type Rec = { type?: string; timestamp?: string; isSidechain?: boolean; isApiErrorMessage?: boolean; message?: { content?: unknown }; attachment?: { type?: string; prompt?: unknown } };
 
 const textOf = (content: unknown): string =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.map((c: { type?: string; text?: string }) => (c?.type === 'text' ? (c.text ?? '') : '')).join(' ') : '';
@@ -64,8 +64,11 @@ export function ackFrom(records: Rec[], at: number, now = Date.now(), answer = '
   if (seen !== undefined && from < -1) from = records.length - 1; // nothing new yet
   for (let i = 0; seen === undefined && i < records.length; i++) {
     const r = records[i]!;
-    if (r.type !== 'user' || r.isSidechain || !r.timestamp || Date.parse(r.timestamp) < at - 2_000) continue;
-    if (!key || squash(textOf(r.message?.content)).includes(key)) {
+    if (r.isSidechain || !r.timestamp || Date.parse(r.timestamp) < at - 2_000) continue;
+    // A busy session gets a typed answer mid-turn as a queued command, not as a user message.
+    const text = r.type === 'user' ? textOf(r.message?.content) : r.type === 'attachment' && r.attachment?.type === 'queued_command' ? textOf(r.attachment.prompt) : undefined;
+    if (text === undefined) continue;
+    if (!key || squash(text).includes(key)) {
       from = i;
       shownAt = Date.parse(r.timestamp);
       break;

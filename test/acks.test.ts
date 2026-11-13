@@ -84,3 +84,9 @@ test('answering the same question again never drops a miss the manager has not h
   addAck(path, { ...base, at: at + 60_000 });
   assert.deepEqual(loadAcks(path).map((a) => [a.at, !!a.why]), [[at, true], [at + 60_000, false]]);
 });
+
+test('an answer handed to a busy session as a queued command counts as shown', () => {
+  const queued = { type: 'attachment', timestamp: new Date(at + 8_000).toISOString(), attachment: { type: 'queued_command', prompt: ANSWER } };
+  const recs = [typed(0, 'The owner chose: "Merge #16". (They picked it…)'), queued, said(20, [{ type: 'tool_use', name: 'Bash', input: {} }])];
+  assert.deepEqual(ackFrom(recs as never, at, at + 40 * 60_000, ANSWER), { status: 'ok' });
+});
