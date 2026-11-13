@@ -47,3 +47,11 @@ test('uninstall takes the screen helper out too, and rooms are told to turn it o
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { files: string[] };
   assert.ok(pkg.files.includes('manager/screen'), 'the rooms\' screen command ships');
 });
+
+test("a locked Mac: screen on wakes the display and puts a 'hands' unlock button over the room", () => {
+  const cli = readFileSync(new URL('../src/cli/screen.ts', import.meta.url), 'utf8');
+  assert.match(cli, /if \(macLocked\(\)\) askToUnlock\(/);
+  assert.match(cli, /'\/usr\/bin\/caffeinate', \['-u', '-t', '5'\]/);
+  assert.match(cli, /join\(REPO_ROOT, 'manager', 'ask'\)[\s\S]*'--why',\s*'hands'/);
+  assert.doesNotMatch(cli, /cwd:/, 'the button goes up from the room folder the command runs in');
+});
