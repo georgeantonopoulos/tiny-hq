@@ -1,7 +1,7 @@
 #!/bin/sh
 # Ask the owner a yes/no question as a button over your head in the office.
 # Run it from your own project folder. Their click arrives in your chat.
-#   ./ask "<one-line question>" --why <send|post|pay|choice|permission|password> --tried "<what you tried>" | ./ask list | ./ask cancel
+#   ./ask "<one-line question>" --why <send|post|pay|choice|permission|hands|password> --tried "<what you tried>" | ./ask list | ./ask cancel
 here=$(cd "$(dirname "$0")" && pwd -P)
 node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
 exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/ask.ts" "$@"

@@ -11,6 +11,7 @@ export const REASONS = {
   pay: 'pay or commit money',
   choice: 'a decision that is theirs to make (give your recommendation)',
   permission: 'approve one exact command or tool their settings refuse (name it)',
+  hands: 'a step only their hands can do, such as a switch in macOS System Settings (list the exact steps; their button reads Done, I did it / Stuck)',
   password: 'type a password or a 2-factor code that no session has (their Chrome is not already signed in)',
 } as const;
 

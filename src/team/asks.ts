@@ -165,6 +165,16 @@ export function oldestPerFolder(asks: Ask[]): { ask: Ask; more: number }[] {
 // leave for the room to sign in itself with what's already saved (a passkey or password-manager autofill), for when they're away.
 export type Answer = { yes: boolean } | { choice: number } | { signIn: true };
 export const isPassword = (ask: Ask): boolean => ask.why?.toLowerCase() === 'password' && !ask.options && !ask.trust;
+// A step only the owner's hands can do (a switch in macOS System Settings, a cable, a phone tap). An
+// Approve / No button reads as "the office will do it", so these read "Done, I did it" / "Stuck",
+// and the room checks it really took.
+export const isHands = (ask: Ask): boolean => ask.why?.toLowerCase() === 'hands' && !ask.options && !ask.trust;
+function handsLine(ask: Ask, answer: Answer, where: string): string | undefined {
+  if (!('yes' in answer)) return undefined;
+  return answer.yes
+    ? `The owner: done, they say they did it themselves: "${ask.question}". (They clicked "Done, I did it" ${where}.) Check that it really took before you go on (look at the result, don't assume). If it didn't, tell the manager exactly what you saw and what's still missing; don't put the same button up again without saying what was wrong.`
+    : `The owner: stuck: "${ask.question}". (They clicked "Stuck" ${where}.) Check what's actually on screen or in the settings yourself, then tell the manager in one line what's in the way and the next simpler step; don't put the same button up again unchanged.`;
+}
 
 // What the office types for the owner's answer on a password / sign-in button.
 function passwordLine(ask: Ask, answer: Answer, where: string): string | undefined {
@@ -185,6 +195,10 @@ export function roomLine(ask: Ask, answer: Answer): string | undefined {
   if (!ask.askedFor || ask.trust) return undefined;
   if (isPassword(ask)) {
     const t = passwordLine(ask, answer, 'themselves on the button over your head in the office, put there by the manager; this is their own click typed into your chat by the office, not a relay');
+    return t === undefined ? undefined : clean(t, 1400);
+  }
+  if (isHands(ask)) {
+    const t = handsLine(ask, answer, 'themselves on the button over your head in the office, put there by the manager; this is their own click typed into your chat by the office, not a relay');
     return t === undefined ? undefined : clean(t, 1400);
   }
   if ('signIn' in answer) return undefined;
@@ -301,6 +315,10 @@ export function answerLine(ask: Ask, answer: Answer | boolean): string | undefin
   }
   if (isPassword(ask)) {
     const t = passwordLine(ask, a, `on the button over your head in the office${ask.job ? ` for job ${ask.job}` : ''}`);
+    return t === undefined ? undefined : clean(t, 1200);
+  }
+  if (isHands(ask)) {
+    const t = handsLine(ask, a, `on the button over your head in the office${ask.job ? ` for job ${ask.job}; the job is active again` : ''}`);
     return t === undefined ? undefined : clean(t, 1200);
   }
   if ('signIn' in a) return undefined;

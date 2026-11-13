@@ -12,7 +12,7 @@ import { loadConfig } from '../config.ts';
 import { BRIEF_PROMPT } from './brief.ts';
 import { describeWhen, expired, isDue, lastSlot, loadSchedule, localDay, nextSlot, saveSchedule, schedulePath, withDailyBrief } from '../team/schedule.ts';
 import { queuedAfter } from '../terminal/queued.ts';
-import { addAsk, answerLine, isPassword, roomLine, typedLinesSince, answersAsk, wantsAction, asksPath, jobAnswered, loadAsks, oldestPerFolder, saveAsks, type Answer, type Ask } from '../team/asks.ts';
+import { addAsk, answerLine, isHands, isPassword, roomLine, typedLinesSince, answersAsk, wantsAction, asksPath, jobAnswered, loadAsks, oldestPerFolder, saveAsks, type Answer, type Ask } from '../team/asks.ts';
 import { addDismissed, dismissedPath, loadDismissed, removeDismissed } from '../team/dismissed.ts';
 import { goalsPath, loadGoals, setGoal } from '../team/goals.ts';
 import { isTrusted, trustFolder } from '../terminal/trust.ts';
@@ -953,15 +953,15 @@ function personFor(folder: string): { id: string; path: string } | undefined {
   const r = (floors.latest()?.rooms ?? []).find((x) => x.kind === 'project' && x.project && worksIn(folder, x.project.path));
   return r?.project ? { id: `lead:${r.id}`, path: r.project.path } : undefined;
 }
-function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string }> {
-  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string }> = {};
+function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string }> {
+  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string }> = {};
   // A "Trust and start" button for a folder that isn't a room on the floor (an archive project like
   // in the cupboard) shows over the manager's head, ahead of their own questions: otherwise the owner could never see it.
   const offFloorTrust = (a: Ask) => !!a.trust && !personFor(a.folder);
   const shown = oldestPerFolder(loadAsks(ASKS)).sort((x, y) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask)));
   for (const { ask, more } of shown) {
     const who = personFor(ask.folder) ?? (offFloorTrust(ask) ? { id: 'manager' } : undefined);
-    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
+    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
   }
   return out;
 }
