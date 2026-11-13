@@ -1,5 +1,5 @@
 // What Tiny HQ adds to the owner's Mac outside its own folder, each only with their yes, and how
-// each comes off again: three Claude Code hooks (in ~/.claude/settings.json), the theoffice skill
+// each comes off again: four Claude Code hooks (in ~/.claude/settings.json), the theoffice skill
 // (a link in ~/.claude/skills) and two login items (launchd agents). Every hook command carries the
 // marker `# tiny-hq` so uninstall removes exactly what was added and nothing of the owner's.
 // What was added is also recorded in <dataDir>/installed.json.
@@ -12,8 +12,8 @@ import { join } from 'node:path';
 export const MARK = '# tiny-hq';
 
 export interface HookSpec {
-  id: 'name-tag' | 'waiting' | 'public-posts';
-  event: 'SessionStart' | 'PermissionRequest' | 'PreToolUse';
+  id: 'name-tag' | 'waiting' | 'public-posts' | 'room-questions';
+  event: 'SessionStart' | 'PermissionRequest' | 'PreToolUse' | 'Stop';
   matcher?: string;
   file: string; // under <app>/hooks
   what: string; // the consent line: what it does, in plain words
@@ -39,6 +39,12 @@ export const HOOKS: HookSpec[] = [
     matcher: 'Bash|mcp__claude-in-chrome__.*|mcp__plugin_playwright_playwright__.*|mcp__playwright__.*',
     file: 'public-post-guard.mjs',
     what: 'Public-post guard: any session about to comment, post or upload on a public site (GitHub comments, social sites, forums) stops and asks you first, showing the exact action.',
+  },
+  {
+    id: 'room-questions',
+    event: 'Stop',
+    file: 'room-ask-guard.mjs',
+    what: "Questions as buttons: when a room's Claude asks you something in its chat instead of putting up a question button, it's sent back once to put it on a button, so you see a question mark over that room. Only in your rooms.",
   },
 ];
 

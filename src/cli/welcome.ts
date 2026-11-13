@@ -36,6 +36,7 @@ const HELPER_WORDS: Record<string, string> = {
   'name-tag': "When you open Claude in one of your projects, it's told which room it's in and who its manager is.",
   waiting: 'When Claude stops to ask your permission, a little hand goes up over that room so you notice.',
   'public-posts': 'Before Claude posts anything public (a GitHub comment, a social post), it stops and asks you, showing exactly what it would say.',
+  'room-questions': "When a room's Claude asks you something in its chat, it's sent back to put the question on a button, so a question mark shows over that room.",
 };
 const HELPERS = [
   ...HOOKS.map((h) => ({ id: h.id, title: h.what.split(':')[0]!, what: HELPER_WORDS[h.id] ?? h.what })),
