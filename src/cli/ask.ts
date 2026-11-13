@@ -7,7 +7,7 @@
 //   ask --room "<room folder>" "<question>" --choices ...   (The manager: the button goes over that room's
 //                                 head, and the owner's pick still comes back to your own chat)
 //   ask list
-//   ask cancel [<id>]             (one question by its id; bare: your open questions in this folder, and any you put over a room)
+//   ask cancel <id>               (one question by its id, from ask list; --room <folder> cancel: the manager's own question over that room)
 
 import { normTarget } from '../team/posts.ts';
 import { execFileSync } from 'node:child_process';
@@ -77,8 +77,12 @@ if (args[0] === 'list') {
   for (const a of asks) console.log(`${a.id}  ${a.folder}  ${a.question}${a.options ? `  [${a.options.join(' | ')}]` : ''}`);
 } else if (args[0] === 'cancel') {
   const id = args[1] && /^[a-z0-9]{6,16}$/.test(args[1]) ? args[1] : undefined;
-  if (args[1] && !id) {
-    console.error('usage: ask cancel [<question id from ask list>]');
+  // A bare cancel could take down several buttons, one about something else entirely. Name the question
+  // to take down. (`--room <folder> cancel` stays: it only takes down the manager's question over that one room.)
+  if (!id && !askedFor) {
+    console.error('usage: ask cancel <question id>  (one question at a time; ids from `ask list`)');
+    const mine = asks.filter((a) => a.folder === folder || a.sessionId === me);
+    for (const a of mine) console.error(`  ${a.id}  ${a.question.slice(0, 100)}`);
     process.exit(2);
   }
   const left = afterCancel(asks, folder, me, askedFor, id, folder === realpathSync(MANAGER_DIR));
