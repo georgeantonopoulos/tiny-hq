@@ -49,14 +49,17 @@ test("daily-brief next move: the manager's choice goes over the room's head and 
   assert.deepEqual(loadAsks(asksFile).map((x) => x.id), ['roomown1']);
 });
 
-test("a next-move question over a room is never the room's own: a waiting job keeps its own button, and the room's question shows first", () => {
+test("a next-move question over a room is never the room's own: a waiting job keeps its own button, and the newest question shows first", () => {
   const manager = '11111111-2222-4333-8444-555555555555';
   let asks = addAsk([], '/g/Lumen', 'Lumen: next move?', 1, 'mgrnext1', manager, undefined, ['A', 'B'], true);
   asks = addAsk(asks, '/g/Lumen', 'Approve the release', 2, 'jobaskaa', undefined, 'lumen-zip');
   // Otherwise the job's Approve rides on the manager's next-move question, and any pick restarted the job.
   assert.deepEqual(asks.map((a) => [a.id, a.forJob ?? a.job]).sort(), [['jobaskaa', 'lumen-zip'], ['mgrnext1', undefined]]);
   asks = addAsk(asks, '/g/Lumen', 'Use the old icon?', 3, 'roomqqqq');
-  assert.equal(oldestPerFolder(asks.filter((a) => !a.job))[0]!.ask.id, 'roomqqqq', "the room's own question before the manager's");
+  assert.equal(oldestPerFolder(asks.filter((a) => !a.job))[0]!.ask.id, 'roomqqqq', 'the newest question first');
+  // The manager's newer question over a room isn't hidden behind the room's older one.
+  asks = addAsk(asks, '/g/Lumen', 'Lumen: ship it?', 4, 'mgrnew01', manager, undefined, ['Yes', 'No'], true);
+  assert.equal(oldestPerFolder(asks.filter((a) => !a.job))[0]!.ask.id, 'mgrnew01', "the manager's newer question shows");
   // The flag survives a save and load; it can't be set without an asking session.
   assert.equal(validAsk(JSON.parse(JSON.stringify(asks.find((a) => a.id === 'mgrnext1'))))!.askedFor, true);
   assert.equal(validAsk({ id: 'nosessio', folder: '/g', question: 'q?', askedFor: true })!.askedFor, undefined);

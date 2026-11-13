@@ -30,7 +30,7 @@ export interface AskInfo {
   id: string;
   question: string;
   tried?: string; // what the asker already tried (every button for the owner says it)
-  more?: number; // further questions from them, waiting their turn
+  more?: number; // their older questions, waiting behind this newest one
   options?: string[]; // multiple choice; otherwise Approve / No
   post?: string; // a public post's exact text: Approve lets only this go up, once
   target?: string; // where it goes (owner/repo#N, owner/repo, a page): Approve is for there only
@@ -386,7 +386,7 @@ export class Bubbles {
     row.className = ask.options ? 'ask-row choices' : 'ask-row';
     const note = document.createElement('small');
     note.className = 'note';
-    if (ask.more) note.textContent = `${ask.more} more question${ask.more === 1 ? '' : 's'} from ${p.speaker.name} after this one`;
+    if (ask.more) note.textContent = `${ask.more} older question${ask.more === 1 ? '' : 's'} from ${p.speaker.name} after this one`;
     const answer = async (a: Answer) => {
       if (!this.onAnswer || el.classList.contains('busy')) return;
       el.classList.add('busy');

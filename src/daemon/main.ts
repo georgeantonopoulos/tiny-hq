@@ -18,6 +18,8 @@ import { goalsPath, loadGoals, setGoal } from '../team/goals.ts';
 import { isTrusted, trustFolder } from '../terminal/trust.ts';
 import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
+import { tidyScreen } from '../team/screen.ts';
+import { acksPath, addAck, checkAcks } from '../team/acks.ts';
 import { createDaemon, fromWords, type From } from './server.ts';
 import { Devices, RateLimit } from './remote.ts';
 import { FloorCache } from '../office/cache.ts';
@@ -965,6 +967,33 @@ function openAsks(): Record<string, { id: string; question: string; more?: numbe
   }
   return out;
 }
+// Every answer the owner clicks is watched until the session takes it up (src/team/acks.ts).
+const ACKS = acksPath(MANAGER_NOTES_DIR);
+function watchAck(s: { sessionId: string; cwd: string }, ask: Ask, line: string): void {
+  try {
+    addAck(ACKS, { sessionId: s.sessionId, cwd: s.cwd, room: roomName(ask.folder), question: ask.question.slice(0, 200), answer: line.slice(0, 200), at: Date.now() });
+  } catch (e) {
+    console.error('acks:', e);
+  }
+}
+let ackBusy = false;
+async function runAcks(): Promise<void> {
+  if (ackBusy) return;
+  ackBusy = true;
+  try {
+    const taken = (a: { room: string; question: string; at: number }) => console.log(`acks: ${a.room} took up the owner's answer to "${a.question.slice(0, 80)}" (${new Date(a.at).toLocaleTimeString('en-GB')})`);
+    for (const a of checkAcks(ACKS, Date.now(), undefined, taken)) {
+      console.error(`acks: the owner's answer to "${a.question}" in ${a.room} wasn't picked up: ${a.why}`);
+      const told = await tellManager(`[Office: the owner's click wasn't picked up] They answered "${a.question}" over ${a.room}'s head, and the office typed it into ${a.room}'s chat, but ${a.why}. Find out why now (a sign-in or API error is an office fault), get it acted on, and tell the owner plainly in one line what happened. Their answer was: ${a.answer}`).catch(() => false);
+      if (told !== true) console.error(`acks: couldn't tell the manager about ${a.room} either (${told})`);
+    }
+  } catch (e) {
+    console.error('acks:', e);
+  } finally {
+    ackBusy = false;
+  }
+}
+
 async function answerAsk(id: string, answer: Answer, from?: From): Promise<void> {
   const ask = loadAsks(ASKS).find((a) => a.id === id);
   if (!ask) throw Object.assign(new Error('That question was already answered or withdrawn.'), { status: 404 });
@@ -1066,6 +1095,7 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
     let reached: string;
     if (roomSession) {
       const ok = await typeInto(roomSession, toRoom, false, () => undefined, true);
+      if (ok) watchAck(roomSession, ask, toRoom);
       // Nothing typed (its screen never came up): safe for the owner to try again.
       if (ok === 'later') throw Object.assign(new Error(`Couldn't get your answer into ${name}'s chat; try again, or open the room.`), { status: 503 });
       // Typed but not yet seen in its chat (a busy session takes it later): never typed twice.
@@ -1106,7 +1136,10 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
   const nowLive = inFlight && who ? (await liveSessions()).filter((x) => worksIn(x.realCwd, who.path)) : live;
   const s = asker ?? (who ? pick(nowLive, who.path) : nowLive[0]);
   let ok: true | string | false | 'later' | undefined;
-  if (s) ok = await typeInto(s, line, who?.id === 'manager', () => undefined, true);
+  if (s) {
+    ok = await typeInto(s, line, who?.id === 'manager', () => undefined, true);
+    if (ok === true) watchAck(s, ask, line);
+  }
   else if (who && who.id !== 'manager' && wantsAction(ask, answer) && isTrusted(who.path)) {
     // Nobody in the room: a yes or a real pick starts the room's session with the owner's answer, and the job's brief when there is one.
     const job = ask.job ?? ask.forJob;
@@ -1552,6 +1585,7 @@ server.listen(port, '127.0.0.1', () => {
         logAsks();
         await clearAnsweredInChat();
         await retireExtraRoomSessions();
+        if (tidyScreen(DATA_DIR)) console.log('screen helper: time up, stopped');
         await tellGithub();
         freshGags();
         coffeeBreak();
@@ -1569,6 +1603,7 @@ server.listen(port, '127.0.0.1', () => {
       }
     };
     setTimeout(() => void tick(), 20_000); // after the manager is warm
+    setInterval(() => void runAcks(), 20_000).unref();
     setInterval(() => void tick(), 60_000).unref();
     setTimeout(() => void writeStatus(), 25_000);
     setInterval(() => void writeStatus(), 60_000).unref();

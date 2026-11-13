@@ -295,25 +295,26 @@ async function uninstall(args: string[]): Promise<number> {
   return 0;
 }
 
-// The screen helper: lets room sessions screenshot and click desktop apps through Peekaboo.
-// Off unless the owner turns it on; macOS asks them once for Screen Recording and Accessibility.
+// The screen helper: lets room sessions screenshot and click desktop apps through Peekaboo while
+// they test. Set up once by the owner (macOS asks once for the two permissions); it then runs only
+// while a room has it on (manager/screen on), and the office stops it when its time is up.
 function screen(args: string[]): number {
-  if (args[0] === 'off') {
-    console.log(unloadAgent(SCREEN_LABEL) ? 'The screen helper is off.' : 'The screen helper was already off.');
+  if (args[0] === 'remove' || args[0] === 'off') {
+    console.log(unloadAgent(SCREEN_LABEL) ? 'The screen helper is removed.' : "The screen helper wasn't set up.");
     return 0;
   }
-  if (args[0] !== 'on') {
-    console.log('usage: tiny-hq screen on | off');
+  if (args[0] !== 'setup' && args[0] !== 'on') {
+    console.log('usage: tiny-hq screen setup | remove');
     return 1;
   }
   const bin = ['/opt/homebrew/bin/peekaboo', '/usr/local/bin/peekaboo'].find((p) => existsSync(p));
   if (!bin) {
-    console.log('Peekaboo isn\'t installed. Install it with `brew install peekaboo`, then run `tiny-hq screen on` again.');
+    console.log("Peekaboo isn't installed. Install it with `brew install peekaboo`, then run `tiny-hq screen setup` again.");
     return 1;
   }
   loadAgent(SCREEN_LABEL, screenPlist(bin));
   console.log(
-    `The screen helper is on: it starts when you log in. Once, open System Settings ▸ Privacy & Security (on recent macOS, under Device Control and Data Access) and switch on the peekaboo program inside ${tilde(dirname(dirname(realpathSync(bin))))} in both Screen & System Audio Recording and Accessibility; after a Homebrew upgrade of Peekaboo, switch them on again. \`tiny-hq screen off\` removes it.`,
+    `The screen helper is set up. It runs only while a room is testing an app (30 minutes at a time unless the room asks for more), never at login. Once, open System Settings ▸ Privacy & Security (on recent macOS, under Device Control and Data Access) and switch on the peekaboo program inside ${tilde(dirname(dirname(realpathSync(bin))))} in both Screen & System Audio Recording and Accessibility; after a Homebrew upgrade of Peekaboo, switch them on again. \`tiny-hq screen remove\` takes it out.`,
   );
   return 0;
 }
@@ -325,7 +326,7 @@ const HELP = `Tiny HQ: a little office for your Claude Code projects.
   tiny-hq start | stop run or stop the office in the background
   tiny-hq pair         a one-time link for your phone (after phone access is set up)
   tiny-hq doctor       check the set-up and say what's missing
-  tiny-hq screen on    let rooms screenshot and click desktop apps (needs Peekaboo; off: tiny-hq screen off)
+  tiny-hq screen setup let rooms screenshot and click desktop apps while they test (needs Peekaboo; remove: tiny-hq screen remove)
   tiny-hq uninstall    take out the hooks, skill link and login items (--all: delete ~/.tiny-hq too)
   tiny-hq daemon       run the office in this terminal (for debugging)`;
 

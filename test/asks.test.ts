@@ -16,14 +16,14 @@ test('a folder can have several open questions: a new one joins, the same one ag
   assert.ok(!asks.some((a) => a.question === 'Ship 1.5?'));
 });
 
-test('the floor shows each folder\'s oldest question and how many wait behind it', () => {
+test('the floor shows each folder\'s newest question and how many older ones wait behind it', () => {
   let asks = addAsk([], '/g', 'First?', 1, 'aaaaaaaa');
   asks = addAsk(asks, '/g', 'Second?', 2, 'bbbbbbbb');
   asks = addAsk(asks, '/other', 'Other?', 3, 'cccccccc');
   const shown = oldestPerFolder(asks);
-  assert.deepEqual(shown.map((s) => [s.ask.question, s.more]), [['First?', 1], ['Other?', 0]]);
-  // Once the first is answered, the second takes its place.
-  assert.equal(oldestPerFolder(asks.filter((a) => a.question !== 'First?'))[0]!.ask.question, 'Second?');
+  assert.deepEqual(shown.map((s) => [s.ask.question, s.more]).sort(), [['Other?', 0], ['Second?', 1]]);
+  // Once the newest is answered, the older one takes its place.
+  assert.equal(oldestPerFolder(asks.filter((a) => a.question !== 'Second?')).find((s) => s.ask.folder === '/g')!.ask.question, 'First?');
 });
 
 test('the typed answer is one line and says where it came from', () => {
