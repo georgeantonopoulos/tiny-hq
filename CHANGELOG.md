@@ -2,13 +2,15 @@
 
 ## 0.2.0: setup in the browser, and a first install that works
 
-The first version on npm, so `npx tiny-hq` installs it.
+The first version on npm, as `tiny-hq-office` (npm keeps `tiny-hq` back as too close to another package's name): `npx tiny-hq-office` installs it, and the command it adds is still `tiny-hq`.
 
 **New**
 
 - **Setup is a welcome page in your browser:** name the office, hire the manager, pick your project folders with the Mac's folder picker, choose which projects get rooms, and switch the extras and helpers on or off. Suggested tools (GitHub CLI, a usage meter, Codex, Obsidian, project memory, Tailscale) can be installed from there. `tiny-hq setup --terminal` asks the same questions in the terminal.
 - **Links you can tap:** web addresses in speech bubbles and in a room's chat open in a new tab.
 - **Pictures and files:** bubbles can show a picture, and you can attach a file to a room's chat.
+- **A Done / Stuck button** for a step only you can do (a switch in macOS System Settings, say), instead of Approve / No.
+- **Optional screen helper** (`tiny-hq screen on`): rooms can take screenshots of desktop apps and click them while they test (needs Peekaboo).
 - **Rooms write plainly:** they lead with the answer, say where you answered from (the Mac or your phone), and only call something working once they've seen or heard it.
 
 **Safer**
