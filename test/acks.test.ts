@@ -75,3 +75,12 @@ test('once the answer has shown, a later read that no longer reaches back to it 
   assert.deepEqual(loadAcks(path), [], 'taken up');
   assert.equal(ackFrom([], at, at + 2_000 + ACK_MS, ANSWER, at + 2_000).status, 'failed', 'silence still counts from when it showed');
 });
+
+test('answering the same question again never drops a miss the manager has not heard about', () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'acks-')), 'acks.json');
+  const base = { cwd: '/Users/owner/Dev/recipe-box', room: 'Recipe Box', answer: ANSWER, sessionId: '55555555-5555-4555-8555-555555555555', question: 'Merge #17?' };
+  addAck(path, { ...base, at });
+  checkAcks(path, at + 10_000, () => [typed(1), said(2, [{ type: 'text', text: 'Please run /login · API Error: 403' }])] as never);
+  addAck(path, { ...base, at: at + 60_000 });
+  assert.deepEqual(loadAcks(path).map((a) => [a.at, !!a.why]), [[at, true], [at + 60_000, false]]);
+});

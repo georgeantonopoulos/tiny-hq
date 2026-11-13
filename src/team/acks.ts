@@ -37,7 +37,9 @@ export function saveAcks(path: string, acks: PendingAck[]): void {
 }
 
 export function addAck(path: string, a: PendingAck): void {
-  saveAcks(path, [...loadAcks(path).filter((x) => !(x.sessionId === a.sessionId && x.question === a.question)), a]);
+  // A newer answer to the same question replaces the watch on the older one, but never a miss the
+  // manager hasn't been told about yet.
+  saveAcks(path, [...loadAcks(path).filter((x) => x.why || !(x.sessionId === a.sessionId && x.question === a.question)), a]);
 }
 
 // What Claude Code writes in place of a reply when it can't reach the model or isn't signed in.
