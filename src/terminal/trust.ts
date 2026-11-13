@@ -4,7 +4,7 @@
 // "Workspace not trusted" and nobody could fix it without the owner typing a command.
 // Now the office asks them with a button, and their Approve marks the folder trusted here.
 
-import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 
@@ -27,8 +27,15 @@ export function isTrusted(folder: string, file = claudeConfig()): boolean {
 
 // Marks one folder trusted, keeping everything else in the file as it was. Only ever called from
 // The owner's own Approve click.
-export function trustFolder(folder: string, file = claudeConfig()): void {
+export function trustFolder(folder: string, at = claudeConfig()): void {
   if (!folder.startsWith('/') || /[\x00-\x1f]/.test(folder)) throw new Error('not a plain folder path');
+  // A linked ~/.claude.json (a dotfiles folder) is written where it points, so the link stays.
+  let file = at;
+  try {
+    file = realpathSync(at);
+  } catch {
+    // not there yet
+  }
   let raw: string | undefined;
   try {
     raw = readFileSync(file, 'utf8');

@@ -29,7 +29,7 @@ export const DEFAULT_PORT = Number(process.env.CM_PORT ?? 4949);
 // which can put an old copy first (an outdated Homebrew one, say) that lacks commands the office
 // needs; so it uses the same claude the installer checked: Claude Code's own install in
 // ~/.local/bin if there is one, else the first on the office's PATH.
-export const CLAUDE_BIN = process.env.CM_CLAUDE_BIN ?? findClaude();
+export const CLAUDE_BIN = process.env.CM_CLAUDE_BIN || findClaude();
 
 export function findClaude(home = homedir(), path = process.env.PATH ?? ''): string {
   const dirs = [join(home, '.local', 'bin'), ...path.split(':').filter(Boolean)];

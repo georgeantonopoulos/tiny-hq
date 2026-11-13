@@ -83,3 +83,15 @@ test('trust: opening a room trusts the folder only on the trust click, and never
   assert.match(block, /if \(!live && !isManager && !isTrusted\(projectPath\)\) \{\s*if \(!trust\) throw [^\n]*trust: true \}\);\s*trustFolder\(projectPath\);/);
   assert.equal(block.match(/trustFolder\(/g)?.length, 1);
 });
+
+test('trust: a linked ~/.claude.json stays a link; the file it points to gets the change', async () => {
+  const { lstatSync, symlinkSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'cm-trust-link-'));
+  const real = join(dir, 'dotfiles-claude.json');
+  writeFileSync(real, '{}');
+  const link = join(dir, 'claude.json');
+  symlinkSync(real, link);
+  trustFolder('/Users/x/Dev/app', link);
+  assert.ok(lstatSync(link).isSymbolicLink());
+  assert.equal(isTrusted('/Users/x/Dev/app', real), true);
+});
