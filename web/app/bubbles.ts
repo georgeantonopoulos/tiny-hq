@@ -35,6 +35,7 @@ export interface AskInfo {
   post?: string; // a public post's exact text: Approve lets only this go up, once
   target?: string; // where it goes (owner/repo#N, owner/repo, a page): Approve is for there only
   deploy?: { changes: string; proven: string; commits: string[] }; // a deploy: what changes, what was proven where, the commits going out
+  hands?: boolean; // a step only the owner's hands can do: Done, I did it / Stuck
   password?: boolean; // a sign-in only the owner can do: Done, I did it / You sign in (saved passkey or password manager) / No
 }
 
@@ -203,7 +204,7 @@ export class Bubbles {
     // Answered from this page: a check that left before the answer landed can still list it. Ignore that.
     if (this.answered.has(ask.id)) return;
     const p = this.person(speaker);
-    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.post === ask.post && p.ask.target === ask.target && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
+    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.hands === ask.hands && p.ask.post === ask.post && p.ask.target === ask.target && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
     if (same) return;
     this.endHappening(speaker.id);
     const isNew = p.ask?.id !== ask.id;
@@ -378,7 +379,7 @@ export class Bubbles {
     if (ask.tried) {
       const t = document.createElement('small');
       t.className = 'tried';
-      t.textContent = `Already tried: ${ask.tried}`;
+      t.textContent = `${ask.hands ? 'More: ' : 'Already tried: '}${ask.tried}`;
       q.append(document.createElement('br'), t);
     }
     const row = document.createElement('div');
@@ -426,6 +427,13 @@ export class Bubbles {
       how.textContent = 'Do this yourself, then press Done. Away from the Mac? "You sign in" lets them use only a saved passkey or password manager.';
       q.append(document.createElement('br'), how);
       row.append(btn('Done, I did it', 'yes', { yes: true }), btn('You sign in', 'pick', { signIn: true }), btn('No', 'no', { yes: false }));
+    } else if (ask.hands) {
+      // Approve reads as "the office will do it", so this says the click can't do the step.
+      const how = document.createElement('small');
+      how.className = 'tried';
+      how.textContent = 'Only you can do this, on the Mac. Do the steps, then press Done. Stuck tells the room to help.';
+      q.prepend(how, document.createElement('br'));
+      row.append(btn('Done, I did it', 'yes', { yes: true }), btn('Stuck', 'no', { yes: false }));
     } else row.append(btn('Approve', 'yes', { yes: true }), btn('No', 'no', { yes: false }));
     el.append(q, row, note);
     this.show({ id, mode: 'ask', el, key: ask.id });

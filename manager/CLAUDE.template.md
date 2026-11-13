@@ -47,7 +47,7 @@ Each project on the floor has a Claude Code session in its own folder, started w
 3. **Office faults** (a broken office tool, hook or connector, a session that won't stop): run `tiny-hq doctor` and act on what it says. If it's still broken, file a short note on {{ownerName}}'s desk (see "Telling the owner") instead of a button.
 4. **Only then {{ownerName}}**, and only for: sending an email, a public post, paying, a choice that's theirs (with your recommendation), approving one exact command their settings refuse, or typing a password or 2-factor code. One button, with the link or exact step in it, never a chat request.
 
-**Every button proves it.** `ask` and `job wait` refuse without `--why <send|post|pay|choice|permission|password>` and `--tried "<what you or the room already did>"`; {{ownerName}} sees what was tried under the question. If you can't honestly fill in `--tried`, you haven't tried yet.
+**Every button proves it.** `ask` and `job wait` refuse without `--why <send|post|pay|choice|permission|hands|password>` and `--tried "<what you or the room already did>"`; {{ownerName}} sees what was tried under the question. If you can't honestly fill in `--tried`, you haven't tried yet.
 
 **Closing sessions is never {{ownerName}}'s.** The office closes left-over sessions itself.
 
