@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ownStatus, serversOnly, type BackgroundSession } from '../src/terminal/sessions.ts';
+import { extraRoomSessions, ownStatus, serversOnly, type BackgroundSession } from '../src/terminal/sessions.ts';
 import { renderStatus } from '../src/terminal/status.ts';
 
 test('a session kept "busy" only by background servers it left running reads idle, and the status page lists it', () => {
@@ -21,6 +21,13 @@ test('a session kept "busy" only by background servers it left running reads idl
   const working = { ...atlas, pid: 3940, state: 'working' };
   assert.equal(serversOnly(working, ownStatus(3940, dir)).status, 'busy');
   assert.equal(serversOnly(working, undefined).status, 'busy');
+  // A new turn starting before Claude Code's own file catches up: still busy.
+  assert.equal(serversOnly(working, 'shell').status, 'busy');
+  // An older session with servers left running is never retired as an extra (stopping it would kill them).
+  const room = '/r/atlas';
+  const old = { ...idle, realCwd: room, startedAt: 1 };
+  const fresh = { ...atlas, id: 'n', status: 'idle', realCwd: room, startedAt: 2 };
+  assert.deepEqual(extraRoomSessions([old, fresh], room), []);
 
   const page = renderStatus([{ id: '15db9267', name: 'Atlas', status: 'idle', servers: true, state: 'done', alive: true, room: 'Atlas' }], ['Atlas']);
   assert.match(page, /\(15db9267\): idle, servers left running/);

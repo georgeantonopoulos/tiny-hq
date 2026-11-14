@@ -43,7 +43,7 @@ export function ownStatus(pid: number | undefined, dir = SESSIONS_DIR): string |
   }
 }
 export function serversOnly<T extends BackgroundSession>(s: T, own = ownStatus(s.pid)): T {
-  return s.status === 'busy' && own === 'shell' ? { ...s, status: 'idle', servers: true } : s;
+  return s.status === 'busy' && s.state !== 'working' && own === 'shell' ? { ...s, status: 'idle', servers: true } : s;
 }
 
 // node-pty ships ready-built for macOS, but its helper loses the "may run" bit
@@ -148,7 +148,7 @@ export function extraManagers<T extends { id: string; realCwd: string; status?: 
 // just finished). The owner's own terminal sessions aren't in this list, so they're
 // never touched. Ranking by start time alone let a fresh, never-used session outrank
 // one busy in a worktree, and stop it once it paused.
-export function extraRoomSessions<T extends { id: string; realCwd: string; status?: string; startedAt?: number }>(all: T[], roomPath: string, hold: (s: T) => boolean = () => false, activeAt: (s: T) => number = (s) => s.startedAt ?? 0): string[] {
+export function extraRoomSessions<T extends { id: string; realCwd: string; status?: string; servers?: boolean; startedAt?: number }>(all: T[], roomPath: string, hold: (s: T) => boolean = () => false, activeAt: (s: T) => number = (s) => s.startedAt ?? 0): string[] {
   const here = all.filter((s) => worksIn(s.realCwd, roomPath));
   if (here.length < 2) return [];
   const rank = (s: T) => [Number(s.status === 'busy'), activeAt(s)] as const;
@@ -157,7 +157,7 @@ export function extraRoomSessions<T extends { id: string; realCwd: string; statu
     const [bb, bt] = rank(b);
     return bb > ab || (bb === ab && bt > at) ? b : a;
   });
-  return here.filter((s) => s !== newest && s.status !== 'busy' && !hold(s)).map((s) => s.id);
+  return here.filter((s) => s !== newest && s.status !== 'busy' && !s.servers && !hold(s)).map((s) => s.id);
 }
 
 // The owner's own terminal sessions (they have no short id, so listSessions skips them):
