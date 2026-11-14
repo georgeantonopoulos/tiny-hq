@@ -126,3 +126,41 @@ export function tidyScreen(dataDir: string, now = Date.now()): boolean {
   clearMarker(path);
   return true;
 }
+
+// A room's click, typing or scroll waits until the Mac's keyboard and mouse have been still for
+// 30 s, so it never lands under the owner's own hands while they work in the same app. Rooms go
+// through `manager/screen click|type|...`; hooks/screen-click-guard.mjs refuses peekaboo's input
+// commands run directly in a room.
+export const STILL_MS = 30_000;
+export const lastInputPath = (dataDir: string): string => join(dataDir, 'screen-last-input');
+
+// Milliseconds since the last keyboard or mouse event, or undefined if macOS won't say.
+export function idleMs(): number | undefined {
+  try {
+    const m = /"HIDIdleTime" = (\d+)/.exec(execFileSync('ioreg', ['-c', 'IOHIDSystem', '-d', '4'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 1 << 24 }));
+    return m ? Math.floor(Number(m[1]) / 1e6) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Still enough to click? 30 s of nothing, or the last event was the office's own input (a room's
+// previous click, which itself only ran after 30 s of stillness), so the owner hasn't touched it since.
+export function stillEnough(idle: number, now: number, lastOwn?: number): boolean {
+  if (idle >= STILL_MS) return true;
+  return lastOwn !== undefined && lastOwn <= now && now - idle <= lastOwn + 2_000;
+}
+
+export function readLastInput(path: string): number | undefined {
+  try {
+    const n = Number(readFileSync(path, 'utf8').trim());
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeLastInput(path: string, at = Date.now()): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, `${at}\n`, { mode: 0o600 });
+}

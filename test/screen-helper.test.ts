@@ -55,3 +55,49 @@ test("a locked Mac: screen on wakes the display and puts a 'hands' unlock button
   assert.match(cli, /join\(REPO_ROOT, 'manager', 'ask'\)[\s\S]*'--why',\s*'hands'/);
   assert.doesNotMatch(cli, /cwd:/, 'the button goes up from the room folder the command runs in');
 });
+
+test('a click waits for 30 s without keyboard or mouse, unless the last input was a room click', async () => {
+  const { stillEnough, STILL_MS } = await import('../src/team/screen.ts');
+  const now = 1_000_000;
+  assert.equal(STILL_MS, 30_000);
+  assert.equal(stillEnough(2_000, now), false, 'the owner touched it 2 s ago');
+  assert.equal(stillEnough(29_999, now), false);
+  assert.equal(stillEnough(30_000, now), true);
+  // A room clicked 5 s ago and that was the last event: the owner hasn't touched it since.
+  assert.equal(stillEnough(5_000, now, now - 5_000), true);
+  assert.equal(stillEnough(4_500, now, now - 5_000), true, 'the click took a moment to land');
+  // The owner moved the mouse 1 s ago, after the room's click 10 s ago.
+  assert.equal(stillEnough(1_000, now, now - 10_000), false);
+});
+
+test('peekaboo input run directly is sent through manager/screen; looking is not', async () => {
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const { directInput, decideScreen } = (await import('../hooks/screen-click-guard.mjs')) as { directInput: (c: string) => string | undefined; decideScreen: (t: string, i: unknown) => string | undefined };
+  const pb = 'peekaboo';
+  assert.equal(directInput(`${pb} click --coords 336,826`), 'click');
+  assert.equal(directInput(`cd /tmp && ${pb} click --coords 1,2 >/dev/null; sleep 1`), 'click');
+  assert.equal(directInput(`/opt/homebrew/bin/${pb} type "1"`), 'type');
+  assert.equal(directInput(`X=1 ${pb} hotkey --keys cmd,s`), 'hotkey');
+  assert.equal(directInput(`echo $(${pb} scroll --direction down)`), 'scroll');
+  assert.equal(directInput(`${pb} app switch --to Atlas`), 'app');
+  assert.equal(directInput(`${pb} image --window-id 6443 --path a.png`), undefined);
+  assert.equal(directInput(`${pb} see --app Atlas`), undefined);
+  assert.equal(directInput(`${pb} list windows --app atlas`), undefined);
+  assert.equal(directInput(`${pb} app list`), undefined);
+  assert.equal(directInput(`${pb} permissions`), undefined);
+  assert.equal(directInput('~/.tiny-hq/app/manager/screen click --coords 336,826'), undefined);
+  assert.match(decideScreen('Bash', { command: `${pb} click --coords 1,2` })!, /manager\/screen click/);
+  assert.equal(decideScreen('Read', { command: `${pb} click` }), undefined);
+  // The CLI drives the same verbs the guard refuses, so a refused command always has a way through.
+  const cli = readFileSync(new URL('../src/cli/screen.ts', import.meta.url), 'utf8');
+  assert.match(cli, /INPUT_VERBS\.includes\(cmd\)/);
+});
+
+test('the click guard is one of the hooks setup offers, and only acts in rooms', async () => {
+  const { HOOKS } = await import('../src/cli/install.ts');
+  const h = HOOKS.find((x) => x.id === 'screen-clicks');
+  assert.equal(h?.event, 'PreToolUse');
+  assert.equal(h?.file, 'screen-click-guard.mjs');
+  const hook = readFileSync(new URL('../hooks/screen-click-guard.mjs', import.meta.url), 'utf8');
+  assert.match(hook, /why && isRoom\(/);
+});
