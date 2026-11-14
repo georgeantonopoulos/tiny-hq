@@ -96,7 +96,7 @@ test("the office stamps the Updated line of each project a turn was about, and n
   const dir = mkdtempSync(join(tmpdir(), 'manager-wb-'));
   mkdirSync(join(dir, 'manager'));
   const notebook = join(dir, 'manager', 'notebook.md');
-  const before = '# Notes\n\n## Atlas (Ada Lovelace)\n- Next: release\n- Updated: 2026-11-01\n\n## Garden (Grace Hopper)\n- Next: beds\n\n## Lumen (Alan Turing 2)\n- Next: upload\n- Updated: 2026-11-02\n';
+  const before = '# Notes\n\n## Atlas (Ada Lovelace)\n- Next: release\n- Updated: 2026-11-01\n\n## Garden (Grace Hopper)\n- Next: beds\n\n## Lumen (Alan Turing 2)\n- Next: upload\n- Updated: 2026-11-02\n\n## Website 2 (Edsger Dijkstra)\n- Updated: 2026-11-03\n';
   writeFileSync(notebook, before);
   const transcript = join(dir, 't.jsonl');
   const prompt = (at: string, text: string) => JSON.stringify({ type: 'user', timestamp: at, message: { content: text } });
@@ -106,7 +106,7 @@ test("the office stamps the Updated line of each project a turn was about, and n
   const readOnly = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
   const quiet = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:06Z', message: { content: [{ type: 'text', text: '(quiet)' }] } });
   const old = prompt('2026-11-07T09:00:00Z', 'Alan Turing: old news');
-  const start = prompt('2026-11-08T10:00:00Z', 'Ada Lovelace: done');
+  const start = prompt('2026-11-08T10:00:00Z', 'Ada Lovelace: done, and Website 1 is live');
   const run = (extra: object = {}) => execFileSync(process.execPath, [new URL('../hooks/manager-whiteboard.mjs', import.meta.url).pathname], { input: JSON.stringify({ transcript_path: transcript, ...extra }), env: { ...process.env, CM_DATA_DIR: dir } }).toString();
   utimesSync(notebook, new Date('2026-11-08T09:00:00Z'), new Date('2026-11-08T09:00:00Z')); // before the turn
   writeFileSync(transcript, [old, start, readOnly, toolResult].join('\n') + '\n');
@@ -121,8 +121,8 @@ test("the office stamps the Updated line of each project a turn was about, and n
   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   assert.equal(
     readFileSync(notebook, 'utf8'),
-    `# Notes\n\n## Atlas (Ada Lovelace)\n- Next: release\n- Updated: ${today}\n\n## Garden (Grace Hopper)\n- Next: beds\n- Updated: ${today}\n\n## Lumen (Alan Turing 2)\n- Next: upload\n- Updated: 2026-11-02\n`,
-    'stamped: Atlas (named in the message that started the turn), Garden (in their tool call, line added); Lumen only in a tool result and an earlier turn',
+    `# Notes\n\n## Atlas (Ada Lovelace)\n- Next: release\n- Updated: ${today}\n\n## Garden (Grace Hopper)\n- Next: beds\n- Updated: ${today}\n\n## Lumen (Alan Turing 2)\n- Next: upload\n- Updated: 2026-11-02\n\n## Website 2 (Edsger Dijkstra)\n- Updated: 2026-11-03\n`,
+    'stamped: Atlas (named in the message that started the turn), Garden (in their tool call, line added); Lumen only in a tool result and an earlier turn; Website 2 not, though Website 1 was named',
   );
   // A stop after a block, or a notebook the manager wrote during the turn: left as it is.
   writeFileSync(notebook, before);

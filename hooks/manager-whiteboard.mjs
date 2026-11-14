@@ -75,12 +75,12 @@ export function turnText(lines, startedAt) {
   return out.join('\n');
 }
 
-// "## Atlas (Ada Lovelace)": the room's name and its lead's, without a trailing number ("Ada Lovelace 2").
+// "## Atlas (Ada Lovelace)": the room's name, and its lead's without a trailing number
+// ("Ada Lovelace 2" is a second session of Ada Lovelace). The room keeps its number:
+// "Website 1" and "Website 2" are different projects.
 function namesOf(title) {
   const m = /^(.*?)\s*(?:\((.*)\))?\s*$/.exec(title) ?? [];
-  return [m[1], m[2]]
-    .map((n) => (n ?? '').replace(/\s+\d+$/, '').trim())
-    .filter((n) => n.length >= 4);
+  return [(m[1] ?? '').trim(), (m[2] ?? '').replace(/\s+\d+$/, '').trim()].filter((n) => n.length >= 4);
 }
 
 // The notebook with today's date on the `- Updated:` line of every section the turn named.
