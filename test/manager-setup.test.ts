@@ -133,4 +133,14 @@ test("the office stamps the Updated line of each project a turn was about, and n
   assert.equal(run(), '');
   assert.equal(readFileSync(notebook, 'utf8'), before);
   assert.equal(execFileSync(process.execPath, [new URL('../hooks/manager-whiteboard.mjs', import.meta.url).pathname], { input: 'not json' }).toString(), '', 'never blocks on bad input');
+  // A turn started by a room's message (Claude Code marks it meta) is its own turn, so a notebook written
+  // after the owner's last prompt but before the room's message doesn't count as written this turn.
+  writeFileSync(notebook, before);
+  const peer = JSON.stringify({ type: 'user', isMeta: true, timestamp: '2026-11-08T11:00:00Z', message: { content: 'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/x.sock">Alan Turing 2: uploaded</cross-session-message>' } });
+  const replied = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T11:00:04Z', message: { content: [{ type: 'tool_use', name: 'SendMessage', input: { message: 'Noted.' } }] } });
+  const hookNote = JSON.stringify({ type: 'user', isMeta: true, timestamp: '2026-11-08T11:00:05Z', message: { content: 'Stop hook feedback: Atlas' } });
+  writeFileSync(transcript, [prompt('2026-11-08T10:00:00Z', 'Ada Lovelace: done'), peer, replied, hookNote].join('\n') + '\n');
+  utimesSync(notebook, new Date('2026-11-08T10:30:00Z'), new Date('2026-11-08T10:30:00Z'));
+  assert.equal(run(), '');
+  assert.equal(readFileSync(notebook, 'utf8'), before.replace('- Updated: 2026-11-02', `- Updated: ${today}`), "only Lumen, named in the room's message");
 });
