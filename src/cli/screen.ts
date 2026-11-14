@@ -1,10 +1,13 @@
 // manager/screen: a room turns the screen helper on for a test, off after. See src/team/screen.ts.
 //   screen on [--minutes N] [--by "<your name>"]   |   screen off   |   screen status
+//   screen click|type|press|hotkey|scroll|move|drag|... <peekaboo's arguments>   (waits for 30 s of stillness)
 import { spawn, spawnSync } from 'node:child_process';
 import { hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { DATA_DIR, REPO_ROOT } from '../paths.ts';
-import { clearMarker, DEFAULT_MINUTES, helperInstalled, helperRunning, keepAwake, letSleep, macLocked, markerPath, readMarker, startHelper, stopHelper, writeMarker } from '../team/screen.ts';
+import { clearMarker, DEFAULT_MINUTES, helperInstalled, helperRunning, idleMs, keepAwake, lastInputPath, letSleep, macLocked, markerPath, readLastInput, readMarker, startHelper, STILL_MS, stillEnough, stopHelper, writeLastInput, writeMarker } from '../team/screen.ts';
+// @ts-expect-error a plain-JS hook module, no type declarations
+import { INPUT_VERBS, isInput } from '../../hooks/screen-click-guard.mjs';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (name: string) => {
@@ -25,7 +28,7 @@ if (cmd === 'on') {
   startHelper();
   for (let i = 0; i < 20 && !helperRunning(); i++) await new Promise((r) => setTimeout(r, 250));
   await new Promise((r) => setTimeout(r, 1500)); // let it open its socket
-  console.log(helperRunning() ? `Screen helper on until ${clock(on.until)}, and the display stays awake till then. Use peekaboo now (image, see, click, type); run "screen off" when you're done.` : "The screen helper didn't start: tell the manager.");
+  console.log(helperRunning() ? `Screen helper on until ${clock(on.until)}, and the display stays awake till then. Look with peekaboo (image, see) and click or type with "manager/screen click|type ..."; run "screen off" when you're done.` : "The screen helper didn't start: tell the manager.");
   if (macLocked()) askToUnlock(flag('--by') ?? basename(process.cwd()));
 } else if (cmd === 'off') {
   stopHelper();
@@ -36,9 +39,48 @@ if (cmd === 'on') {
   const m = readMarker(path);
   console.log(helperRunning() ? `On${m ? ` until ${clock(m.until)}, turned on by ${m.by}` : ' (nobody turned it on: the office will stop it)'}.` : helperInstalled() ? 'Off.' : 'Not set up (`tiny-hq screen setup`).');
   if (macLocked()) console.log('The Mac is locked: captures fail until the owner unlocks it.');
+} else if (INPUT_VERBS.includes(cmd)) {
+  process.exit(await input(cmd!, rest));
 } else {
-  console.error('usage: screen on [--minutes N] [--by "<your name>"] | screen off | screen status');
+  console.error(`usage: screen on [--minutes N] [--by "<your name>"] | screen off | screen status | screen <${INPUT_VERBS.join('|')}> <peekaboo's arguments>`);
   process.exit(1);
+}
+
+// Waits until the keyboard and mouse have been still for 30 s, then runs the peekaboo input
+// command. Gives up after SCREEN_WAIT_S seconds (default 100, inside a Bash call's 2 minutes)
+// without clicking anything.
+async function input(verb: string, args: string[]): Promise<number> {
+  if (!isInput(verb, args)) return spawnSync('peekaboo', [verb, ...args], { stdio: 'inherit' }).status ?? 1; // help or a list: nothing to wait for
+  const lastPath = lastInputPath(DATA_DIR);
+  const asked = Number(process.env.SCREEN_WAIT_S);
+  const give = (process.env.SCREEN_WAIT_S && Number.isFinite(asked) && asked >= 0 ? asked : 100) * 1000;
+  const start = Date.now();
+  let told = false;
+  for (;;) {
+    const idle = idleMs();
+    const now = Date.now();
+    if (idle === undefined) {
+      console.log(`Couldn't read how long the Mac has been idle, so nothing was ${verb === 'type' ? 'typed' : 'clicked'}: tell the manager.`);
+      return 4;
+    }
+    if (stillEnough(idle, now, readLastInput(lastPath))) break;
+    if (!told) {
+      console.log(`The owner is using the Mac (last touched ${Math.round(idle / 1000)} s ago): waiting until it has been still for ${STILL_MS / 1000} s...`);
+      told = true;
+    }
+    if (now - start >= give) {
+      console.log(`The owner kept using the Mac for ${Math.round(give / 1000)} s, so nothing was ${verb === 'type' ? 'typed' : 'clicked'}. Try again in a few minutes.`);
+      return 3;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  if (told) console.log(`Still for ${STILL_MS / 1000} s after ${Math.round((Date.now() - start) / 1000)} s of waiting; going ahead.`);
+  const r = spawnSync('peekaboo', [verb, ...args], { stdio: 'inherit' });
+  // When the Mac's last input event happened, which is now the room's own: the next command may go
+  // ahead only while that is still the last event.
+  const after = idleMs();
+  if (r.status === 0 && after !== undefined) writeLastInput(lastPath, Date.now() - after);
+  return r.status ?? 1;
 }
 
 // A locked Mac can't be captured, and only the owner can unlock it. The office wakes the display and

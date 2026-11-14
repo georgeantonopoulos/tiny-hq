@@ -55,3 +55,88 @@ test("a locked Mac: screen on wakes the display and puts a 'hands' unlock button
   assert.match(cli, /join\(REPO_ROOT, 'manager', 'ask'\)[\s\S]*'--why',\s*'hands'/);
   assert.doesNotMatch(cli, /cwd:/, 'the button goes up from the room folder the command runs in');
 });
+
+test('a click waits for 30 s without keyboard or mouse, unless the last input was a room click', async () => {
+  const { stillEnough, STILL_MS } = await import('../src/team/screen.ts');
+  const now = 1_000_000;
+  assert.equal(STILL_MS, 30_000);
+  assert.equal(stillEnough(2_000, now), false, 'the owner touched it 2 s ago');
+  assert.equal(stillEnough(29_999, now), false);
+  assert.equal(stillEnough(30_000, now), true);
+  // A room clicked 5 s ago and that was the last event: the owner hasn't touched it since.
+  assert.equal(stillEnough(5_000, now, now - 5_000), true);
+  assert.equal(stillEnough(5_100, now, now - 5_000), true, 'ioreg read a moment later');
+  // The owner moved the mouse 1 s ago, after the room's click 10 s ago.
+  assert.equal(stillEnough(1_000, now, now - 10_000), false);
+  // The owner moved it 500 ms after the room's last event: that is theirs, not the room's.
+  assert.equal(stillEnough(500, now, now - 1_000), false);
+});
+
+test('manager/screen waits only for real input, not for help or a list', async () => {
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const { isInput } = (await import('../hooks/screen-click-guard.mjs')) as { isInput: (v: string, a?: string[]) => boolean };
+  assert.equal(isInput('click', ['--coords', '1,2']), true);
+  assert.equal(isInput('click', ['--help']), false);
+  assert.equal(isInput('menu', ['list-all', '--app', 'Finder']), false);
+  assert.equal(isInput('space', ['list']), false);
+  assert.equal(isInput('image', ['--path', 'a.png']), false);
+});
+
+test('peekaboo input run directly is sent through manager/screen; looking is not', async () => {
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const { directInput, decideScreen } = (await import('../hooks/screen-click-guard.mjs')) as { directInput: (c: string) => string | undefined; decideScreen: (t: string, i: unknown) => string | undefined };
+  const pb = 'peekaboo';
+  assert.equal(directInput(`${pb} click --coords 336,826`), 'click');
+  assert.equal(directInput(`cd /tmp && ${pb} click --coords 1,2 >/dev/null; sleep 1`), 'click');
+  assert.equal(directInput(`/opt/homebrew/bin/${pb} type "1"`), 'type');
+  assert.equal(directInput(`X=1 ${pb} hotkey --keys cmd,s`), 'hotkey');
+  assert.equal(directInput(`echo $(${pb} scroll --direction down)`), 'scroll');
+  assert.equal(directInput(`${pb} app switch --to Atlas`), 'app');
+  assert.equal(directInput(`for i in 1 2; do ${pb} click --coords 10,10; done`), 'click', 'inside a loop');
+  assert.equal(directInput(`if true; then ${pb} type "a"; fi`), 'type');
+  assert.equal(directInput(`{ ${pb} click --coords 1,1; }`), 'click');
+  assert.equal(directInput(`nohup ${pb} click --coords 1,1`), 'click');
+  assert.equal(directInput(`bash -c "${pb} click --coords 1,1"`), 'click');
+  assert.equal(directInput(`timeout 5 ${pb} scroll --direction up`), 'scroll');
+  assert.equal(directInput(`${pb} image --window-id 6443 --path a.png`), undefined);
+  assert.equal(directInput(`${pb} see --app Atlas`), undefined);
+  assert.equal(directInput(`${pb} list windows --app atlas`), undefined);
+  assert.equal(directInput(`${pb} app list`), undefined);
+  assert.equal(directInput(`${pb} permissions`), undefined);
+  assert.equal(directInput('~/.tiny-hq/app/manager/screen click --coords 336,826'), undefined);
+  // The rest of peekaboo's screen commands, global flags and wrappers in front.
+  assert.equal(directInput(`${pb} agent "click Save"`), 'agent');
+  assert.equal(directInput(`${pb} run flow.json`), 'run');
+  assert.equal(directInput(`${pb} menubar click "WiFi"`), 'menubar');
+  assert.equal(directInput(`${pb} open https://x`), 'open');
+  assert.equal(directInput(`${pb} space switch --to 2`), 'space');
+  assert.equal(directInput(`${pb} -j click --on B1`), 'click');
+  assert.equal(directInput(`${pb} --log-level info click`), 'click');
+  assert.equal(directInput(`time ${pb} click --on B1`), 'click');
+  assert.equal(directInput(`nice -n 5 ${pb} click`), 'click');
+  assert.equal(directInput(`echo B1 | xargs ${pb} click --on`), 'click');
+  assert.equal(directInput(`echo "$(${pb} type hi)"`), 'type');
+  // Text that only mentions peekaboo is not a command; help and lists are only looking.
+  assert.equal(directInput(`git commit -m "Guard (${pb} click run directly) refused"`), undefined);
+  assert.equal(directInput(`git commit -m "a; ${pb} click is refused"`), undefined);
+  assert.equal(directInput(`cat > notes.md <<'EOF'\n${pb} click --on B1\nEOF\necho done`), undefined);
+  assert.equal(directInput(`cat > n.md <<EOF\n${pb} click\nEOF\n${pb} click --on B2`), 'click', 'a command after the heredoc still counts');
+  assert.equal(directInput(`${pb} menu list-all --app Finder`), undefined);
+  assert.equal(directInput(`${pb} click --help`), undefined);
+  assert.equal(directInput(`${pb} help click`), undefined);
+  assert.equal(directInput(`${pb} --json image --path a.png`), undefined);
+  assert.match(decideScreen('Bash', { command: `${pb} click --coords 1,2` })!, /manager\/screen click/);
+  assert.equal(decideScreen('Read', { command: `${pb} click` }), undefined);
+  // The CLI drives the same verbs the guard refuses, so a refused command always has a way through.
+  const cli = readFileSync(new URL('../src/cli/screen.ts', import.meta.url), 'utf8');
+  assert.match(cli, /INPUT_VERBS\.includes\(cmd\)/);
+});
+
+test('the click guard is one of the hooks setup offers, and only acts in rooms', async () => {
+  const { HOOKS } = await import('../src/cli/install.ts');
+  const h = HOOKS.find((x) => x.id === 'screen-clicks');
+  assert.equal(h?.event, 'PreToolUse');
+  assert.equal(h?.file, 'screen-click-guard.mjs');
+  const hook = readFileSync(new URL('../hooks/screen-click-guard.mjs', import.meta.url), 'utf8');
+  assert.match(hook, /why && isRoom\(/);
+});

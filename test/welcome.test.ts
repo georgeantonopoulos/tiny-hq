@@ -94,7 +94,7 @@ test('the welcome server needs its key, serves only its own files, and hands ove
 
   const state = (await (await fetch(`${origin}/api/welcome`, { headers: auth })).json()) as { choices: { officeName: string }; helpers: { id: string }[] };
   assert.equal(state.choices.officeName, 'Tiny HQ');
-  assert.deepEqual(state.helpers.map((h) => h.id), ['name-tag', 'waiting', 'public-posts', 'room-questions', 'skill']);
+  assert.deepEqual(state.helpers.map((h) => h.id), ['name-tag', 'waiting', 'public-posts', 'room-questions', 'screen-clicks', 'skill']);
   // First time, no folder is assumed; the page suggests where projects look to be.
   assert.deepEqual((state as unknown as { choices: { projectRoots: string[] } }).choices.projectRoots, []);
   const { folders } = (await (await fetch(`${origin}/api/welcome/folders`, { headers: auth })).json()) as { folders: { path: string; count: number }[] };
