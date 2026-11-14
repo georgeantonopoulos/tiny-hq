@@ -28,24 +28,23 @@ test("The manager: the owner's names and style in the instructions, session stil
   assert.match(style, /speech bubble/);
 });
 
-test('The manager has hair, glasses, a cute round face and a rainbow propeller cap', () => {
+test("The manager has the rooms' simple cute face, a rainbow propeller cap and a red neckerchief", () => {
+  // Glasses and a long tie crowded such a small face.
   const look = lookFor('Manager');
-  assert.equal(look.extra, 'glasses');
+  assert.notEqual(look.extra, 'glasses');
   assert.notEqual(look.hair, 'balding');
-  assert.equal(look.cute, true);
   assert.equal(look.hat, 'propeller');
+  assert.equal(look.scarf, true);
   for (const frame of ['idle', 'blink', 'stepA', 'stepB'] as const) {
     const px = personPixels({ skin: '#e8b48f', hair: '#6b4a2f', shirt: '#3f6fb5' }, '#d8443c', frame, look);
     assert.equal(px.length, 16);
     assert.ok(px.every((r) => r.length === 12), 'every row is 12 wide');
     const colours = new Set(px.slice(0, 5).flat().filter(Boolean));
     for (const c of ['#e8453c', '#f6c945', '#58b368', '#4a90d9', '#8a5cc2']) assert.ok(colours.has(c), `rainbow colour ${c} on the hat`);
-    // Round clear glasses, not sunglasses: skin shows inside each lens and no row is a solid dark bar.
-    const dark = new Set(['#222030', '#2a2230']); // sunglasses and eye colour
-    assert.ok(px.slice(5, 9).every((r) => r.filter((c) => dark.has(c!)).length <= 2), 'no dark bar or mask: only the two eyes are dark');
-    assert.ok(px[6]!.includes('#3f5d8c'), 'slate-blue rims, distinct from their eyes and hair');
-    assert.equal(px[6]![2], '#e8b48f', 'left lens is clear');
-    assert.equal(px[6]![9], '#e8b48f', 'right lens is clear');
-    if (frame !== 'blink') assert.equal(px[6]![3], '#2a2230', 'eyes show through the lenses');
+    assert.ok(px.slice(5, 9).flat().includes('#f19a8f'), 'pink cheeks');
+    if (frame !== 'blink') assert.equal(px.slice(5, 9).flat().filter((c) => c === '#2a2230').length, 4, 'two big eyes, two pixels tall, nothing over them');
+    assert.equal(px[9]!.filter((c) => c === '#d8443c').length, 4, 'neckerchief across the collar');
+    assert.equal(px[10]!.filter((c) => c === '#d8443c').length, 2, 'neckerchief points down');
+    assert.ok(!px[11]!.includes('#d8443c'), 'no long tie down the shirt');
   }
 });

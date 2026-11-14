@@ -15,7 +15,7 @@ The office gives you a name tag when your session starts (your name and your roo
 
 ## One session per room
 
-Each room keeps one session: the newest. When a newer session starts in your room, the office closes the older ones once they're idle, so anything you know only lives on if it's written down.
+Each room keeps one session: the one working, else the most recently active. The office closes the other ones once they're idle, so anything you know only lives on if it's written down.
 
 - **Starting in a room:** before new work, catch up from what's written down: the project's own notes and memory if it keeps any, `git log`, and `~/.tiny-hq/manager/jobs.json` for an open job in your folder. When notes disagree, the newest one wins.
 - **Before you finish a turn with real progress,** make sure it's written down where the next session will look (the job brief's Progress, the project's notes, a commit message).

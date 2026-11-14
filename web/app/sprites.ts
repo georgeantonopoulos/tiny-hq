@@ -55,6 +55,7 @@ export interface Look {
   accessory: string;
   cute?: boolean; // rounder face, big blush, a smile
   hat?: 'propeller'; // a rainbow propeller cap over everything above the eyes
+  scarf?: boolean; // a little red neckerchief at the collar instead of a long tie
 }
 
 function hash(s: string): number {
@@ -65,7 +66,9 @@ function hash(s: string): number {
 
 // Same name, same look, every time.
 export function lookFor(name: string): Look {
-  if (name === 'Manager') return { hair: 'short', extra: 'glasses', accessory: '#2a2a3a', cute: true, hat: 'propeller' }; // The manager: hair, glasses, a round cute face and a rainbow propeller cap
+  // The manager: the rooms' simple face (big eyes, pink cheeks, a small mouth), a rainbow propeller
+  // cap and a little red neckerchief. Glasses and a long tie crowded such a small face.
+  if (name === 'Manager') return { hair: 'short', extra: 'none', accessory: '#2a2a3a', hat: 'propeller', scarf: true };
   const h = hash(name);
   return { hair: STYLES[h % STYLES.length]!, extra: EXTRAS[(h >>> 8) % EXTRAS.length]!, accessory: ACCESSORY[(h >>> 16) % ACCESSORY.length]! };
 }
@@ -113,6 +116,11 @@ export function personPixels(p: Palette, tie = '#d8443c', frame: Frame = 'idle',
     g[2] = [...'...rygbvr...'];
     g[3] = [...'..rygbvryg..'];
     g[4] = [...'.HrygbvrygH.'];
+  }
+  if (look.scarf) {
+    g[9] = [...'...CTTTTC...'];
+    g[10] = [...'..CCCTTCCC..'];
+    g[11] = [...'.ACCCCCCCCA.'];
   }
   if (frame === 'blink' && look.extra !== 'glasses') {
     g[5]![3] = 'S';

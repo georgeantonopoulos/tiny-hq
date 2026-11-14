@@ -1445,8 +1445,8 @@ async function retireExtraManagers(keepId: string): Promise<void> {
   }
 }
 
-// One session per room (like one manager): once a newer session starts in a room,
-// the older ones are stopped when they're idle. The new one picks the work up
+// One session per room (like one manager): the one working, else the most recently
+// active, stays; the others are stopped when they're idle. The new one picks the work up
 // from project memory and the latest office skill. Never stops a session
 // that's working, waiting on the owner, being watched, holding an open question,
 // or that finished a reply in the last few minutes.
@@ -1461,7 +1461,7 @@ async function retireExtraRoomSessions(): Promise<void> {
       asking.has(s.sessionId) ||
       now - lastActiveAt(s) < 3 * 60_000 ||
       (s.state === 'blocked' && waitingOn(s.sessionId, s.cwd).kind !== 'unknown');
-    for (const id of extraRoomSessions(all, r.project.path, hold)) {
+    for (const id of extraRoomSessions(all, r.project.path, hold, lastActiveAt)) {
       try {
         await stopSession(id);
         terminals.forSession(id)?.close();
