@@ -13,12 +13,14 @@ export interface Score {
   managerWakes: number;
   managerQuiet: number;
   managerTokensM: number; // millions of tokens the manager read
+  managerRecentMPerHour?: number; // the same, per hour, over the last 6 hours (shows a change sooner than 24 h)
   checksQuiet: number; // timed checks the checker handled without waking the manager
   checksToManager: number;
   goalSteps: number;
 }
 
 const DAY = 86_400_000;
+const RECENT = 6 * 3_600_000;
 
 const median = (xs: number[]) => {
   if (!xs.length) return undefined;
@@ -51,12 +53,14 @@ export function jsonl<T>(path: string): T[] {
 // The manager's conversation files: what woke them (anything typed into their chat: the owner, a room,
 // the office), how many of those they answered "(quiet)", and how much they read doing it.
 // Each file is read once and then only its new lines (they grow to tens of MB).
-type Ev = { at: number; wake?: 1; quiet?: 1; tokens: number };
-const seen = new Map<string, { offset: number; events: Ev[] }>();
+// One reply is saved as several records (one per text or tool block), each repeating the
+// reply's usage; count each reply once by its message id, or the page shows about double.
+type Ev = { at: number; wake?: 1; quiet?: 1; tokens: number; id?: string };
+const seen = new Map<string, { offset: number; events: Ev[]; ids: Set<string> }>();
 
 function eventsOf(line: string): Ev | undefined {
   if (!line.includes('"timestamp"')) return undefined;
-  let o: { type?: string; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; message?: { content?: unknown; usage?: Record<string, number> } };
+  let o: { type?: string; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; attachment?: { type?: string }; message?: { id?: string; content?: unknown; usage?: Record<string, number> } };
   try {
     o = JSON.parse(line);
   } catch {
@@ -65,6 +69,8 @@ function eventsOf(line: string): Ev | undefined {
   const at = Date.parse(o.timestamp ?? '');
   if (!Number.isFinite(at) || o.isSidechain) return undefined;
   const c = o.message?.content;
+  // A message that arrives mid-turn is saved as a queued command, not a user message.
+  if (o.type === 'attachment') return o.attachment?.type === 'queued_command' ? { at, wake: 1, tokens: 0 } : undefined;
   if (o.type === 'user' && !o.isMeta) {
     const isResult = Array.isArray(c) && c.some((x) => x && typeof x === 'object' && (x as { type?: string }).type === 'tool_result');
     const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x as { text?: string })?.text ?? '').join('') : '';
@@ -73,16 +79,17 @@ function eventsOf(line: string): Ev | undefined {
   if (o.type === 'assistant') {
     const u = o.message?.usage ?? {};
     const quiet = Array.isArray(c) && c.some((x) => (x as { type?: string; text?: string })?.type === 'text' && (x as { text?: string }).text?.trim() === '(quiet)');
-    return { at, tokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0), ...(quiet ? { quiet: 1 as const } : {}) };
+    return { at, tokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0), ...(quiet ? { quiet: 1 as const } : {}), ...(o.message?.id ? { id: o.message.id } : {}) };
   }
   return undefined;
 }
 
-export function managerScore(transcriptDir: string, now: number): { managerWakes: number; managerQuiet: number; managerTokensM: number } {
+export function managerScore(transcriptDir: string, now: number): { managerWakes: number; managerQuiet: number; managerTokensM: number; managerRecentMPerHour: number } {
   let wakes = 0;
   let quiet = 0;
   let tokens = 0;
-  if (!existsSync(transcriptDir)) return { managerWakes: 0, managerQuiet: 0, managerTokensM: 0 };
+  let recent = 0;
+  if (!existsSync(transcriptDir)) return { managerWakes: 0, managerQuiet: 0, managerTokensM: 0, managerRecentMPerHour: 0 };
   for (const f of readdirSync(transcriptDir)) {
     if (!f.endsWith('.jsonl')) continue;
     const p = join(transcriptDir, f);
@@ -98,7 +105,7 @@ export function managerScore(transcriptDir: string, now: number): { managerWakes
       continue;
     }
     let entry = seen.get(p);
-    if (!entry || size < entry.offset) entry = { offset: 0, events: [] }; // new, or rewritten
+    if (!entry || size < entry.offset) entry = { offset: 0, events: [], ids: new Set() }; // new, or rewritten
     if (size > entry.offset) {
       const fd = openSync(p, 'r');
       try {
@@ -109,7 +116,17 @@ export function managerScore(transcriptDir: string, now: number): { managerWakes
         if (end >= 0) {
           for (const line of text.slice(0, end).split('\n')) {
             const ev = eventsOf(line);
-            if (ev) entry.events.push(ev);
+            if (!ev) continue;
+            if (ev.id) {
+              if (entry.ids.has(ev.id)) {
+                // a later block of a reply already counted: only its "(quiet)" can still be news
+                const first = entry.events.find((e) => e.id === ev.id);
+                if (first && ev.quiet) first.quiet = 1;
+                continue;
+              }
+              entry.ids.add(ev.id);
+            }
+            entry.events.push(ev);
           }
           entry.offset += Buffer.byteLength(text.slice(0, end + 1));
         }
@@ -119,13 +136,21 @@ export function managerScore(transcriptDir: string, now: number): { managerWakes
     }
     entry.events = entry.events.filter((e) => now - e.at < DAY);
     seen.set(p, entry);
+    let open = false; // a "(quiet)" counts once per wake, not again when the office sends the manager back
     for (const e of entry.events) {
-      wakes += e.wake ?? 0;
-      quiet += e.quiet ?? 0;
+      if (e.wake) {
+        wakes++;
+        open = true;
+      }
+      if (e.quiet && open) {
+        quiet++;
+        open = false;
+      }
       tokens += e.tokens;
+      if (now - e.at < RECENT) recent += e.tokens;
     }
   }
-  return { managerWakes: wakes, managerQuiet: quiet, managerTokensM: Math.round(tokens / 1e5) / 10 };
+  return { managerWakes: wakes, managerQuiet: quiet, managerTokensM: Math.round(tokens / 1e5) / 10, managerRecentMPerHour: Math.round(recent / 6 / 1e5) / 10 };
 }
 
 export function score(o: { jobs: Job[]; asksLog: string; checksLog: string; stepsLog: string; managerDir: string; now: number }): Score {
@@ -146,7 +171,7 @@ export function describeScore(s: Score): string[] {
   return [
     `Jobs done: ${s.jobsDone}${s.medianMinutes !== undefined ? ` (median ${s.medianMinutes} min from ask to done)` : ''} · goal steps started on their own: ${s.goalSteps}`,
     `Questions put to the owner: ${s.asks}`,
-    `The manager woken ${s.managerWakes} times (${s.managerQuiet} with nothing to say), read ${s.managerTokensM}M tokens`,
+    `The manager woken ${s.managerWakes} times (${s.managerQuiet} with nothing to say), read ${s.managerTokensM}M tokens${s.managerRecentMPerHour !== undefined ? ` (last 6 hours: ${s.managerRecentMPerHour}M an hour; 24-hour average ${Math.round((s.managerTokensM / 24) * 10) / 10}M)` : ''}`,
     `Timed checks: ${s.checksQuiet} handled quietly by the checker, ${s.checksToManager} passed to the manager`,
   ];
 }
