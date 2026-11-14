@@ -3,7 +3,7 @@
 // it types into a session and watches that session's transcript: a reply (anything it writes or does)
 // is the acknowledgement; an API or sign-in error, or silence past ACK_MS, means it wasn't picked up,
 // and the manager is told.
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -45,6 +45,7 @@ export function addAck(path: string, a: PendingAck): void {
 // What Claude Code writes in place of a reply when it can't reach the model or isn't signed in.
 const BROKEN = /API Error|Please run \/login|Invalid API key|OAuth token has expired|Credit balance is too low|usage limit reached|overloaded_error/i;
 
+export type Records = Rec[] & { clipped?: boolean }; // clipped: only the tail of a longer transcript
 type Rec = { type?: string; timestamp?: string; isSidechain?: boolean; isApiErrorMessage?: boolean; message?: { content?: unknown }; attachment?: { type?: string; prompt?: unknown } };
 
 const textOf = (content: unknown): string =>
@@ -54,7 +55,7 @@ const squash = (t: string) => t.replace(/\s+/g, ' ').trim();
 // Did the session take it up? Only what it did after the answer itself shows in its chat counts: a
 // busy room takes a typed answer later, and its work on the task before is not an acknowledgement.
 // Silence is timed from when the answer showed; an answer that never shows fails after GIVE_UP_MS.
-export function ackFrom(records: Rec[], at: number, now = Date.now(), answer = '', seen?: number): AckResult {
+export function ackFrom(records: Records, at: number, now = Date.now(), answer = '', seen?: number): AckResult {
   const key = squash(answer).slice(0, 60);
   let from = -1;
   let shownAt = seen ?? at;
@@ -74,7 +75,14 @@ export function ackFrom(records: Rec[], at: number, now = Date.now(), answer = '
       break;
     }
   }
-  if (from < 0 && seen === undefined) return now - at >= GIVE_UP_MS ? { status: 'failed', why: `the answer never showed up in its chat in the ${Math.round((now - at) / 60_000)} minutes since` } : { status: 'wait' };
+  // The answer is older than the part of the transcript read (only its tail is), and the session has
+  // written since: it took it up. This happens when a session moves into a worktree right after the
+  // owner's click: the watch loses its transcript for a while, and by the time it finds it again the
+  // answer has scrolled out of the tail. Its replies are then judged from the start of what was read,
+  // with the same checks as any reply, so a sign-in or API error still fails.
+  const first = records.find((r) => !!r.timestamp);
+  const scrolledOut = from < 0 && seen === undefined && !!records.clipped && !!first && Date.parse(first.timestamp!) > at;
+  if (from < 0 && seen === undefined && !scrolledOut) return now - at >= GIVE_UP_MS ? { status: 'failed', why: `the answer never showed up in its chat in the ${Math.round((now - at) / 60_000)} minutes since` } : { status: 'wait' };
   for (const r of records.slice(from + 1)) {
     if (r.type !== 'assistant' || r.isSidechain) continue;
     const content = Array.isArray(r.message?.content) ? (r.message!.content as { type?: string; text?: string }[]) : [];
@@ -85,9 +93,35 @@ export function ackFrom(records: Rec[], at: number, now = Date.now(), answer = '
   return now - shownAt >= ACK_MS ? { status: 'failed', why: `it hasn't written or done anything in the ${Math.round((now - shownAt) / 1000)} s since it got the answer` } : { status: 'wait', shownAt };
 }
 
-export function transcriptRecords(sessionId: string, cwd: string, home = homedir()): Rec[] | undefined {
+// Where the session's transcript is now. Claude Code moves it to the worktree's folder while the
+// session works in a worktree (and back after), so the folder of the cwd it had when the owner clicked
+// isn't enough: the newest copy of <sessionId>.jsonl under ~/.claude/projects wins.
+export function transcriptFile(sessionId: string, cwd: string, home = homedir()): string | undefined {
+  const projects = join(home, '.claude', 'projects');
+  const name = `${sessionId}.jsonl`;
+  const dirs = [cwd.replace(/[^a-zA-Z0-9]/g, '-')];
+  try {
+    dirs.push(...readdirSync(projects));
+  } catch {
+    // no projects folder
+  }
+  let best: { file: string; at: number } | undefined;
+  for (const d of new Set(dirs)) {
+    const file = join(projects, d, name);
+    try {
+      const at = statSync(file).mtimeMs;
+      if (!best || at > best.at) best = { file, at };
+    } catch {
+      // not in this folder
+    }
+  }
+  return best?.file;
+}
+
+export function transcriptRecords(sessionId: string, cwd: string, home = homedir()): Records | undefined {
   if (!/^[0-9a-f-]{36}$/.test(sessionId)) return undefined;
-  const file = join(home, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`);
+  const file = transcriptFile(sessionId, cwd, home);
+  if (!file) return undefined;
   let fd: number | undefined;
   try {
     fd = openSync(file, 'r');
@@ -95,7 +129,7 @@ export function transcriptRecords(sessionId: string, cwd: string, home = homedir
     const len = Math.min(size, 512 * 1024);
     const buf = Buffer.alloc(len);
     readSync(fd, buf, 0, len, size - len);
-    return buf
+    const recs: Records = buf
       .toString('utf8')
       .split('\n')
       .flatMap((l) => {
@@ -105,6 +139,8 @@ export function transcriptRecords(sessionId: string, cwd: string, home = homedir
           return [];
         }
       });
+    recs.clipped = size > len;
+    return recs;
   } catch {
     return undefined;
   } finally {
