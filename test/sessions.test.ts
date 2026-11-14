@@ -81,6 +81,33 @@ test('a session in a worktree inside the project counts as that room; other subf
   assert.equal(worksIn(`${p}/.claude/worktrees-x`, p), false);
 });
 
+test('a worktree of a separate repo nested in the project counts as that room', async () => {
+  const { worksIn } = await import('../src/terminal/sessions.ts');
+  const { mkdtempSync, mkdirSync, realpathSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const p = realpathSync(mkdtempSync(`${tmpdir()}/room-`));
+  mkdirSync(`${p}/app/.git`, { recursive: true });
+  mkdirSync(`${p}/manager`, { recursive: true });
+  assert.equal(worksIn(`${p}/app/.claude/worktrees/build`, p), true, 'a worktree of the nested repo');
+  assert.equal(worksIn(`${p}/manager/.claude/worktrees/x`, p), false, 'a plain subfolder (no .git of its own) still does not count');
+  assert.equal(worksIn(`${p}/app`, p), false, 'the nested repo itself is a subfolder, as before');
+});
+
+test('a nested repo with a room of its own keeps its worktrees; the parent room does not claim them', async () => {
+  const { worksIn, setRoomFolders } = await import('../src/terminal/sessions.ts');
+  const { mkdtempSync, mkdirSync, realpathSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const p = realpathSync(mkdtempSync(`${tmpdir()}/room-`));
+  mkdirSync(`${p}/app/.git`, { recursive: true });
+  try {
+    setRoomFolders([p, `${p}/app`]);
+    assert.equal(worksIn(`${p}/app/.claude/worktrees/task`, p), false, 'not the parent room');
+    assert.equal(worksIn(`${p}/app/.claude/worktrees/task`, `${p}/app`), true, "the nested repo's own room");
+  } finally {
+    setRoomFolders([]);
+  }
+});
+
 test('the most recently used session is the one a room joins, by its last real message', async () => {
   const { lastActiveAt } = await import('../src/terminal/sessions.ts');
   const { mkdirSync, utimesSync } = await import('node:fs');
@@ -112,16 +139,19 @@ test('only one manager: every other idle session in their folder is stopped, bus
   assert.deepEqual(extraManagers(live, manager, 'aaaaaaaa'), ['bbbbbbbb', 'dddddddd']);
 });
 
-test('one session per room: the newest stays, older idle ones go, busy or held ones wait', async () => {
+test('one session per room: the working or most recently active one stays, idle extras go, held ones wait', async () => {
   const { extraRoomSessions } = await import('../src/terminal/sessions.ts');
   const room = '/nonexistent/room';
   const s = (id: string, startedAt: number, status = 'idle', realCwd = '/nonexistent/room') => ({ id, realCwd, status, startedAt });
   assert.deepEqual(extraRoomSessions([s('old', 1), s('new', 2)], room), ['old']);
-  assert.deepEqual(extraRoomSessions([s('old', 1, 'busy'), s('new', 2)], room), []);
   assert.deepEqual(extraRoomSessions([s('old', 1), s('new', 2)], room, (x) => x.id === 'old'), []);
   assert.deepEqual(extraRoomSessions([s('wt', 1, 'idle', '/nonexistent/room/.claude/worktrees/x'), s('new', 2)], room), ['wt']);
   assert.deepEqual(extraRoomSessions([s('only', 1)], room), []);
   assert.deepEqual(extraRoomSessions([s('other', 1, 'idle', '/var'), s('new', 2)], room), []);
+  // A busy older session and a fresh unused one started after it.
+  assert.deepEqual(extraRoomSessions([s('busy', 1, 'busy'), s('fresh', 2)], room), ['fresh'], 'the working one stays');
+  const active: Record<string, number> = { used: 9, unused: 2 };
+  assert.deepEqual(extraRoomSessions([s('used', 1), s('unused', 2)], room, () => false, (x) => active[x.id]!), ['unused'], 'the most recently active one stays');
 });
 
 test("a long-attached screen stays ready after its switch to full screen scrolls out of the backlog", async () => {

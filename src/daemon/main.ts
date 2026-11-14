@@ -28,7 +28,7 @@ import { discoverProjects, isGone } from '../discovery/scan.ts';
 import { MAX_ROOMS, layoutFloor } from '../office/layout.ts';
 import { applyScene, loadScene } from '../office/scene.ts';
 import { loadLeads, saveLeads, staffRooms, writeNameTag, type Leads } from '../team/leads.ts';
-import { managerAddress, promptPending, userEnv, allSessions, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
+import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
 import { Allowance, meters, plan, usageReader, type Plan } from '../team/budget.ts';
@@ -76,6 +76,9 @@ const floors = new FloorCache(async () => {
   const filed = (p: { path: string }) => config.archivedProjects.includes(p.path);
   const projects = [...found.filter((p) => !filed(p)), ...found.filter(filed)];
   const onFloor = Math.min(MAX_ROOMS, found.filter((p) => !filed(p)).length);
+  // Only folders with a room on the floor own their worktrees; an archived or overflow
+  // nested repo leaves them to the parent room.
+  setRoomFolders(projects.slice(0, onFloor).map((p) => p.path));
   // Every room on the floor gets a character (a name from the list; no model call).
   const staffed = await staffRooms(projects.slice(0, onFloor), leads);
   if (staffed.hired.length) {
@@ -1445,8 +1448,8 @@ async function retireExtraManagers(keepId: string): Promise<void> {
   }
 }
 
-// One session per room (like one manager): once a newer session starts in a room,
-// the older ones are stopped when they're idle. The new one picks the work up
+// One session per room (like one manager): the one working, else the most recently
+// active, stays; the others are stopped when they're idle. The new one picks the work up
 // from project memory and the latest office skill. Never stops a session
 // that's working, waiting on the owner, being watched, holding an open question,
 // or that finished a reply in the last few minutes.
@@ -1461,7 +1464,7 @@ async function retireExtraRoomSessions(): Promise<void> {
       asking.has(s.sessionId) ||
       now - lastActiveAt(s) < 3 * 60_000 ||
       (s.state === 'blocked' && waitingOn(s.sessionId, s.cwd).kind !== 'unknown');
-    for (const id of extraRoomSessions(all, r.project.path, hold)) {
+    for (const id of extraRoomSessions(all, r.project.path, hold, lastActiveAt)) {
       try {
         await stopSession(id);
         terminals.forSession(id)?.close();
