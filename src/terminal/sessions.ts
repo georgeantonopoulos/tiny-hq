@@ -26,6 +26,24 @@ export interface BackgroundSession {
   startedAt?: number;
   status?: string; // idle | busy
   state?: string; // working | blocked | done (done = its last reply finished; the session is still running)
+  servers?: boolean; // its turn is over and only background shells it left running (dev servers) keep it "busy"; the office shows it idle
+}
+
+// Claude Code calls a session "busy" while a background shell it started is still running, even
+// with no turn going (its own file says status "shell"). A room that left two dev servers running
+// would look busy for days, so these show idle and the servers are listed on the manager's status page.
+const SESSIONS_DIR = join(homedir(), '.claude', 'sessions');
+export function ownStatus(pid: number | undefined, dir = SESSIONS_DIR): string | undefined {
+  if (!pid) return undefined;
+  try {
+    const o = JSON.parse(readFileSync(join(dir, `${pid}.json`), 'utf8')) as { status?: unknown };
+    return typeof o.status === 'string' ? o.status : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function serversOnly<T extends BackgroundSession>(s: T, own = ownStatus(s.pid)): T {
+  return s.status === 'busy' && own === 'shell' ? { ...s, status: 'idle', servers: true } : s;
 }
 
 // node-pty ships ready-built for macOS, but its helper loses the "may run" bit
@@ -196,7 +214,7 @@ export async function listSessions(): Promise<BackgroundSession[]> {
   const out = await run(['agents', '--json'], process.env.HOME ?? '/');
   const rows = JSON.parse(out) as BackgroundSession[] | { sessions?: BackgroundSession[] };
   const list = Array.isArray(rows) ? rows : (rows.sessions ?? []);
-  return list.filter((s) => typeof s.id === 'string' && SHORT_ID.test(s.id) && typeof s.cwd === 'string');
+  return list.filter((s) => typeof s.id === 'string' && SHORT_ID.test(s.id) && typeof s.cwd === 'string').map((s) => serversOnly(s));
 }
 
 // Every background session whose process is running, with its folder resolved.
