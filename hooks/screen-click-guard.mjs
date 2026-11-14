@@ -11,13 +11,19 @@ import { isRoom } from './room-ask-guard.mjs';
 export const INPUT_VERBS = ['click', 'type', 'press', 'hotkey', 'scroll', 'move', 'drag', 'swipe', 'paste', 'menu', 'app', 'window', 'dock', 'dialog'];
 const READ_ONLY_SUB = new Set(['list', '--help', '-h', 'help']);
 const SCREEN = '~/.tiny-hq/app/manager/screen';
+const SKIP_WORDS = new Set(['exec', 'command', 'env', 'sudo', 'timeout', 'nohup', 'time', 'xargs', 'do', 'then', 'else', '{', '!']);
 
 // The peekaboo input verb a shell command runs directly, if any.
 export function directInput(command) {
   if (typeof command !== 'string' || !command.includes('peekaboo')) return undefined;
   for (const part of command.split(/[\n;&|()`]|\$\(/)) {
     const words = part.trim().split(/\s+/).filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)); // FOO=bar peekaboo ...
-    while (words[0] === 'exec' || words[0] === 'command' || words[0] === 'env' || words[0] === 'sudo' || words[0] === 'timeout' || /^\d+$/.test(words[0] ?? '')) words.shift();
+    // Shell keywords and wrappers in front (a loop's `do`, `nohup`, `bash -c "..."`), and a quote opening the -c string.
+    for (;;) {
+      if (SKIP_WORDS.has(words[0] ?? '') || /^\d+$/.test(words[0] ?? '')) words.shift();
+      else if (/^(?:\S*\/)?(?:ba|z)?sh$/.test(words[0] ?? '') && words[1] === '-c') words.splice(0, 2);
+      else break;
+    }
     if (!/(^|\/)peekaboo$/.test((words[0] ?? '').replace(/^['"]|['"]$/g, ''))) continue;
     const verb = words[1];
     if (!INPUT_VERBS.includes(verb)) continue;

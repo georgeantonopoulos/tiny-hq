@@ -82,6 +82,12 @@ test('peekaboo input run directly is sent through manager/screen; looking is not
   assert.equal(directInput(`X=1 ${pb} hotkey --keys cmd,s`), 'hotkey');
   assert.equal(directInput(`echo $(${pb} scroll --direction down)`), 'scroll');
   assert.equal(directInput(`${pb} app switch --to Atlas`), 'app');
+  assert.equal(directInput(`for i in 1 2; do ${pb} click --coords 10,10; done`), 'click', 'inside a loop');
+  assert.equal(directInput(`if true; then ${pb} type "a"; fi`), 'type');
+  assert.equal(directInput(`{ ${pb} click --coords 1,1; }`), 'click');
+  assert.equal(directInput(`nohup ${pb} click --coords 1,1`), 'click');
+  assert.equal(directInput(`bash -c "${pb} click --coords 1,1"`), 'click');
+  assert.equal(directInput(`timeout 5 ${pb} scroll --direction up`), 'scroll');
   assert.equal(directInput(`${pb} image --window-id 6443 --path a.png`), undefined);
   assert.equal(directInput(`${pb} see --app Atlas`), undefined);
   assert.equal(directInput(`${pb} list windows --app atlas`), undefined);
