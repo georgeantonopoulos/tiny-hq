@@ -48,6 +48,10 @@ export function turnDid(lines, startedAt) {
   return { acted, quiet: last === '(quiet)' };
 }
 
+// A message from a room or another session starts a turn too, though Claude Code marks it as meta
+// (otherwise every turn a room's report started would be dated from the owner's last prompt, and nothing stamped).
+const peerMessage = (d) => d.type === 'user' && typeof d.message?.content === 'string' && d.message.content.includes('<cross-session-message');
+
 // What the turn was about, as text: the messages that reached the manager, their tool calls and
 // their replies (not tool results: a job list or status page names every room).
 export function turnText(lines, startedAt) {
@@ -59,7 +63,7 @@ export function turnText(lines, startedAt) {
     } catch {
       continue;
     }
-    if (d.isSidechain || d.isMeta || !d.timestamp || Date.parse(d.timestamp) < startedAt) continue;
+    if (d.isSidechain || (d.isMeta && !peerMessage(d)) || !d.timestamp || Date.parse(d.timestamp) < startedAt) continue;
     // JSON text writes a line break as the two characters \n: turn those back into spaces, or a
     // name at the start of a line ("\nAtlas") would sit right after an "n" and not count.
     const flat = (v) => JSON.stringify(v).replace(/\\[nrt]/g, ' ');
@@ -126,7 +130,7 @@ export function lastPromptAt(lines) {
       } catch {
         continue;
       }
-      if (d.type !== 'user' || d.isMeta || !d.message) continue;
+      if (d.type !== 'user' || (d.isMeta && !peerMessage(d)) || !d.message) continue;
       const c = d.message.content;
       // The message that started the turn: text, not a tool result.
       const isPrompt = typeof c === 'string' || (Array.isArray(c) && c.some((x) => x && x.type === 'text'));
