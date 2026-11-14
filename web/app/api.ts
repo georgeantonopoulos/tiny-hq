@@ -136,11 +136,11 @@ export class Api {
     if (!r) return "couldn't reach the Mac";
     return r.ok ? null : ((await r.json().catch(() => ({}))) as { error?: string }).error ?? `refused (${r.status})`;
   }
-  async coffee(): Promise<{ html: string; tips: number; list?: { id: string; kind: string; text: string; from: string; seen: number }[]; lastAt?: number; next?: number } | { error: string }> {
+  async coffee(): Promise<{ html: string; tips: number; waiting?: number; twoRooms?: boolean; list?: { id: string; kind: string; text: string; from: string; seen: number }[]; lastAt?: number; next?: number } | { error: string }> {
     try {
       const r = await fetch('/api/coffee', { headers: this.headers() });
       if (!r.ok) return { error: `refused (${r.status})` };
-      return (await r.json()) as { html: string; tips: number; list?: { id: string; kind: string; text: string; from: string; seen: number }[]; lastAt?: number; next?: number };
+      return (await r.json()) as { html: string; tips: number; waiting?: number; twoRooms?: boolean; list?: { id: string; kind: string; text: string; from: string; seen: number }[]; lastAt?: number; next?: number };
     } catch {
       return { error: "couldn't reach the Mac" };
     }

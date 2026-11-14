@@ -188,7 +188,7 @@ async function start(): Promise<void> {
       void api.coffee().then((b) => {
         if ('error' in b) return desk.showPage('Coffee room board', b.error, '');
         const when = b.lastAt ? `last break ${ago(b.lastAt)}` : 'no break yet';
-        desk.showBoard(`${b.tips} tips · ${when} · × removes one for good`, b.list ?? [], (id) => api.coffeeRemove(id));
+        desk.showBoard(`${b.tips} tips${b.twoRooms ? ' from two or more rooms' : ''}${b.waiting ? ` (${b.waiting} more wait for a second room)` : ''} · ${when} · × removes one for good`, b.list ?? [], (id) => api.coffeeRemove(id), b.waiting ? 'Nothing yet: no tip has come up in two rooms.' : undefined);
       });
     },
     onEmpty: () => card.classList.add('hidden'),
