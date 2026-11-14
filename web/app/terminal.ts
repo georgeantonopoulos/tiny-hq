@@ -328,6 +328,54 @@ export class TerminalPanel {
     this.renderTabs();
   }
 
+  // Right-click on a tab, like a browser: keep this one, close the rest (their sessions keep running).
+  private closeOthers(projectPath: string): void {
+    const keep = this.tabs.find((x) => x.projectPath === projectPath);
+    if (!keep) return;
+    this.tabs = [keep];
+    if (this.active !== projectPath) {
+      this.active = projectPath;
+      void this.open(keep.projectPath, keep.name);
+    }
+    this.saveTabs();
+    this.renderTabs();
+  }
+
+  private tabMenu(e: MouseEvent, projectPath: string): void {
+    e.preventDefault();
+    document.querySelector('.tab-menu')?.remove();
+    const menu = document.createElement('div');
+    menu.className = 'tab-menu';
+    menu.setAttribute('role', 'menu');
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.textContent = 'Close other tabs';
+    item.disabled = this.tabs.length < 2;
+    const shut = () => {
+      menu.remove();
+      document.removeEventListener('pointerdown', away, true);
+      document.removeEventListener('keydown', esc, true);
+    };
+    const away = (ev: Event) => {
+      if (!menu.contains(ev.target as Node)) shut();
+    };
+    const esc = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') shut();
+    };
+    item.onclick = () => {
+      shut();
+      this.closeOthers(projectPath);
+    };
+    menu.append(item);
+    document.body.append(menu);
+    const r = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(e.clientX, innerWidth - r.width - 4))}px`;
+    menu.style.top = `${Math.max(4, Math.min(e.clientY, innerHeight - r.height - 4))}px`;
+    document.addEventListener('pointerdown', away, true);
+    document.addEventListener('keydown', esc, true);
+  }
+
   renderTabs(): void {
     const colours = tabColours(this.tabs.map((t) => this.colourFor(t.projectPath)));
     this.tabsEl.replaceChildren(
@@ -356,6 +404,7 @@ export class TerminalPanel {
           // Another tab, nothing open, or the last try failed: (re)open it.
           if (t.projectPath !== this.active || !this.current || this.current.termId === '') void this.open(t.projectPath, t.name);
         };
+        tab.oncontextmenu = (e) => this.tabMenu(e, t.projectPath);
         tab.append(label, x);
         return tab;
       }),
