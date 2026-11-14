@@ -8,7 +8,7 @@
 // nothing (only reading, or ending "(quiet)") leaves the notebook as it was.
 // Prints nothing, never blocks, and leaves the notebook alone if anything can't be read.
 
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -60,13 +60,16 @@ export function turnText(lines, startedAt) {
       continue;
     }
     if (d.isSidechain || d.isMeta || !d.timestamp || Date.parse(d.timestamp) < startedAt) continue;
-    if (d.type === 'attachment' && d.attachment?.type === 'queued_command') out.push(JSON.stringify(d.attachment));
+    // JSON text writes a line break as the two characters \n: turn those back into spaces, or a
+    // name at the start of a line ("\nAtlas") would sit right after an "n" and not count.
+    const flat = (v) => JSON.stringify(v).replace(/\\[nrt]/g, ' ');
+    if (d.type === 'attachment' && d.attachment?.type === 'queued_command') out.push(flat(d.attachment));
     const c = d.message?.content;
     if (d.type === 'user' && typeof c === 'string') out.push(c);
     if ((d.type === 'user' || d.type === 'assistant') && Array.isArray(c))
       for (const x of c) {
         if (x?.type === 'text' && x.text) out.push(x.text);
-        if (d.type === 'assistant' && x?.type === 'tool_use') out.push(JSON.stringify(x.input ?? {}));
+        if (d.type === 'assistant' && x?.type === 'tool_use') out.push(flat(x.input ?? {}));
       }
   }
   return out.join('\n');
@@ -164,7 +167,10 @@ if (isMain) process.stdin.on('end', () => {
     const d = new Date();
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const next = stampNotebook(md, turnText(lines, startedAt), today);
-    if (next !== md) writeFileSync(notebook, next);
+    if (next === md || statSync(notebook).mtimeMs !== written) return; // the manager wrote it meanwhile: theirs wins
+    const tmp = `${notebook}.stamp-${process.pid}`;
+    writeFileSync(tmp, next);
+    renameSync(tmp, notebook); // whole file at once: the whiteboard never reads a half-written notebook
   } catch {
     // never stand in the manager's way over a hook problem
   }

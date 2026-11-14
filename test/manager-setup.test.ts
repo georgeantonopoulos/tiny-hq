@@ -101,7 +101,7 @@ test("the office stamps the Updated line of each project a turn was about, and n
   const transcript = join(dir, 't.jsonl');
   const prompt = (at: string, text: string) => JSON.stringify({ type: 'user', timestamp: at, message: { content: text } });
   const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-11-08T10:00:05Z', message: { content: [{ type: 'tool_result', content: 'Alan Turing 2 is idle' }] } });
-  const acted = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'SendMessage', input: { message: 'Grace Hopper, carry on' } }] } });
+  const acted = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'SendMessage', input: { message: 'Thanks.\nGrace Hopper, carry on' } }] } });
   // Only reading, or ending "(quiet)": nothing changed, so the notebook is left alone.
   const readOnly = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
   const quiet = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:06Z', message: { content: [{ type: 'text', text: '(quiet)' }] } });
