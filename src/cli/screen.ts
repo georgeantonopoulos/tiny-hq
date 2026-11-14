@@ -7,7 +7,7 @@ import { basename, join } from 'node:path';
 import { DATA_DIR, REPO_ROOT } from '../paths.ts';
 import { clearMarker, DEFAULT_MINUTES, helperInstalled, helperRunning, idleMs, keepAwake, lastInputPath, letSleep, macLocked, markerPath, readLastInput, readMarker, startHelper, STILL_MS, stillEnough, stopHelper, writeLastInput, writeMarker } from '../team/screen.ts';
 // @ts-expect-error a plain-JS hook module, no type declarations
-import { INPUT_VERBS } from '../../hooks/screen-click-guard.mjs';
+import { INPUT_VERBS, isInput } from '../../hooks/screen-click-guard.mjs';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (name: string) => {
@@ -50,14 +50,20 @@ if (cmd === 'on') {
 // command. Gives up after SCREEN_WAIT_S seconds (default 100, inside a Bash call's 2 minutes)
 // without clicking anything.
 async function input(verb: string, args: string[]): Promise<number> {
+  if (!isInput(verb, args)) return spawnSync('peekaboo', [verb, ...args], { stdio: 'inherit' }).status ?? 1; // help or a list: nothing to wait for
   const lastPath = lastInputPath(DATA_DIR);
-  const give = Number(process.env.SCREEN_WAIT_S ?? 100) * 1000;
+  const asked = Number(process.env.SCREEN_WAIT_S);
+  const give = (process.env.SCREEN_WAIT_S && Number.isFinite(asked) && asked >= 0 ? asked : 100) * 1000;
   const start = Date.now();
   let told = false;
   for (;;) {
     const idle = idleMs();
     const now = Date.now();
-    if (idle === undefined || stillEnough(idle, now, readLastInput(lastPath))) break;
+    if (idle === undefined) {
+      console.log(`Couldn't read how long the Mac has been idle, so nothing was ${verb === 'type' ? 'typed' : 'clicked'}: tell the manager.`);
+      return 4;
+    }
+    if (stillEnough(idle, now, readLastInput(lastPath))) break;
     if (!told) {
       console.log(`The owner is using the Mac (last touched ${Math.round(idle / 1000)} s ago): waiting until it has been still for ${STILL_MS / 1000} s...`);
       told = true;
@@ -73,7 +79,7 @@ async function input(verb: string, args: string[]): Promise<number> {
   // When the Mac's last input event happened, which is now the room's own: the next command may go
   // ahead only while that is still the last event.
   const after = idleMs();
-  if (after !== undefined) writeLastInput(lastPath, Date.now() - after);
+  if (r.status === 0 && after !== undefined) writeLastInput(lastPath, Date.now() - after);
   return r.status ?? 1;
 }
 

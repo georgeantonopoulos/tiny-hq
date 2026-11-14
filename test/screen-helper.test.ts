@@ -72,6 +72,16 @@ test('a click waits for 30 s without keyboard or mouse, unless the last input wa
   assert.equal(stillEnough(500, now, now - 1_000), false);
 });
 
+test('manager/screen waits only for real input, not for help or a list', async () => {
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const { isInput } = (await import('../hooks/screen-click-guard.mjs')) as { isInput: (v: string, a?: string[]) => boolean };
+  assert.equal(isInput('click', ['--coords', '1,2']), true);
+  assert.equal(isInput('click', ['--help']), false);
+  assert.equal(isInput('menu', ['list-all', '--app', 'Finder']), false);
+  assert.equal(isInput('space', ['list']), false);
+  assert.equal(isInput('image', ['--path', 'a.png']), false);
+});
+
 test('peekaboo input run directly is sent through manager/screen; looking is not', async () => {
   // @ts-expect-error a plain-JS hook module, no type declarations
   const { directInput, decideScreen } = (await import('../hooks/screen-click-guard.mjs')) as { directInput: (c: string) => string | undefined; decideScreen: (t: string, i: unknown) => string | undefined };
@@ -94,6 +104,27 @@ test('peekaboo input run directly is sent through manager/screen; looking is not
   assert.equal(directInput(`${pb} app list`), undefined);
   assert.equal(directInput(`${pb} permissions`), undefined);
   assert.equal(directInput('~/.tiny-hq/app/manager/screen click --coords 336,826'), undefined);
+  // The rest of peekaboo's screen commands, global flags and wrappers in front.
+  assert.equal(directInput(`${pb} agent "click Save"`), 'agent');
+  assert.equal(directInput(`${pb} run flow.json`), 'run');
+  assert.equal(directInput(`${pb} menubar click "WiFi"`), 'menubar');
+  assert.equal(directInput(`${pb} open https://x`), 'open');
+  assert.equal(directInput(`${pb} space switch --to 2`), 'space');
+  assert.equal(directInput(`${pb} -j click --on B1`), 'click');
+  assert.equal(directInput(`${pb} --log-level info click`), 'click');
+  assert.equal(directInput(`time ${pb} click --on B1`), 'click');
+  assert.equal(directInput(`nice -n 5 ${pb} click`), 'click');
+  assert.equal(directInput(`echo B1 | xargs ${pb} click --on`), 'click');
+  assert.equal(directInput(`echo "$(${pb} type hi)"`), 'type');
+  // Text that only mentions peekaboo is not a command; help and lists are only looking.
+  assert.equal(directInput(`git commit -m "Guard (${pb} click run directly) refused"`), undefined);
+  assert.equal(directInput(`git commit -m "a; ${pb} click is refused"`), undefined);
+  assert.equal(directInput(`cat > notes.md <<'EOF'\n${pb} click --on B1\nEOF\necho done`), undefined);
+  assert.equal(directInput(`cat > n.md <<EOF\n${pb} click\nEOF\n${pb} click --on B2`), 'click', 'a command after the heredoc still counts');
+  assert.equal(directInput(`${pb} menu list-all --app Finder`), undefined);
+  assert.equal(directInput(`${pb} click --help`), undefined);
+  assert.equal(directInput(`${pb} help click`), undefined);
+  assert.equal(directInput(`${pb} --json image --path a.png`), undefined);
   assert.match(decideScreen('Bash', { command: `${pb} click --coords 1,2` })!, /manager\/screen click/);
   assert.equal(decideScreen('Read', { command: `${pb} click` }), undefined);
   // The CLI drives the same verbs the guard refuses, so a refused command always has a way through.
