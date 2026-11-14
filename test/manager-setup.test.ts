@@ -124,6 +124,7 @@ test("the office stamps the Updated line of each project a turn was about, and n
     `# Notes\n\n## Atlas (Ada Lovelace)\n- Next: release\n- Updated: ${today}\n\n## Garden (Grace Hopper)\n- Next: beds\n- Updated: ${today}\n\n## Lumen (Alan Turing 2)\n- Next: upload\n- Updated: 2026-11-02\n\n## Website 2 (Edsger Dijkstra)\n- Updated: 2026-11-03\n`,
     'stamped: Atlas (named in the message that started the turn), Garden (in their tool call, line added); Lumen only in a tool result and an earlier turn; Website 2 not, though Website 1 was named',
   );
+  assert.match(readFileSync(join(dir, 'manager', 'whiteboard-stamps.log'), 'utf8'), /^\S+Z Atlas \(Ada Lovelace\) \| Garden \(Grace Hopper\)\n$/, 'each stamp leaves a line');
   // A stop after a block, or a notebook the manager wrote during the turn: left as it is.
   writeFileSync(notebook, before);
   assert.equal(run({ stop_hook_active: true }), '');

@@ -8,9 +8,9 @@
 // nothing (only reading, or ending "(quiet)") leaves the notebook as it was.
 // Prints nothing, never blocks, and leaves the notebook alone if anything can't be read.
 
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const TAIL = 4 * 1024 * 1024; // the last few MB of the transcript hold the current turn
@@ -171,6 +171,11 @@ if (isMain) process.stdin.on('end', () => {
     const tmp = `${notebook}.stamp-${process.pid}`;
     writeFileSync(tmp, next);
     renameSync(tmp, notebook); // whole file at once: the whiteboard never reads a half-written notebook
+    // A line per stamp, so a stamp can be seen to have happened (the manager's own writes leave none).
+    const sections = (t) => new Map(t.split(/^## /m).slice(1).map((b) => [b.split('\n')[0].trim(), b]));
+    const was = sections(md);
+    const stamped = [...sections(next)].filter(([h, b]) => was.get(h) !== b).map(([h]) => h);
+    appendFileSync(join(dirname(notebook), 'whiteboard-stamps.log'), `${new Date().toISOString()} ${stamped.join(' | ') || 'notebook'}\n`);
   } catch {
     // never stand in the manager's way over a hook problem
   }
