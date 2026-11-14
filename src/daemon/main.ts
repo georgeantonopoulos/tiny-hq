@@ -38,7 +38,7 @@ import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, ru
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
 import { listReports, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
-import { applyBreak, applyTidy, boardPath, breakDue, brewChat, coffeePrompt, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, removeTip, saveCoffee, tidyDue, tidyPrompt } from '../team/coffee.ts';
+import { applyBreak, applyTidy, boardPath, minRooms, onBoard, breakDue, brewChat, coffeePrompt, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, removeTip, saveCoffee, tidyDue, tidyPrompt } from '../team/coffee.ts';
 import { foldIn, loadGhState, lookAtGithub, lookAtInbox, ottoLine, prReposIn, renderGithub, roomFor, saveGhState, tellLine, writeOttoReport, type Gh } from '../team/github.ts';
 
 const token = loadOrCreateToken(TOKEN_PATH);
@@ -575,7 +575,8 @@ const server = createDaemon({
       } catch {
         /* none yet */
       }
-      return { html: renderMarkdown(md || '# Coffee room board\n\nNothing yet: the first coffee break is still to come.'), tips: s.tips.length, list: s.tips.map((t) => ({ id: t.id, kind: t.kind, text: t.text, from: t.from, seen: t.seen, last: t.last })), ...(s.last ? { lastAt: s.last.at } : {}), ...(s.next ? { next: s.next } : {}) };
+      const shown = s.tips.filter((t) => onBoard(t, minRooms(s.rooms)));
+      return { html: renderMarkdown(md || '# Coffee room board\n\nNothing yet: the first coffee break is still to come.'), tips: shown.length, waiting: s.tips.length - shown.length, ...(minRooms(s.rooms) > 1 ? { twoRooms: true } : {}), list: shown.map((t) => ({ id: t.id, kind: t.kind, text: t.text, from: t.from, seen: t.seen, last: t.last })), ...(s.last ? { lastAt: s.last.at } : {}), ...(s.next ? { next: s.next } : {}) };
     },
     remove: (id) => {
       const next = removeTip(loadCoffee(DATA_DIR), id);
@@ -1512,17 +1513,17 @@ function coffeeBreak(): void {
   // With no usage meter, the gentle default pace (as if a quarter of the week were used).
   const gap = config.usageCommand ? nextGap(u?.weekly?.usedPercent, u?.session?.usedPercent) : nextGap(25, 0);
   if (gap === undefined) return; // allowance tight or not read yet: look again next tick
-  const rooms = (floors.latest()?.rooms ?? [])
-    .filter((r) => r.kind === 'project' && r.project && r.lead)
+  const all = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project && r.lead);
+  const rooms = all
     .map((r) => ({ id: `lead:${r.id}`, name: r.name, activity: r.project!.activity, notes: recentNotes(r.project!.path) }))
     .filter((r) => r.notes.length);
   // The next break is set before brewing, so a failure waits its turn instead of retrying every tick.
-  saveCoffee(DATA_DIR, { ...s, next: Date.now() + gap });
+  saveCoffee(DATA_DIR, { ...s, next: Date.now() + gap, rooms: all.length });
   if (rooms.length < 2) return;
   const chosen = pickRooms(rooms);
   coffeeBusy = true;
   void userEnv()
-    .then((env) => brewChat(coffeePrompt(chosen, s.tips, s.removed), { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'coffee', 'brew'), env }))
+    .then((env) => brewChat(coffeePrompt(chosen, s.tips, s.removed, minRooms(all.length)), { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'coffee', 'brew'), env }))
     .then((out) => {
       const cur = loadCoffee(DATA_DIR);
       const r = parseCoffee(out, chosen.map((c) => c.name), (room) => chosen.find((c) => c.name === room)?.notes ?? [], cur.tips.map((t) => t.id));

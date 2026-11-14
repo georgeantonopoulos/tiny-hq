@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyBreak, applyTidy, breakDue, FADE_MS, prune, removeTip, tidyDue, type Tip, chatsDir, coffeePrompt, grounded, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, renderBoard, saveCoffee } from '../src/team/coffee.ts';
+import { applyBreak, applyTidy, breakDue, FADE_MS, minRooms, prune, removeTip, tidyDue, type Tip, chatsDir, coffeePrompt, grounded, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, renderBoard, saveCoffee } from '../src/team/coffee.ts';
 
 // The coffee room is where rooms meet and share what they learned; how often and who follows
 // usage, with some chance. One cheap Sonnet writer, from each room's recent chats.
@@ -125,4 +125,31 @@ test('the weekly tidy merges rewordings and drops stale tips, but never throws m
   const big = { tips: Array.from({ length: 12 }, (_, i) => tip(`x${i}`, 'tip', `Tip ${i}.`)), removed: [] };
   assert.equal(applyTidy(big, JSON.stringify({ tips: [{ ids: ['x0'], kind: 'tip', text: 'Tip 0.' }], dropped: big.tips.slice(1).map((t) => ({ id: t.id, why: 'x' })) }), 50), undefined, 'a tidy keeping under a third is not trusted');
   assert.equal(applyTidy(s, 'nonsense', 50), undefined);
+});
+
+// With 3+ rooms, the board keeps to tips that help several rooms; with fewer, every tip shows.
+test('in an office of 3+ rooms only tips two rooms brought up are on the board; with fewer rooms every tip shows', () => {
+  const now = 10;
+  const tips = [tip('one', 'tip', 'Run the tests headless.', { seen: 7, last: now }), tip('two', 'tip', 'Merge only on the owner\'s button.', { from: 'Atlas, Garden', seen: 2, last: now })];
+  assert.equal(minRooms(2), 1);
+  assert.equal(minRooms(undefined), 1);
+  assert.equal(minRooms(3), 2);
+  const small = renderBoard(tips, minRooms(2));
+  assert.match(small, /Run the tests headless/, 'two rooms: a one-room tip still shows');
+  assert.doesNotMatch(small, /at least two rooms/);
+  const big = renderBoard(tips, minRooms(3));
+  assert.match(big, /Merge only on the owner's button/);
+  assert.doesNotMatch(big, /Run the tests headless/, 'confirmed 7 times, but by one room: not shown');
+  assert.match(renderBoard([tips[0]!], 2), /no tip has come up in two rooms/);
+  const crowd = Array.from({ length: 12 }, (_, i) => tip(`s${i}`, 'tip', `Solo ${i}.`, { seen: 9, last: now }));
+  assert.ok(prune([...crowd, tips[1]!], now, 2).some((t) => t.id === 'two'), 'a tip from two rooms beats any number of one-room confirmations');
+  const old = now + FADE_MS + 1;
+  assert.deepEqual(prune([tip('o', 'owner', 'They like short replies.', { last: now })], old, 2), [], 'an owner tip off the board fades');
+  assert.equal(prune([tip('o', 'owner', 'They like short replies.', { last: now })], old, 1).length, 1, 'with the rule off it stays as before');
+  assert.match(coffeePrompt([{ name: 'Atlas', notes: ['x'] }], tips, [], 2), /shown only once a second room brings it up/);
+  assert.doesNotMatch(coffeePrompt([{ name: 'Atlas', notes: ['x'] }], tips, [], 1), /second room/);
+  const data = mkdtempSync(join(tmpdir(), 'cm-'));
+  saveCoffee(data, { tips, removed: [], rooms: 4 });
+  assert.equal(loadCoffee(data).rooms, 4);
+  assert.doesNotMatch(readFileSync(join(data, 'coffee', 'board.md'), 'utf8'), /headless/);
 });

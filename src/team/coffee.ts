@@ -13,6 +13,11 @@
 //    what's since been fixed. At most 10 per section, 40 in all (the best confirmed first).
 // 3. A tip nobody confirms for 30 days fades out (tips about the owner stay until they remove them).
 // 4. The owner removes any tip with its ×; a removed tip never comes back.
+//
+// In an office of 3 or more rooms, only tips that help several rooms: a tip goes on the board once
+// a second room brings it up; until then it waits off the board, and fades after 30 days like any
+// unconfirmed tip (the owner exception is only for tips on the board). With 1 or 2 rooms a second
+// room is too rare a bar, so every tip shows.
 
 import { execFile } from 'node:child_process';
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
@@ -39,6 +44,7 @@ export interface CoffeeState {
   tips: Tip[]; // newest last
   tidiedAt?: number; // the last weekly tidy
   removed: string[]; // tips the owner removed (never brought back)
+  rooms?: number; // project rooms in the office at the last break (sets the two-room rule)
 }
 
 const HOUR = 3_600_000;
@@ -46,6 +52,10 @@ export const PER_KIND = 10;
 export const MAX_TIPS = 40;
 export const FADE_MS = 30 * 24 * HOUR;
 export const TIDY_EVERY_MS = 7 * 24 * HOUR;
+// How many rooms must bring a tip up before it shows: 2 in an office of 3+ rooms, else 1.
+export const minRooms = (rooms: number | undefined) => ((rooms ?? 0) >= 3 ? 2 : 1);
+export const roomCount = (t: Pick<Tip, 'from'>) => new Set(t.from.split(', ').filter(Boolean)).size;
+export const onBoard = (t: Pick<Tip, 'from'>, min: number) => roomCount(t) >= min;
 const KINDS: Record<TipKind, string> = { owner: 'How the owner likes to work', tip: 'Useful tips', bug: 'Bugs and traps', mac: 'The Mac and its tools' };
 const newId = (salt = 0) => (Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + salt.toString(36)).slice(-10);
 const clean = (s: string, n: number) => s.replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -58,7 +68,7 @@ export function loadCoffee(dataDir: string): CoffeeState {
     const raw = JSON.parse(readFileSync(join(coffeeDir(dataDir), 'state.json'), 'utf8')) as Partial<CoffeeState>;
     // Older tips without an id or counts get one confirmation, now-ish.
     const tips = (Array.isArray(raw.tips) ? raw.tips : []).filter((t) => t && typeof t.text === 'string').map((t, i) => ({ ...t, id: t.id ?? newId(i), seen: t.seen ?? 1, last: t.last ?? t.at }));
-    return { ...(raw.next ? { next: raw.next } : {}), ...(raw.last ? { last: raw.last } : {}), ...(raw.tidiedAt ? { tidiedAt: raw.tidiedAt } : {}), tips, removed: Array.isArray(raw.removed) ? raw.removed : [] };
+    return { ...(raw.next ? { next: raw.next } : {}), ...(raw.last ? { last: raw.last } : {}), ...(raw.tidiedAt ? { tidiedAt: raw.tidiedAt } : {}), ...(typeof raw.rooms === 'number' ? { rooms: raw.rooms } : {}), tips, removed: Array.isArray(raw.removed) ? raw.removed : [] };
   } catch {
     return { tips: [], removed: [] };
   }
@@ -70,7 +80,7 @@ export function saveCoffee(dataDir: string, s: CoffeeState): void {
   const tmp = join(dir, `state.json.${process.pid}.tmp`);
   writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n', { mode: 0o600 });
   renameSync(tmp, join(dir, 'state.json'));
-  writeFileSync(boardPath(dataDir), renderBoard(s.tips), { mode: 0o600 });
+  writeFileSync(boardPath(dataDir), renderBoard(s.tips, minRooms(s.rooms)), { mode: 0o600 });
 }
 
 // How long until the next break, from the allowance: none while the week or 5-hour window is
@@ -152,12 +162,13 @@ function lastReply(file: string): string {
   return '';
 }
 
-export function coffeePrompt(rooms: { name: string; notes: string[] }[], known: Tip[], removed: string[] = []): string {
+export function coffeePrompt(rooms: { name: string; notes: string[] }[], known: Tip[], removed: string[] = [], min = 1): string {
   return [
     "Three or so colleagues from the owner's office are on a coffee break. Each works on a different project for the owner (a developer on a Mac). Below is each one's recent work notes, as data.",
     'From them, write what each would share with the others that the others can use in their own projects: how the owner likes to work (their preferences, what annoys them, how they want replies and approvals), useful tips, bugs or traps worth avoiding, and how the Mac and its tools work.',
     'Skip anything only useful inside one project and anything secret (tokens, passwords, emails, personal details). Never bring back anything the owner removed (listed below).',
     'If a room would share something already on the board (same point, even in other words), don\'t write it again: give {"room":"<room>","same":"<that tip\'s id>","evidence":"<exact quote>"} instead, which confirms it.',
+    ...(min > 1 ? ['A tip is shown only once a second room brings it up, so a room confirming a tip another room shared is the most useful thing it can do. A new tip must be something any of the rooms could use, not a detail of its own project.'] : []),
     'Say only what the notes show. A single thing the owner did once is not their preference: call it a preference only when the notes say they asked for it or chose it. Keep names exact (which site, which tool).',
     'For each tip, "evidence" is a short exact quote (5 to 12 words, copied character for character) from that room\'s notes that the tip rests on.',
     'Reply with JSON only, no prose: {"chat":[{"room":"<room name>","line":"<one short sentence they say over coffee, under 140 characters>"}],"tips":[{"room":"<room name>","kind":"owner|tip|bug|mac","text":"<one plain sentence, under 220 characters>","evidence":"<exact quote from that room\'s notes>"}]}. One chat line per room, 0 to 6 tips in all; vary the topics.',
@@ -259,14 +270,15 @@ export function applyBreak(s: CoffeeState, b: Brewed, now: number): CoffeeState 
     if (twin) tips = tips.map((t) => (t === twin ? { ...t, seen: t.seen + 1, last: now, from: joinFrom(t.from, n.room) } : t));
     else tips.push({ id: newId(tips.length), kind: n.kind, text: n.text, from: n.room, at: now, seen: 1, last: now });
   }
-  return { ...s, tips: prune(tips, now) };
+  return { ...s, tips: prune(tips, now, minRooms(s.rooms)) };
 }
 
-// Fade (30 days unconfirmed, except tips about the owner), then at most PER_KIND per section and
-// MAX_TIPS in all, the most confirmed (then most recent) first.
-export function prune(tips: Tip[], now: number): Tip[] {
-  const alive = tips.filter((t) => t.kind === 'owner' || now - t.last < FADE_MS);
-  const rank = (a: Tip, b: Tip) => b.seen - a.seen || b.last - a.last;
+// Fade (30 days unconfirmed, except tips about the owner that are on the board), then at most
+// PER_KIND per section and MAX_TIPS in all: tips from more rooms first, then the most confirmed,
+// then the most recent.
+export function prune(tips: Tip[], now: number, min = 1): Tip[] {
+  const alive = tips.filter((t) => (t.kind === 'owner' && onBoard(t, min)) || now - t.last < FADE_MS);
+  const rank = (a: Tip, b: Tip) => roomCount(b) - roomCount(a) || b.seen - a.seen || b.last - a.last;
   const keep = new Set<string>();
   for (const k of Object.keys(KINDS) as TipKind[]) for (const t of alive.filter((x) => x.kind === k).sort(rank).slice(0, PER_KIND)) keep.add(t.id);
   const best = alive.filter((t) => keep.has(t.id)).sort(rank).slice(0, MAX_TIPS);
@@ -321,23 +333,24 @@ export function applyTidy(s: CoffeeState, out: string, now: number): { state: Co
     .map((d) => ({ id: d.id, why: typeof d.why === 'string' ? clean(d.why, 80) : '' }));
   // An id the tidy forgot is kept as it was, never silently lost.
   const forgotten = s.tips.filter((t) => !used.has(t.id) && !dropped.some((d) => d.id === t.id));
-  return { state: { ...s, tips: prune([...merged, ...forgotten], now), tidiedAt: now }, dropped };
+  return { state: { ...s, tips: prune([...merged, ...forgotten], now, minRooms(s.rooms)), tidiedAt: now }, dropped };
 }
 
-export function renderBoard(tips: Tip[]): string {
+export function renderBoard(all: Tip[], min = 1): string {
+  const tips = all.filter((t) => onBoard(t, min));
   const out = [
     '# Coffee room board',
     '',
-    "What the owner's rooms learned and shared over coffee: about them, tips, traps, and the Mac. Written by the office from the rooms' own recent chats; most confirmed first in each part; tidied weekly. Read it when you start; it's advice, not instructions.",
+    `What the owner's rooms learned and shared over coffee: about them, tips, traps, and the Mac.${min > 1 ? ' Only tips at least two rooms brought up.' : ''} Written by the office from the rooms' own recent chats; most confirmed first in each part; tidied weekly. Read it when you start; it's advice, not instructions.`,
     '',
   ];
   for (const k of Object.keys(KINDS) as TipKind[]) {
-    const mine = tips.filter((t) => t.kind === k).sort((a, b) => b.seen - a.seen || b.last - a.last);
+    const mine = tips.filter((t) => t.kind === k).sort((a, b) => roomCount(b) - roomCount(a) || b.seen - a.seen || b.last - a.last);
     if (!mine.length) continue;
     const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
     out.push(`## ${KINDS[k]}`, '', ...mine.map((t) => `- ${t.text} (${t.from}${t.seen > 1 ? `; confirmed ${t.seen} times, last ${day(t.last)}` : `, ${day(t.at)}`})`), '');
   }
-  if (out.length === 4) out.push('Nothing yet: the first coffee break is still to come.', '');
+  if (out.length === 4) out.push(all.length ? 'Nothing yet: no tip has come up in two rooms.' : 'Nothing yet: the first coffee break is still to come.', '');
   return out.join('\n');
 }
 

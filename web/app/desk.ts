@@ -70,7 +70,7 @@ export class Desk {
   }
 
   // The coffee room's board: each tip with an × for the owner (it goes, and never comes back).
-  showBoard(meta: string, tips: { id: string; kind: string; text: string; from: string; seen: number }[], remove: (id: string) => Promise<string | null>): void {
+  showBoard(meta: string, tips: { id: string; kind: string; text: string; from: string; seen: number }[], remove: (id: string) => Promise<string | null>, empty = 'Nothing yet: the first coffee break is still to come.'): void {
     this.el.classList.remove('hidden');
     this.back.hidden = true;
     this.title.textContent = 'Coffee room board';
@@ -111,7 +111,7 @@ export class Desk {
     if (!page.children.length) {
       const p = document.createElement('p');
       p.className = 'muted';
-      p.textContent = 'Nothing yet: the first coffee break is still to come.';
+      p.textContent = empty;
       page.append(p);
     }
     this.body.replaceChildren(page);
