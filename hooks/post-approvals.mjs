@@ -112,8 +112,16 @@ function locked(path, fn) {
   }
 }
 
-// Inside the room that asked (or one of its worktrees)?
-const inRoom = (cwd, folder) => !folder || (typeof cwd === 'string' && (cwd === folder || cwd.startsWith(`${folder}/`)));
+// Inside the room that asked (the project, or any of its worktrees)? A button put up from a
+// worktree passes in the main checkout too, and the other way round: a room often asks from its
+// worktree and runs the approved command from the project folder.
+const roomOf = (p) => { const at = p.indexOf('/.claude/worktrees/'); return at < 0 ? p : p.slice(0, at); };
+const inRoom = (cwd, folder) => {
+  if (!folder) return true;
+  if (typeof cwd !== 'string') return false;
+  const room = roomOf(folder);
+  return cwd === room || cwd.startsWith(`${room}/`);
+};
 
 // the owner's Approve: one pass for this exact text, at this target, for the room that asked.
 export function grantPass(text, from, now = Date.now(), path = approvalsPath(), target = '') {
