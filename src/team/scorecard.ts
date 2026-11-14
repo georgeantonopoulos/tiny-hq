@@ -14,6 +14,7 @@ export interface Score {
   managerQuiet: number;
   managerTokensM: number; // millions of tokens the manager read
   managerRecentMPerHour?: number; // the same, per hour, over the last 6 hours (shows a change sooner than 24 h)
+  managerSentBack?: number; // times the office's whiteboard check sent them back to their notebook (it no longer does)
   checksQuiet: number; // timed checks the checker handled without waking the manager
   checksToManager: number;
   goalSteps: number;
@@ -55,7 +56,7 @@ export function jsonl<T>(path: string): T[] {
 // Each file is read once and then only its new lines (they grow to tens of MB).
 // One reply is saved as several records (one per text or tool block), each repeating the
 // reply's usage; count each reply once by its message id, or the page shows about double.
-type Ev = { at: number; wake?: 1; quiet?: 1; tokens: number; id?: string };
+type Ev = { at: number; wake?: 1; quiet?: 1; sentBack?: 1; tokens: number; id?: string };
 const seen = new Map<string, { offset: number; events: Ev[]; ids: Set<string> }>();
 
 function eventsOf(line: string): Ev | undefined {
@@ -71,6 +72,7 @@ function eventsOf(line: string): Ev | undefined {
   const c = o.message?.content;
   // A message that arrives mid-turn is saved as a queued command, not a user message.
   if (o.type === 'attachment') return o.attachment?.type === 'queued_command' ? { at, wake: 1, tokens: 0 } : undefined;
+  if (o.type === 'user' && o.isMeta && typeof c === 'string' && c.startsWith('Stop hook feedback') && c.includes('Whiteboard check')) return { at, sentBack: 1, tokens: 0 };
   if (o.type === 'user' && !o.isMeta) {
     const isResult = Array.isArray(c) && c.some((x) => x && typeof x === 'object' && (x as { type?: string }).type === 'tool_result');
     const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x as { text?: string })?.text ?? '').join('') : '';
@@ -84,12 +86,13 @@ function eventsOf(line: string): Ev | undefined {
   return undefined;
 }
 
-export function managerScore(transcriptDir: string, now: number): { managerWakes: number; managerQuiet: number; managerTokensM: number; managerRecentMPerHour: number } {
+export function managerScore(transcriptDir: string, now: number): { managerWakes: number; managerQuiet: number; managerTokensM: number; managerRecentMPerHour: number; managerSentBack: number } {
   let wakes = 0;
+  let sentBack = 0;
   let quiet = 0;
   let tokens = 0;
   let recent = 0;
-  if (!existsSync(transcriptDir)) return { managerWakes: 0, managerQuiet: 0, managerTokensM: 0, managerRecentMPerHour: 0 };
+  if (!existsSync(transcriptDir)) return { managerWakes: 0, managerQuiet: 0, managerTokensM: 0, managerRecentMPerHour: 0, managerSentBack: 0 };
   for (const f of readdirSync(transcriptDir)) {
     if (!f.endsWith('.jsonl')) continue;
     const p = join(transcriptDir, f);
@@ -138,6 +141,7 @@ export function managerScore(transcriptDir: string, now: number): { managerWakes
     seen.set(p, entry);
     let open = false; // a "(quiet)" counts once per wake, not again when the office sends the manager back
     for (const e of entry.events) {
+      if (e.sentBack) sentBack++;
       if (e.wake) {
         wakes++;
         open = true;
@@ -150,7 +154,7 @@ export function managerScore(transcriptDir: string, now: number): { managerWakes
       if (now - e.at < RECENT) recent += e.tokens;
     }
   }
-  return { managerWakes: wakes, managerQuiet: quiet, managerTokensM: Math.round(tokens / 1e5) / 10, managerRecentMPerHour: Math.round(recent / 6 / 1e5) / 10 };
+  return { managerWakes: wakes, managerQuiet: quiet, managerTokensM: Math.round(tokens / 1e5) / 10, managerRecentMPerHour: Math.round(recent / 6 / 1e5) / 10, managerSentBack: sentBack };
 }
 
 export function score(o: { jobs: Job[]; asksLog: string; checksLog: string; stepsLog: string; managerDir: string; now: number }): Score {
@@ -171,7 +175,7 @@ export function describeScore(s: Score): string[] {
   return [
     `Jobs done: ${s.jobsDone}${s.medianMinutes !== undefined ? ` (median ${s.medianMinutes} min from ask to done)` : ''} · goal steps started on their own: ${s.goalSteps}`,
     `Questions put to the owner: ${s.asks}`,
-    `The manager woken ${s.managerWakes} times (${s.managerQuiet} with nothing to say), read ${s.managerTokensM}M tokens${s.managerRecentMPerHour !== undefined ? ` (last 6 hours: ${s.managerRecentMPerHour}M an hour; 24-hour average ${Math.round((s.managerTokensM / 24) * 10) / 10}M)` : ''}`,
+    `The manager woken ${s.managerWakes} times (${s.managerQuiet} with nothing to say), read ${s.managerTokensM}M tokens${s.managerRecentMPerHour !== undefined ? ` (last 6 hours: ${s.managerRecentMPerHour}M an hour; 24-hour average ${Math.round((s.managerTokensM / 24) * 10) / 10}M)` : ''}${s.managerSentBack !== undefined ? `; sent back to their notebook ${s.managerSentBack} times` : ''}`,
     `Timed checks: ${s.checksQuiet} handled quietly by the checker, ${s.checksToManager} passed to the manager`,
   ];
 }

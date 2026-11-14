@@ -84,10 +84,9 @@ test("The manager's instructions keep the permanent Lessons, the watch rule and 
   assert.match(g, /status\.md/);
   // Quiet turns: the hook, the job check and the manager's rule all use the reply the office hides.
   assert.match(g, /reply with exactly `\(quiet\)`/);
-  assert.match(read('../hooks/manager-whiteboard.mjs'), /reply with exactly \(quiet\)/);
 });
 
-test("The manager is sent back once to update their whiteboard when a turn ends without touching their notebook", async () => {
+test("the office stamps the Updated line of each project a turn was about, and never sends the manager back", async () => {
   const { execFileSync } = await import('node:child_process');
   const { mkdtempSync, mkdirSync, writeFileSync, utimesSync, readFileSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
@@ -97,24 +96,40 @@ test("The manager is sent back once to update their whiteboard when a turn ends 
   const dir = mkdtempSync(join(tmpdir(), 'manager-wb-'));
   mkdirSync(join(dir, 'manager'));
   const notebook = join(dir, 'manager', 'notebook.md');
-  writeFileSync(notebook, '## X\n- Next: y\n');
+  const before = '# Notes\n\n## Atlas (Ada Lovelace)\n- Next: release\n- Updated: 2026-11-01\n\n## Garden (Grace Hopper)\n- Next: beds\n\n## Lumen (Alan Turing 2)\n- Next: upload\n- Updated: 2026-11-02\n';
+  writeFileSync(notebook, before);
   const transcript = join(dir, 't.jsonl');
-  const prompt = (at: string) => JSON.stringify({ type: 'user', timestamp: at, message: { content: 'Cody: done' } });
-  const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-11-08T10:00:05Z', message: { content: [{ type: 'tool_result', content: 'ok' }] } });
-  const acted = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'Bash', input: {} }] } });
-  // Only reading, or ending "(quiet)": nothing changed, so the turn isn't sent back.
+  const prompt = (at: string, text: string) => JSON.stringify({ type: 'user', timestamp: at, message: { content: text } });
+  const toolResult = JSON.stringify({ type: 'user', timestamp: '2026-11-08T10:00:05Z', message: { content: [{ type: 'tool_result', content: 'Alan Turing 2 is idle' }] } });
+  const acted = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'SendMessage', input: { message: 'Grace Hopper, carry on' } }] } });
+  // Only reading, or ending "(quiet)": nothing changed, so the notebook is left alone.
   const readOnly = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:04Z', message: { content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
   const quiet = JSON.stringify({ type: 'assistant', timestamp: '2026-11-08T10:00:06Z', message: { content: [{ type: 'text', text: '(quiet)' }] } });
-  writeFileSync(transcript, [prompt('2026-11-08T10:00:00Z'), readOnly, toolResult].join('\n') + '\n');
+  const old = prompt('2026-11-07T09:00:00Z', 'Alan Turing: old news');
+  const start = prompt('2026-11-08T10:00:00Z', 'Ada Lovelace: done');
   const run = (extra: object = {}) => execFileSync(process.execPath, [new URL('../hooks/manager-whiteboard.mjs', import.meta.url).pathname], { input: JSON.stringify({ transcript_path: transcript, ...extra }), env: { ...process.env, CM_DATA_DIR: dir } }).toString();
   utimesSync(notebook, new Date('2026-11-08T09:00:00Z'), new Date('2026-11-08T09:00:00Z')); // before the turn
-  assert.equal(run(), '', 'a turn that only read is not sent back');
-  writeFileSync(transcript, [prompt('2026-11-08T10:00:00Z'), acted, toolResult, quiet].join('\n') + '\n');
-  assert.equal(run(), '', 'a turn that ended "(quiet)" is not sent back');
-  writeFileSync(transcript, [prompt('2026-11-08T10:00:00Z'), acted, toolResult].join('\n') + '\n');
-  assert.equal(JSON.parse(run()).decision, 'block');
-  assert.equal(run({ stop_hook_active: true }), '', 'the second stop always goes through');
+  writeFileSync(transcript, [old, start, readOnly, toolResult].join('\n') + '\n');
+  assert.equal(run(), '');
+  assert.equal(readFileSync(notebook, 'utf8'), before, 'a turn that only read leaves it alone');
+  writeFileSync(transcript, [old, start, acted, toolResult, quiet].join('\n') + '\n');
+  assert.equal(run(), '');
+  assert.equal(readFileSync(notebook, 'utf8'), before, 'a turn that ended "(quiet)" leaves it alone');
+  writeFileSync(transcript, [old, start, acted, toolResult].join('\n') + '\n');
+  assert.equal(run(), '', 'never sends them back');
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  assert.equal(
+    readFileSync(notebook, 'utf8'),
+    `# Notes\n\n## Atlas (Ada Lovelace)\n- Next: release\n- Updated: ${today}\n\n## Garden (Grace Hopper)\n- Next: beds\n- Updated: ${today}\n\n## Lumen (Alan Turing 2)\n- Next: upload\n- Updated: 2026-11-02\n`,
+    'stamped: Atlas (named in the message that started the turn), Garden (in their tool call, line added); Lumen only in a tool result and an earlier turn',
+  );
+  // A stop after a block, or a notebook the manager wrote during the turn: left as it is.
+  writeFileSync(notebook, before);
+  assert.equal(run({ stop_hook_active: true }), '');
+  assert.equal(readFileSync(notebook, 'utf8'), before);
   utimesSync(notebook, new Date('2026-11-08T10:00:03Z'), new Date('2026-11-08T10:00:03Z')); // written during the turn
   assert.equal(run(), '');
+  assert.equal(readFileSync(notebook, 'utf8'), before);
   assert.equal(execFileSync(process.execPath, [new URL('../hooks/manager-whiteboard.mjs', import.meta.url).pathname], { input: 'not json' }).toString(), '', 'never blocks on bad input');
 });

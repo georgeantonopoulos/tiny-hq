@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Stop hook for the manager's session (manager/.claude/settings.json): the owner reads the manager's
-// notebook on the whiteboard, so it must be current after every turn. If the manager
-// ends a turn without having written their notebook since the message that started
-// it, they are sent back once to bring it up to date (done items out, a fresh Next).
-// The second stop always goes through (stop_hook_active), so it can never loop. A turn that did
-// nothing (only reading, or ending "(quiet)") leaves the notebook as it was and isn't sent back.
-// Prints nothing, and never blocks, if anything here can't be read.
+// notebook on the whiteboard. If a turn did something but the manager didn't write their
+// notebook, the office stamps today's date on the `- Updated:` line of each project the
+// turn was about (named in the message that started it, their tool calls or their replies).
+// It never sends them back: sending them back cost about a million tokens a morning, for a
+// line the office can write itself. The manager still writes the content. A turn that did
+// nothing (only reading, or ending "(quiet)") leaves the notebook as it was.
+// Prints nothing, never blocks, and leaves the notebook alone if anything can't be read.
 
-import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -45,6 +46,72 @@ export function turnDid(lines, startedAt) {
     }
   }
   return { acted, quiet: last === '(quiet)' };
+}
+
+// What the turn was about, as text: the messages that reached the manager, their tool calls and
+// their replies (not tool results: a job list or status page names every room).
+export function turnText(lines, startedAt) {
+  const out = [];
+  for (const l of lines) {
+    let d;
+    try {
+      d = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    if (d.isSidechain || d.isMeta || !d.timestamp || Date.parse(d.timestamp) < startedAt) continue;
+    if (d.type === 'attachment' && d.attachment?.type === 'queued_command') out.push(JSON.stringify(d.attachment));
+    const c = d.message?.content;
+    if (d.type === 'user' && typeof c === 'string') out.push(c);
+    if ((d.type === 'user' || d.type === 'assistant') && Array.isArray(c))
+      for (const x of c) {
+        if (x?.type === 'text' && x.text) out.push(x.text);
+        if (d.type === 'assistant' && x?.type === 'tool_use') out.push(JSON.stringify(x.input ?? {}));
+      }
+  }
+  return out.join('\n');
+}
+
+// "## Atlas (Ada Lovelace)": the room's name and its lead's, without a trailing number ("Ada Lovelace 2").
+function namesOf(title) {
+  const m = /^(.*?)\s*(?:\((.*)\))?\s*$/.exec(title) ?? [];
+  return [m[1], m[2]]
+    .map((n) => (n ?? '').replace(/\s+\d+$/, '').trim())
+    .filter((n) => n.length >= 4);
+}
+
+// The notebook with today's date on the `- Updated:` line of every section the turn named.
+export function stampNotebook(md, text, today) {
+  const lower = text.toLowerCase();
+  const named = (title) =>
+    namesOf(title).some((n) => new RegExp(`(^|[^a-z0-9])${n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(lower));
+  const lines = md.split('\n');
+  const out = [];
+  let stamp = false; // in a section the turn was about
+  let pending = false; // ...whose Updated line hasn't been seen yet
+  const close = () => {
+    if (pending) {
+      let i = out.length;
+      while (i > 0 && !out[i - 1].trim()) i--; // after its last line, before the blank ones
+      out.splice(i, 0, `- Updated: ${today}`);
+    }
+    pending = false;
+  };
+  for (const line of lines) {
+    const h = /^##\s+(.+)$/.exec(line);
+    if (h) {
+      close();
+      stamp = named(h[1].trim());
+      pending = stamp;
+    } else if (stamp && /^\s*[-*]\s+Updated:/i.test(line)) {
+      out.push(line.replace(/Updated:.*$/i, `Updated: ${today}`));
+      pending = false;
+      continue;
+    }
+    out.push(line);
+  }
+  close();
+  return out.join('\n');
 }
 
 export function lastPromptAt(lines) {
@@ -93,13 +160,11 @@ if (isMain) process.stdin.on('end', () => {
       // no notebook yet: they should write one
     }
     if (written >= startedAt) return; // updated this turn
-    process.stdout.write(
-      JSON.stringify({
-        decision: 'block',
-        reason:
-          "Whiteboard check (the office, after a turn that did something): you haven't written your notebook this turn, and the owner reads it on your whiteboard. Re-read it against what this turn changed and your status page: take out anything done or handled, refresh that project's `- Next:` and `- Updated:`. If nothing on it is out of date, reply with exactly (quiet) and nothing else.",
-      }),
-    );
+    const md = readFileSync(notebook, 'utf8');
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const next = stampNotebook(md, turnText(lines, startedAt), today);
+    if (next !== md) writeFileSync(notebook, next);
   } catch {
     // never stand in the manager's way over a hook problem
   }

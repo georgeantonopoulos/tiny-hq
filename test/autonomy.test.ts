@@ -106,6 +106,7 @@ test('scorecard: jobs done in the last day, and what woke the manager', () => {
     { type: 'assistant', timestamp: at(8), message: { id: 'm1', content: [{ type: 'tool_use', name: 'Edit', input: {} }], usage: { cache_read_input_tokens: 600_000 } } },
     { type: 'assistant', timestamp: at(8), message: { id: 'm1', content: [{ type: 'text', text: '(quiet)' }], usage: { cache_read_input_tokens: 600_000 } } },
     // Sent back by the office's whiteboard check (not a wake), quiet again: still one quiet wake.
+    { type: 'user', isMeta: true, timestamp: at(8), message: { content: 'Stop hook feedback:\nWhiteboard check (the office, after a turn that did something): ...' } },
     { type: 'assistant', timestamp: at(8), message: { id: 'm2', content: [{ type: 'text', text: '(quiet)' }], usage: { cache_read_input_tokens: 0 } } },
     // A room's message that arrived mid-turn is a wake too.
     { type: 'attachment', timestamp: at(3), attachment: { type: 'queued_command', prompt: 'room news' } },
@@ -113,12 +114,13 @@ test('scorecard: jobs done in the last day, and what woke the manager', () => {
   ];
 
   writeFileSync(join(dir, 's.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
-  assert.deepEqual(managerScore(dir, Date.now()), { managerWakes: 4, managerQuiet: 2, managerTokensM: 1.1, managerRecentMPerHour: 0.1 });
+  assert.deepEqual(managerScore(dir, Date.now()), { managerWakes: 4, managerQuiet: 2, managerTokensM: 1.1, managerRecentMPerHour: 0.1, managerSentBack: 1 });
   // Read again: only the new lines count, nothing twice.
   appendFileSync(join(dir, 's.jsonl'), JSON.stringify({ type: 'user', timestamp: at(0), message: { content: 'The owner: more' } }) + '\n');
-  assert.deepEqual(managerScore(dir, Date.now()), { managerWakes: 5, managerQuiet: 2, managerTokensM: 1.1, managerRecentMPerHour: 0.1 });
+  assert.deepEqual(managerScore(dir, Date.now()), { managerWakes: 5, managerQuiet: 2, managerTokensM: 1.1, managerRecentMPerHour: 0.1, managerSentBack: 1 });
   assert.equal(describeScore({ jobsDone: 3, medianMinutes: 20, asks: 2, managerWakes: 2, managerQuiet: 1, managerTokensM: 0.5, checksQuiet: 5, checksToManager: 1, goalSteps: 1 }).length, 4);
   assert.match(describeScore({ jobsDone: 0, asks: 0, managerWakes: 2, managerQuiet: 1, managerTokensM: 24, managerRecentMPerHour: 0.4, checksQuiet: 0, checksToManager: 0, goalSteps: 0 })[2] ?? '', /last 6 hours: 0\.4M an hour; 24-hour average 1M/);
+  assert.match(describeScore({ jobsDone: 0, asks: 0, managerWakes: 2, managerQuiet: 1, managerTokensM: 24, managerSentBack: 0, checksQuiet: 0, checksToManager: 0, goalSteps: 0 })[2] ?? '', /sent back to their notebook 0 times/);
 });
 
 test('job hold adds its own watch to the timetable, and go takes it away', () => {
