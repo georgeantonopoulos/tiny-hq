@@ -65,9 +65,11 @@ test('a click waits for 30 s without keyboard or mouse, unless the last input wa
   assert.equal(stillEnough(30_000, now), true);
   // A room clicked 5 s ago and that was the last event: the owner hasn't touched it since.
   assert.equal(stillEnough(5_000, now, now - 5_000), true);
-  assert.equal(stillEnough(4_500, now, now - 5_000), true, 'the click took a moment to land');
+  assert.equal(stillEnough(5_100, now, now - 5_000), true, 'ioreg read a moment later');
   // The owner moved the mouse 1 s ago, after the room's click 10 s ago.
   assert.equal(stillEnough(1_000, now, now - 10_000), false);
+  // The owner moved it 500 ms after the room's last event: that is theirs, not the room's.
+  assert.equal(stillEnough(500, now, now - 1_000), false);
 });
 
 test('peekaboo input run directly is sent through manager/screen; looking is not', async () => {

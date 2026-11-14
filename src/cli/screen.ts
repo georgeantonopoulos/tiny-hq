@@ -70,7 +70,10 @@ async function input(verb: string, args: string[]): Promise<number> {
   }
   if (told) console.log(`Still for ${STILL_MS / 1000} s after ${Math.round((Date.now() - start) / 1000)} s of waiting; going ahead.`);
   const r = spawnSync('peekaboo', [verb, ...args], { stdio: 'inherit' });
-  writeLastInput(lastPath);
+  // When the Mac's last input event happened, which is now the room's own: the next command may go
+  // ahead only while that is still the last event.
+  const after = idleMs();
+  if (after !== undefined) writeLastInput(lastPath, Date.now() - after);
   return r.status ?? 1;
 }
 

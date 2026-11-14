@@ -144,11 +144,14 @@ export function idleMs(): number | undefined {
   }
 }
 
-// Still enough to click? 30 s of nothing, or the last event was the office's own input (a room's
-// previous click, which itself only ran after 30 s of stillness), so the owner hasn't touched it since.
+// Still enough to click? 30 s of nothing, or the Mac's last event is still the office's own input
+// (a room's previous click, which itself only ran after 30 s of stillness). `lastOwn` is when that
+// event happened, read from macOS right after the click; any touch by the owner since moves the last
+// event later, so it no longer matches. The small allowance only covers the time ioreg takes.
+export const OWN_EVENT_SLACK_MS = 300;
 export function stillEnough(idle: number, now: number, lastOwn?: number): boolean {
   if (idle >= STILL_MS) return true;
-  return lastOwn !== undefined && lastOwn <= now && now - idle <= lastOwn + 2_000;
+  return lastOwn !== undefined && Math.abs(now - idle - lastOwn) <= OWN_EVENT_SLACK_MS;
 }
 
 export function readLastInput(path: string): number | undefined {
