@@ -2,10 +2,10 @@
 // would hear. Each answer is now watched until the session takes it up.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ACK_MS, ackFrom, ackTold, addAck, checkAcks, loadAcks } from '../src/team/acks.ts';
+import { ACK_MS, ackFrom, ackTold, addAck, checkAcks, loadAcks, transcriptFile } from '../src/team/acks.ts';
 
 const at = Date.parse('2026-11-13T10:15:00Z');
 const ANSWER = 'The owner chose: "Merge #17". (They picked it on the button over your head.)';
@@ -89,4 +89,26 @@ test('an answer handed to a busy session as a queued command counts as shown', (
   const queued = { type: 'attachment', timestamp: new Date(at + 8_000).toISOString(), attachment: { type: 'queued_command', prompt: ANSWER } };
   const recs = [typed(0, 'The owner chose: "Merge #16". (They picked it…)'), queued, said(20, [{ type: 'tool_use', name: 'Bash', input: {} }])];
   assert.deepEqual(ackFrom(recs as never, at, at + 40 * 60_000, ANSWER), { status: 'ok' });
+});
+
+test('a session that moved into a worktree after the answer is still found, and an answer scrolled out of the tail counts as taken up', () => {
+  // Claude Code moves the transcript to the worktree's folder; the newest copy wins.
+  const home = mkdtempSync(join(tmpdir(), 'acks-home-'));
+  const id = 'f4f9b347-1cc5-4c39-82cb-26d7733ee144';
+  const main = join(home, '.claude', 'projects', '-r-atlas');
+  const wt = join(home, '.claude', 'projects', '-r-atlas--claude-worktrees-x');
+  mkdirSync(main, { recursive: true });
+  mkdirSync(wt, { recursive: true });
+  writeFileSync(join(main, `${id}.jsonl`), '');
+  writeFileSync(join(wt, `${id}.jsonl`), '');
+  utimesSync(join(main, `${id}.jsonl`), new Date(at), new Date(at));
+  assert.equal(transcriptFile(id, '/r/atlas', home), join(wt, `${id}.jsonl`));
+  assert.equal(transcriptFile('00000000-0000-0000-0000-000000000000', '/r/atlas', home), undefined);
+  // By the time the watch read it again, the answer was older than the tail it reads.
+  const clipped = (recs: object[]) => Object.assign(recs, { clipped: true }) as Parameters<typeof ackFrom>[0];
+  assert.deepEqual(ackFrom(clipped([said(600, [{ type: 'text', text: 'Shipped.' }])]), at, at + 31 * 60_000, ANSWER), { status: 'ok' });
+  // The whole transcript was read and the answer isn't in it: not taken up.
+  assert.equal(ackFrom([said(600, [{ type: 'text', text: 'Shipped.' }])], at, at + 31 * 60_000, ANSWER).status, 'failed');
+  // Only API errors since: still not taken up.
+  assert.equal(ackFrom(clipped([said(600, [{ type: 'text', text: 'API Error' }], { isApiErrorMessage: true })]), at, at + 31 * 60_000, ANSWER).status, 'failed');
 });
