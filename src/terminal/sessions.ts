@@ -138,8 +138,9 @@ export const real = (p: string): string => {
 // (never cut a session off mid-task); it goes on a later pass once it's idle.
 // Pass every session `claude agents` lists, not just running ones: a stale blocked
 // session still shows up under the name "Manager", which is what a room can't tell apart.
-export function extraManagers<T extends { id: string; realCwd: string; status?: string }>(all: T[], managerDir: string, keepId: string): string[] {
-  return all.filter((s) => s.id !== keepId && worksIn(s.realCwd, managerDir) && s.status !== 'busy').map((s) => s.id);
+// One with servers left running is left alone too: stopping it would kill them (it read "busy" before).
+export function extraManagers<T extends { id: string; realCwd: string; status?: string; servers?: boolean }>(all: T[], managerDir: string, keepId: string): string[] {
+  return all.filter((s) => s.id !== keepId && worksIn(s.realCwd, managerDir) && s.status !== 'busy' && !s.servers).map((s) => s.id);
 }
 
 // One session per room: the one working now, else the most recently active

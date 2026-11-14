@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { extraRoomSessions, ownStatus, serversOnly, type BackgroundSession } from '../src/terminal/sessions.ts';
+import { extraManagers, extraRoomSessions, ownStatus, serversOnly, type BackgroundSession } from '../src/terminal/sessions.ts';
 import { renderStatus } from '../src/terminal/status.ts';
 
 test('a session kept "busy" only by background servers it left running reads idle, and the status page lists it', () => {
@@ -28,6 +28,8 @@ test('a session kept "busy" only by background servers it left running reads idl
   const old = { ...idle, realCwd: room, startedAt: 1 };
   const fresh = { ...atlas, id: 'n', status: 'idle', realCwd: room, startedAt: 2 };
   assert.deepEqual(extraRoomSessions([old, fresh], room), []);
+  // Nor as an extra manager session.
+  assert.deepEqual(extraManagers([{ ...old, id: 'm1' }, { ...fresh, id: 'm2' }], room, 'm2'), []);
 
   const page = renderStatus([{ id: '15db9267', name: 'Atlas', status: 'idle', servers: true, state: 'done', alive: true, room: 'Atlas' }], ['Atlas']);
   assert.match(page, /\(15db9267\): idle, servers left running/);
