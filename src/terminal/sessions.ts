@@ -26,6 +26,24 @@ export interface BackgroundSession {
   startedAt?: number;
   status?: string; // idle | busy
   state?: string; // working | blocked | done (done = its last reply finished; the session is still running)
+  servers?: boolean; // its turn is over and only background shells it left running (dev servers) keep it "busy"; the office shows it idle
+}
+
+// Claude Code calls a session "busy" while a background shell it started is still running, even
+// with no turn going (its own file says status "shell"). A room that left two dev servers running
+// would look busy for days, so these show idle and the servers are listed on the manager's status page.
+const SESSIONS_DIR = join(homedir(), '.claude', 'sessions');
+export function ownStatus(pid: number | undefined, dir = SESSIONS_DIR): string | undefined {
+  if (!pid) return undefined;
+  try {
+    const o = JSON.parse(readFileSync(join(dir, `${pid}.json`), 'utf8')) as { status?: unknown };
+    return typeof o.status === 'string' ? o.status : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function serversOnly<T extends BackgroundSession>(s: T, own = ownStatus(s.pid)): T {
+  return s.status === 'busy' && s.state !== 'working' && own === 'shell' ? { ...s, status: 'idle', servers: true } : s;
 }
 
 // node-pty ships ready-built for macOS, but its helper loses the "may run" bit
@@ -120,8 +138,9 @@ export const real = (p: string): string => {
 // (never cut a session off mid-task); it goes on a later pass once it's idle.
 // Pass every session `claude agents` lists, not just running ones: a stale blocked
 // session still shows up under the name "Manager", which is what a room can't tell apart.
-export function extraManagers<T extends { id: string; realCwd: string; status?: string }>(all: T[], managerDir: string, keepId: string): string[] {
-  return all.filter((s) => s.id !== keepId && worksIn(s.realCwd, managerDir) && s.status !== 'busy').map((s) => s.id);
+// One with servers left running is left alone too: stopping it would kill them (it read "busy" before).
+export function extraManagers<T extends { id: string; realCwd: string; status?: string; servers?: boolean }>(all: T[], managerDir: string, keepId: string): string[] {
+  return all.filter((s) => s.id !== keepId && worksIn(s.realCwd, managerDir) && s.status !== 'busy' && !s.servers).map((s) => s.id);
 }
 
 // One session per room: the one working now, else the most recently active
@@ -130,7 +149,7 @@ export function extraManagers<T extends { id: string; realCwd: string; status?: 
 // just finished). The owner's own terminal sessions aren't in this list, so they're
 // never touched. Ranking by start time alone let a fresh, never-used session outrank
 // one busy in a worktree, and stop it once it paused.
-export function extraRoomSessions<T extends { id: string; realCwd: string; status?: string; startedAt?: number }>(all: T[], roomPath: string, hold: (s: T) => boolean = () => false, activeAt: (s: T) => number = (s) => s.startedAt ?? 0): string[] {
+export function extraRoomSessions<T extends { id: string; realCwd: string; status?: string; servers?: boolean; startedAt?: number }>(all: T[], roomPath: string, hold: (s: T) => boolean = () => false, activeAt: (s: T) => number = (s) => s.startedAt ?? 0): string[] {
   const here = all.filter((s) => worksIn(s.realCwd, roomPath));
   if (here.length < 2) return [];
   const rank = (s: T) => [Number(s.status === 'busy'), activeAt(s)] as const;
@@ -139,7 +158,7 @@ export function extraRoomSessions<T extends { id: string; realCwd: string; statu
     const [bb, bt] = rank(b);
     return bb > ab || (bb === ab && bt > at) ? b : a;
   });
-  return here.filter((s) => s !== newest && s.status !== 'busy' && !hold(s)).map((s) => s.id);
+  return here.filter((s) => s !== newest && s.status !== 'busy' && !s.servers && !hold(s)).map((s) => s.id);
 }
 
 // The owner's own terminal sessions (they have no short id, so listSessions skips them):
@@ -196,7 +215,7 @@ export async function listSessions(): Promise<BackgroundSession[]> {
   const out = await run(['agents', '--json'], process.env.HOME ?? '/');
   const rows = JSON.parse(out) as BackgroundSession[] | { sessions?: BackgroundSession[] };
   const list = Array.isArray(rows) ? rows : (rows.sessions ?? []);
-  return list.filter((s) => typeof s.id === 'string' && SHORT_ID.test(s.id) && typeof s.cwd === 'string');
+  return list.filter((s) => typeof s.id === 'string' && SHORT_ID.test(s.id) && typeof s.cwd === 'string').map((s) => serversOnly(s));
 }
 
 // Every background session whose process is running, with its folder resolved.
