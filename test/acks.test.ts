@@ -109,6 +109,9 @@ test('a session that moved into a worktree after the answer is still found, and 
   assert.deepEqual(ackFrom(clipped([said(600, [{ type: 'text', text: 'Shipped.' }])]), at, at + 31 * 60_000, ANSWER), { status: 'ok' });
   // The whole transcript was read and the answer isn't in it: not taken up.
   assert.equal(ackFrom([said(600, [{ type: 'text', text: 'Shipped.' }])], at, at + 31 * 60_000, ANSWER).status, 'failed');
+  // A sign-in error that isn't flagged as an API error, or silence: not taken up either.
+  assert.equal(ackFrom(clipped([said(600, [{ type: 'text', text: 'Please run /login · API Error: 403' }])]), at, at + 31 * 60_000, ANSWER).status, 'failed');
+  assert.equal(ackFrom(clipped([{ type: 'user', timestamp: new Date(at + 600_000).toISOString(), message: { content: 'tool output' } }]), at, at + 31 * 60_000, ANSWER).status, 'failed');
   // Only API errors since: still not taken up.
   assert.equal(ackFrom(clipped([said(600, [{ type: 'text', text: 'API Error' }], { isApiErrorMessage: true })]), at, at + 31 * 60_000, ANSWER).status, 'failed');
 });

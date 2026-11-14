@@ -78,10 +78,11 @@ export function ackFrom(records: Records, at: number, now = Date.now(), answer =
   // The answer is older than the part of the transcript read (only its tail is), and the session has
   // written since: it took it up. This happens when a session moves into a worktree right after the
   // owner's click: the watch loses its transcript for a while, and by the time it finds it again the
-  // answer has scrolled out of the tail.
+  // answer has scrolled out of the tail. Its replies are then judged from the start of what was read,
+  // with the same checks as any reply, so a sign-in or API error still fails.
   const first = records.find((r) => !!r.timestamp);
-  if (from < 0 && seen === undefined && records.clipped && first && Date.parse(first.timestamp!) > at && records.some((r) => r.type === 'assistant' && !r.isSidechain && !r.isApiErrorMessage)) return { status: 'ok' };
-  if (from < 0 && seen === undefined) return now - at >= GIVE_UP_MS ? { status: 'failed', why: `the answer never showed up in its chat in the ${Math.round((now - at) / 60_000)} minutes since` } : { status: 'wait' };
+  const scrolledOut = from < 0 && seen === undefined && !!records.clipped && !!first && Date.parse(first.timestamp!) > at;
+  if (from < 0 && seen === undefined && !scrolledOut) return now - at >= GIVE_UP_MS ? { status: 'failed', why: `the answer never showed up in its chat in the ${Math.round((now - at) / 60_000)} minutes since` } : { status: 'wait' };
   for (const r of records.slice(from + 1)) {
     if (r.type !== 'assistant' || r.isSidechain) continue;
     const content = Array.isArray(r.message?.content) ? (r.message!.content as { type?: string; text?: string }[]) : [];
