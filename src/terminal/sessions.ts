@@ -159,6 +159,13 @@ export async function allSessions(): Promise<(BackgroundSession & { realCwd: str
 // folder, or a Claude Code worktree inside it (<project>/.claude/worktrees/<name>),
 // which is where a session goes after EnterWorktree. Other subfolders don't count
 // (the manager's folder sits inside the office's folder but is not the office's own room).
+// Folders that have rooms of their own (set by the office each time it scans projects).
+// A nested repo with its own room owns its worktrees; the parent room doesn't claim them.
+let roomFolders: string[] = [];
+export function setRoomFolders(paths: string[]): void {
+  roomFolders = paths.map((p) => real(p));
+}
+
 export function worksIn(realCwd: string, projectPath: string): boolean {
   const want = real(projectPath);
   if (realCwd === want || realCwd.startsWith(`${want}/.claude/worktrees/`)) return true;
@@ -169,6 +176,7 @@ export function worksIn(realCwd: string, projectPath: string): boolean {
   const at = realCwd.indexOf('/.claude/worktrees/', want.length);
   if (at < 0) return false;
   const sub = realCwd.slice(0, at);
+  if (roomFolders.some((r) => r !== want && r.startsWith(`${want}/`) && (sub === r || sub.startsWith(`${r}/`)))) return false;
   return !sub.slice(want.length).includes('/.claude/') && existsSync(join(sub, '.git'));
 }
 

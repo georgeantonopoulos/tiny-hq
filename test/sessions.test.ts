@@ -93,6 +93,21 @@ test('a worktree of a separate repo nested in the project counts as that room', 
   assert.equal(worksIn(`${p}/app`, p), false, 'the nested repo itself is a subfolder, as before');
 });
 
+test('a nested repo with a room of its own keeps its worktrees; the parent room does not claim them', async () => {
+  const { worksIn, setRoomFolders } = await import('../src/terminal/sessions.ts');
+  const { mkdtempSync, mkdirSync, realpathSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const p = realpathSync(mkdtempSync(`${tmpdir()}/room-`));
+  mkdirSync(`${p}/app/.git`, { recursive: true });
+  try {
+    setRoomFolders([p, `${p}/app`]);
+    assert.equal(worksIn(`${p}/app/.claude/worktrees/task`, p), false, 'not the parent room');
+    assert.equal(worksIn(`${p}/app/.claude/worktrees/task`, `${p}/app`), true, "the nested repo's own room");
+  } finally {
+    setRoomFolders([]);
+  }
+});
+
 test('the most recently used session is the one a room joins, by its last real message', async () => {
   const { lastActiveAt } = await import('../src/terminal/sessions.ts');
   const { mkdirSync, utimesSync } = await import('node:fs');

@@ -28,7 +28,7 @@ import { discoverProjects, isGone } from '../discovery/scan.ts';
 import { MAX_ROOMS, layoutFloor } from '../office/layout.ts';
 import { applyScene, loadScene } from '../office/scene.ts';
 import { loadLeads, saveLeads, staffRooms, writeNameTag, type Leads } from '../team/leads.ts';
-import { managerAddress, promptPending, userEnv, allSessions, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
+import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
 import { Allowance, meters, plan, usageReader, type Plan } from '../team/budget.ts';
@@ -75,6 +75,7 @@ const floors = new FloorCache(async () => {
   // however busy they get.
   const filed = (p: { path: string }) => config.archivedProjects.includes(p.path);
   const projects = [...found.filter((p) => !filed(p)), ...found.filter(filed)];
+  setRoomFolders(found.map((p) => p.path));
   const onFloor = Math.min(MAX_ROOMS, found.filter((p) => !filed(p)).length);
   // Every room on the floor gets a character (a name from the list; no model call).
   const staffed = await staffRooms(projects.slice(0, onFloor), leads);
