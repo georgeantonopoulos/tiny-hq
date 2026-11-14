@@ -19,6 +19,7 @@ import { isTrusted, trustFolder } from '../terminal/trust.ts';
 import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
 import { tidyScreen } from '../team/screen.ts';
+import { compactPath, contextSize, loadCompacts, saveCompacts, shouldCompact } from '../team/compact.ts';
 import { ackTold, acksPath, addAck, checkAcks } from '../team/acks.ts';
 import { createDaemon, fromWords, type From } from './server.ts';
 import { Devices, RateLimit } from './remote.ts';
@@ -1473,6 +1474,28 @@ async function retireExtraRoomSessions(): Promise<void> {
   }
 }
 
+// Long conversations: type /compact into one quiet office session a tick whose last step read
+// more than 250k tokens (src/team/compact.ts). The owner's own terminal sessions aren't listed here.
+const COMPACTS = compactPath(DATA_DIR);
+async function compactLongSessions(): Promise<void> {
+  const now = Date.now();
+  const asked = loadCompacts(COMPACTS);
+  const asking = new Set(loadAsks(ASKS).map((a) => a.sessionId).filter(Boolean));
+  for (const s of (await allSessions()).filter((x) => worksAlive(x.pid ?? 0) && x.sessionId)) {
+    if (s.status === 'busy' || asking.has(s.sessionId) || (terminals.forSession(s.id)?.viewers() ?? 0) > 0) continue;
+    if (s.state === 'blocked' || promptPending(s.sessionId!, s.cwd, DATA_DIR)) continue;
+    const transcript = join(homedir(), '.claude', 'projects', s.cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${s.sessionId}.jsonl`);
+    const tokens = contextSize(transcript);
+    if (!shouldCompact({ tokens, quietFor: now - lastActiveAt(s), askedAt: asked[s.sessionId!], now })) continue;
+    const ok = await typeInto(s, '/compact', true);
+    console.log(`long conversation: asked ${s.name ?? s.id} to summarise (${Math.round(tokens / 1000)}k tokens): ${ok}`);
+    if (ok === 'later') continue; // its screen wasn't up: try the next one, and this one next tick
+    asked[s.sessionId!] = now;
+    saveCompacts(COMPACTS, asked, now);
+    return; // one a tick
+  }
+}
+
 // New office happenings from Haiku, about once a day; alongside the tick, never blocking it.
 const GAGS = join(DATA_DIR, 'happenings.json');
 // The coffee room (src/team/coffee.ts): a few times a day, 2-3 rooms share what they learned.
@@ -1586,6 +1609,7 @@ server.listen(port, '127.0.0.1', () => {
         logAsks();
         await clearAnsweredInChat();
         await retireExtraRoomSessions();
+        await compactLongSessions();
         if (tidyScreen(DATA_DIR)) console.log('screen helper: time up, stopped');
         await tellGithub();
         freshGags();
