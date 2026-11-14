@@ -75,8 +75,10 @@ const floors = new FloorCache(async () => {
   // however busy they get.
   const filed = (p: { path: string }) => config.archivedProjects.includes(p.path);
   const projects = [...found.filter((p) => !filed(p)), ...found.filter(filed)];
-  setRoomFolders(found.map((p) => p.path));
   const onFloor = Math.min(MAX_ROOMS, found.filter((p) => !filed(p)).length);
+  // Only folders with a room on the floor own their worktrees; an archived or overflow
+  // nested repo leaves them to the parent room.
+  setRoomFolders(projects.slice(0, onFloor).map((p) => p.path));
   // Every room on the floor gets a character (a name from the list; no model call).
   const staffed = await staffRooms(projects.slice(0, onFloor), leads);
   if (staffed.hired.length) {
