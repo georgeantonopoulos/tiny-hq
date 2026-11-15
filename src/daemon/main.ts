@@ -80,12 +80,12 @@ const floors = new FloorCache(async () => {
   const filed = (p: { path: string }) => config.archivedProjects.includes(p.path);
   // No room leaves the floor without the owner's yes on a button: seated rooms stay,
   // newcomers only take a free spot.
-  const seatedPaths = seatFloor(found.filter((p) => !filed(p)).map((p) => p.path), seats, MAX_ROOMS, pinned);
+  // A seated room missing from this scan (a disk not mounted, history aged out) keeps its seat for later.
+  const missing = (seats?.seated ?? []).filter((p) => !found.some((f) => f.path === p) && !config.archivedProjects.includes(p) && !config.hiddenProjects.includes(p));
+  const seatedPaths = seatFloor(found.filter((p) => !filed(p)).map((p) => p.path), seats, MAX_ROOMS, pinned, missing.length);
   const seated = new Set(seatedPaths);
   const projects = [...found.filter((p) => seated.has(p.path)), ...found.filter((p) => !seated.has(p.path))];
   const onFloor = seatedPaths.length;
-  // A seated room missing from this scan (a disk not mounted, history aged out) keeps its seat for later.
-  const missing = (seats?.seated ?? []).filter((p) => !found.some((f) => f.path === p) && !config.archivedProjects.includes(p) && !config.hiddenProjects.includes(p));
   saveFloorSeats(seats, [...seatedPaths, ...missing]);
   // Only folders with a room on the floor own their worktrees; an archived or overflow
   // nested repo leaves them to the parent room.
@@ -107,6 +107,10 @@ void floors.get(); // start the first scan straight away
 // to the cupboard are in it); the floor uses the busiest rooms until it's fixed.
 function saveFloorSeats(seats: Seats | undefined, seated: string[]): void {
   if (!seats && existsSync(floorPath(DATA_DIR))) return;
+  // The owner's floor away/back ran while this scan was looking: leave their record as it is;
+  // the next scan starts from it.
+  const now = loadSeats(floorPath(DATA_DIR));
+  if (JSON.stringify(now) !== JSON.stringify(seats)) return;
   if (seats && seats.seated.length === seated.length && seated.every((p) => seats.seated.includes(p))) return;
   try {
     saveSeats(floorPath(DATA_DIR), { seated, away: seats?.away ?? [] });
@@ -1102,7 +1106,8 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
   // Button-only posts: the owner's Approve on a post's exact text is the one way it can go up.
   if (yes && ask.post) {
     // For that PR/issue only; a button from before --target names it in its question ("PR #44").
-    grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '');
+    // The pass is for where the asker runs the post (a worktree or clone kept outside the room counts).
+    grantPass(approvalsPath(DATA_DIR), ask.post, ask.from ?? ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '');
     console.log(`posts: the owner approved a post's exact text for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
   }
   const id = ask.id;

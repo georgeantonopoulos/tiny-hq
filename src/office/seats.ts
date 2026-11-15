@@ -40,14 +40,15 @@ export function saveSeats(path: string, s: Seats): void {
 // candidates: every project that could have a room, busiest first (pinned first), with
 // the owner's archived and hidden folders already left out. Returns the floor in that order.
 // Rooms already seated stay, even past `max`; free spots go to the busiest newcomers;
-// pinned folders always have a spot.
-export function seatFloor(candidates: readonly string[], seats: Seats | undefined, max: number, pinned: readonly string[] = []): string[] {
+// pinned folders always have a spot. `reserved`: seated rooms missing from this scan (a disk not
+// mounted): they keep their seat, so a newcomer doesn't take it while they're away.
+export function seatFloor(candidates: readonly string[], seats: Seats | undefined, max: number, pinned: readonly string[] = [], reserved = 0): string[] {
   const away = new Set(seats?.away ?? []);
   const open = candidates.filter((p) => !away.has(p));
   if (!seats) return open.slice(0, max);
   const keep = new Set([...seats.seated, ...pinned].filter((p) => open.includes(p)));
   for (const p of open) {
-    if (keep.size >= max) break;
+    if (keep.size + reserved >= max) break;
     keep.add(p);
   }
   return open.filter((p) => keep.has(p));

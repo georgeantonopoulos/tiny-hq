@@ -64,3 +64,18 @@ test('the floor scan goes through seatFloor and saves who is seated', () => {
   // A broken floor file is never overwritten (it holds the owner's cupboard picks).
   assert.match(main, /if \(!seats && existsSync\(floorPath\(DATA_DIR\)\)\) return;/);
 });
+
+test('a seated room on a disk that is not mounted keeps its seat: no newcomer takes it', () => {
+  const seated = ps(12);
+  const here = seated.slice(0, 11); // /d/p11 is missing from this scan
+  const floor = seatFloor(['/d/new', ...here], { seated, away: [] }, 12, [], 1);
+  assert.ok(!floor.includes('/d/new'));
+  assert.deepEqual(floor, here);
+});
+
+// Guard: a floor away/back that lands while a scan is running is not overwritten by that scan.
+test('the floor scan leaves the record alone when it changed during the scan', () => {
+  const main = readFileSync(new URL('../src/daemon/main.ts', import.meta.url), 'utf8');
+  assert.match(main, /JSON\.stringify\(now\) !== JSON\.stringify\(seats\)\) return;/);
+  assert.match(main, /MAX_ROOMS, pinned, missing\.length\)/);
+});

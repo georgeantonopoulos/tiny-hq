@@ -166,7 +166,7 @@ if (args[0] === 'list') {
     deploy = { changes, proven, commits: commitsSinceLastDeploy(folder, name, m[1]!) };
   }
   // Claude Code tells its shell which session this is: the answer goes back to exactly this one.
-  saveAsks(path, addAsk(asks, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(deploy ? { deploy } : {}) } : {}) }));
+  saveAsks(path, addAsk(asks, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(deploy ? { deploy } : {}) } : {}) }, folder));
   console.log(
     choices
       ? `The owner now sees a question mark over your head; tapping it shows your question with ${choices.length} buttons: ${choices.map((c) => `"${c}"`).join(', ')}. Their pick will arrive in this chat as "The owner chose: ..."; stop here and wait for it.`

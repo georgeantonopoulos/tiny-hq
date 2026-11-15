@@ -88,6 +88,7 @@ test('ask refuses a folder that is no room, and files a worktree button under it
   assert.equal(list.length, 1);
   assert.equal(list[0].folder, notes);
   assert.equal(list[0].sessionId, SID);
+  assert.equal(list[0].from, wt, 'an approved post\'s pass is for the folder the asker ran from');
 });
 
 test("a session's button goes over the room it was started in, wherever it runs ask from", () => {

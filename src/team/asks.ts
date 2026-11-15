@@ -10,7 +10,8 @@ import { normTarget } from './posts.ts';
 
 export interface Ask {
   id: string; // random, short
-  folder: string; // where the asking session works (real path)
+  folder: string; // the room the button shows over (real path)
+  from?: string; // where the asking session ran, when that's not the room itself (a worktree or clone kept elsewhere): an approved post's pass is for there
   sessionId?: string; // the asking session itself, so the answer reaches it and not another session in the same folder
   question: string; // one line the owner reads on the button
   createdAt: number;
@@ -65,6 +66,7 @@ export function validAsk(a: unknown): Ask | undefined {
   return {
     id: o.id,
     folder: o.folder,
+    ...(typeof o.from === 'string' && o.from.startsWith('/') && o.from !== o.folder ? { from: o.from.slice(0, 1000) } : {}),
     question,
     createdAt: typeof o.createdAt === 'number' ? o.createdAt : Date.now(),
     ...(typeof o.sessionId === 'string' && /^[0-9a-f-]{36}$/.test(o.sessionId) ? { sessionId: o.sessionId } : {}),
@@ -139,8 +141,8 @@ export const MAX_ASKS_PER_FOLDER = 5;
 // A new ask joins the folder's open ones. Only the same question again (or a new
 // `job wait` for the same job) replaces its older copy; past five the oldest goes.
 // (It used to replace every ask from the folder: the second question wiped the first.)
-export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string; deploy?: Ask['deploy'] }): Ask[] {
-  const a = validAsk({ id: id.padEnd(6, '0'), folder, question, createdAt: now, sessionId, job, options, ...(askedFor ? { askedFor: true } : {}), ...(trust ? { trust } : {}), ...(proof ?? {}) });
+export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string; deploy?: Ask['deploy'] }, from?: string): Ask[] {
+  const a = validAsk({ id: id.padEnd(6, '0'), folder, ...(from ? { from } : {}), question, createdAt: now, sessionId, job, options, ...(askedFor ? { askedFor: true } : {}), ...(trust ? { trust } : {}), ...(proof ?? {}) });
   if (!a) return asks;
   const same = (x: Ask) => x.folder === folder && (x.question === a.question || (!!a.job && x.job === a.job));
   const mine = [...asks.filter((x) => x.folder === folder && !same(x)), a].slice(-MAX_ASKS_PER_FOLDER);
