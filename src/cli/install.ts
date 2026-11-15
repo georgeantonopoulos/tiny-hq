@@ -1,5 +1,5 @@
 // What Tiny HQ adds to the owner's Mac outside its own folder, each only with their yes, and how
-// each comes off again: four Claude Code hooks (in ~/.claude/settings.json), the theoffice skill
+// each comes off again: five Claude Code hooks (in ~/.claude/settings.json), the theoffice skill
 // (a link in ~/.claude/skills) and two login items (launchd agents). Every hook command carries the
 // marker `# tiny-hq` so uninstall removes exactly what was added and nothing of the owner's.
 // What was added is also recorded in <dataDir>/installed.json.
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 export const MARK = '# tiny-hq';
 
 export interface HookSpec {
-  id: 'name-tag' | 'waiting' | 'public-posts' | 'room-questions';
+  id: 'name-tag' | 'waiting' | 'public-posts' | 'room-questions' | 'screen-clicks';
   event: 'SessionStart' | 'PermissionRequest' | 'PreToolUse' | 'Stop';
   matcher?: string;
   file: string; // under <app>/hooks
@@ -45,6 +45,13 @@ export const HOOKS: HookSpec[] = [
     event: 'Stop',
     file: 'room-ask-guard.mjs',
     what: "Questions as buttons: when a room's Claude asks you something in its chat instead of putting up a question button, it's sent back once to put it on a button, so you see a question mark over that room. Only in your rooms.",
+  },
+  {
+    id: 'screen-clicks',
+    event: 'PreToolUse',
+    matcher: 'Bash',
+    file: 'screen-click-guard.mjs',
+    what: "Clicks wait for you: when a room tests a desktop app, its clicks and typing wait until you've left the keyboard and mouse alone for 30 s, so they never land under your hands. Only in your rooms.",
   },
 ];
 
