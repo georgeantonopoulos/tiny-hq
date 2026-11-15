@@ -147,3 +147,18 @@ test('a failed evening note is tried again next tick; marked filed only once it 
   assert.match(fileEvening(empty, eveningPath(empty), [], at, (f) => f, () => assert.fail('no page'))!, /nothing to say/);
   assert.equal(lastFiled(empty), at);
 });
+
+// From review: the Mac slept through the first 19:00; the next evening's note must still carry
+// what was queued before it, and not every job ever finished.
+test('the first evening note carries every queued entry, but finished jobs from one day only', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-evefirst-'));
+  const path = eveningPath(dir);
+  addEntry(path, { at: new Date(2026, 10, 14, 10).getTime(), kind: 'decision', folder: '/d/app', text: 'Kept the old icon' });
+  const at = new Date(2026, 10, 15, 19, 1).getTime();
+  const job = (id: string, updatedAt: number) => ({ id, room: '/d/app', title: `job ${id}`, status: 'done', createdAt: updatedAt, updatedAt }) as unknown as Job;
+  const filed: string[] = [];
+  fileEvening(dir, path, [job('old', new Date(2026, 9, 1).getTime()), job('new', at - 3_600_000)], at, (f) => f, (t, md) => filed.push(md));
+  assert.match(filed[0]!, /Kept the old icon/);
+  assert.match(filed[0]!, /job new/);
+  assert.doesNotMatch(filed[0]!, /job old/);
+});

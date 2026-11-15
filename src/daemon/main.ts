@@ -1382,6 +1382,9 @@ function logAsks(): void {
 // (the room that asked is told; a job it carried rests a week), and once a day at EVENING_AT
 // the evening note goes on the owner's desk with everything that didn't need them. No tokens.
 const EVENING = eveningPath(MANAGER_NOTES_DIR);
+// Rooms not told yet that their button came down (busy with the owner, or not running), tried
+// each tick for up to a day. The button itself is already down.
+const expiredUntold = new Map<string, { ask: Ask; since: number }>();
 async function runEvening(): Promise<void> {
   const now = Date.now();
   const { left, expired } = expiredAsks(loadAsks(ASKS), now);
@@ -1393,13 +1396,18 @@ async function runEvening(): Promise<void> {
     }
     saveAsks(ASKS, left);
     saveJobs(JOBS, restJobs(loadJobs(JOBS), expired, now));
+    // The manager (who asks over rooms too) reads it in the note.
+    for (const a of expired) if (!a.askedFor) expiredUntold.set(a.id, { ask: a, since: now });
+  }
+  if (expiredUntold.size) {
     try {
       const live = await liveSessions();
-      for (const a of expired) {
-        // The room that asked hears it now; a job's own button (job wait) has no asker, so the
-        // room's session hears it. The manager (who asks over rooms too) reads it in the note.
-        const asker = a.askedFor ? undefined : a.sessionId ? live.find((x) => x.sessionId === a.sessionId) : a.job ? pick(live.filter((x) => worksIn(x.realCwd, a.folder)), a.folder) : undefined;
-        if (asker && !worksIn(asker.realCwd, MANAGER_DIR)) await typeInto(asker, expiredLine(a), false).catch(() => undefined);
+      for (const [id, { ask: a, since }] of expiredUntold) {
+        // The room that asked hears it; a job's own button (job wait) has no asker, so the
+        // room's session hears it.
+        const asker = a.sessionId ? live.find((x) => x.sessionId === a.sessionId) : a.job ? pick(live.filter((x) => worksIn(x.realCwd, a.folder)), a.folder) : undefined;
+        const told = asker && !worksIn(asker.realCwd, MANAGER_DIR) ? await typeInto(asker, expiredLine(a), false).catch(() => false as const) : false;
+        if (told === true || now - since > 86_400_000) expiredUntold.delete(id);
       }
     } catch (e) {
       console.log(`asks: could not tell the rooms about expired buttons (${(e as Error).message})`);

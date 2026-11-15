@@ -77,8 +77,9 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const COUNT_WORD: Record<Kind, string> = { decision: 'decision', merge: 'merge', step: 'goal step', expired: 'button', github: 'GitHub item', note: 'note' };
 
 // The page itself: everything since the last note, grouped. undefined when there's nothing.
-export function eveningNote(entries: Entry[], jobs: Job[], since: number, now: number, roomName: (folder: string) => string): { title: string; markdown: string } | undefined {
-  const fresh = entries.filter((e) => e.at > since && e.at <= now);
+// `entriesSince` can reach further back than `since` (the first note takes every entry queued).
+export function eveningNote(entries: Entry[], jobs: Job[], since: number, now: number, roomName: (folder: string) => string, entriesSince = since): { title: string; markdown: string } | undefined {
+  const fresh = entries.filter((e) => e.at > entriesSince && e.at <= now);
   const done = jobs.filter((j) => j.status === 'done' && j.updatedAt > since && j.updatedAt <= now);
   if (!fresh.length && !done.length) return undefined;
   const day = new Date(now).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
@@ -126,7 +127,10 @@ export function expiredLine(ask: Ask): string {
 export function fileEvening(notesDir: string, entriesPath: string, jobs: Job[], now: number, roomName: (folder: string) => string, file: (title: string, markdown: string) => void): string | undefined {
   const due = eveningDue(lastFiled(notesDir), new Date(now));
   if (due === undefined) return undefined;
-  const note = eveningNote(loadEntries(entriesPath), jobs, lastFiled(notesDir) || due - 86_400_000, now, roomName);
+  // The first note (nothing filed yet) carries every entry queued, even if the first 19:00 was
+  // missed (asleep, say); finished jobs still go back one day only, not to the beginning.
+  const last = lastFiled(notesDir);
+  const note = eveningNote(loadEntries(entriesPath), jobs, last || due - 86_400_000, now, roomName, last || 0);
   if (!note) {
     markFiled(notesDir, now);
     return 'evening note: nothing to say today, no page';
