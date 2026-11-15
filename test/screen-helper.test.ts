@@ -152,6 +152,10 @@ test('peekaboo input run directly is sent through manager/screen; looking is not
   assert.equal(directInput(`grep x <<< '${pb} click'`), undefined, 'a here-string to a non-shell');
   assert.equal(directInput(`cat <<EOF | grep x\n${pb} click\nEOF`), undefined);
   assert.equal(directInput(`false || ${pb} click`), 'click');
+  assert.equal(directInput(`cat <<EOF\n$(${pb} click --on B1)\nEOF`), 'click', 'an unquoted heredoc runs its $(...)');
+  assert.equal(directInput(`cat > a.md <<EOF\nsay "hi" \`${pb} type x\`\nEOF`), 'type');
+  assert.equal(directInput(`cat <<EOF\nprice \\$(${pb} click) stays text\nEOF`), undefined, 'an escaped $ is text');
+  assert.equal(directInput(`cat <<'EOF'\n$(${pb} click)\nEOF`), undefined, 'a quoted tag keeps it as text');
   assert.equal(directInput(`${pb} menu list-all --app Finder`), undefined);
   assert.equal(directInput(`${pb} click --help`), undefined);
   assert.equal(directInput(`${pb} help click`), undefined);

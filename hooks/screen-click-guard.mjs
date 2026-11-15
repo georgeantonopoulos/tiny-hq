@@ -147,7 +147,7 @@ export function commands(src, depth = 0) {
       while (src[i] === ' ' || src[i] === '\t') i++;
       const m = /^(?:(['"])([^'"\n]+)\1|\\?([^\s;&|<>()'"]+))/.exec(src.slice(i));
       if (m) {
-        heredocs.push({ tag: m[2] ?? m[3], strip, owner: words });
+        heredocs.push({ tag: m[2] ?? m[3], strip, owner: words, quoted: !!m[1] || m[0].startsWith('\\') });
         i += m[0].length - 1;
       } else i--;
     } else if (c === '\n') {
@@ -166,6 +166,8 @@ export function commands(src, depth = 0) {
         }
         i = at - 1;
         fed.push({ owner: h.owner, text: body.join('\n') });
+        // An unquoted tag's body is expanded like "...": its $(...) and `...` run whoever reads it.
+        if (!h.quoted) sub(`"${body.join('\n').replace(/\\[^]|"/g, (x) => (x === '"' ? '\\"' : x))}"`);
       }
     } else if (c === '|' && src[i + 1] !== '|') {
       const from = words;
