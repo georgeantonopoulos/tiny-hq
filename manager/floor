@@ -1,0 +1,6 @@
+#!/bin/sh
+# Who has a room on the floor. A room keeps its spot until the owner sends it away on a button.
+#   ./floor list | ./floor away <room folder> | ./floor back <room folder>
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/floor.ts" "$@"

@@ -21,7 +21,7 @@ It runs on your Mac, on your own Claude Code plan. There is no server of ours, n
 
 ## What you get
 
-- **A room per project,** found from your Claude Code history and your project folders. Bigger rooms for busier projects; quiet ones go to the archive cupboard.
+- **A room per project,** found from your Claude Code history and your project folders. Bigger rooms for busier projects. A room keeps its spot until you send it to the archive cupboard; new projects only take free spots.
 - **A manager** who hands work to the right room, writes a brief for every job, nudges rooms that go quiet, and reports back in a speech bubble.
 - **Jobs that get finished.** Each job has a "done when" line; the office keeps it moving until it's true, and holds it when it's waiting on someone else.
 - **Question buttons, not chat.** Every question for you is an Approve / No (or a short list of choices) over someone's head, and it must say why only you can answer and what was already tried.

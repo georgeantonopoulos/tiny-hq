@@ -26,6 +26,7 @@ import { Devices, RateLimit } from './remote.ts';
 import { FloorCache } from '../office/cache.ts';
 import { discoverProjects, isGone } from '../discovery/scan.ts';
 import { MAX_ROOMS, layoutFloor } from '../office/layout.ts';
+import { floorPath, loadSeats, saveSeats, seatFloor, type Seats } from '../office/seats.ts';
 import { applyScene, loadScene } from '../office/scene.ts';
 import { loadLeads, saveLeads, staffRooms, writeNameTag, type Leads } from '../team/leads.ts';
 import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
@@ -69,13 +70,23 @@ function saveModels(): void {
 }
 const floors = new FloorCache(async () => {
   const pinned = config.pinnedProjects.filter((p) => existsSync(p));
+  // Rooms the owner has on the floor keep their spot (src/office/seats.ts), so they're always scanned.
+  const seats = loadSeats(floorPath(DATA_DIR));
+  const seatedNow = (seats?.seated ?? []).filter((p) => existsSync(p));
   // A folder that's gone (moved or deleted) gets no room and no archive entry.
-  const found = (await discoverProjects(undefined, undefined, [...config.extraProjects.filter((p) => existsSync(p)), ...pinned], pinned, config.hiddenProjects, config.projectRoots)).filter((p) => !isGone(p.path));
+  const found = (await discoverProjects(undefined, undefined, [...config.extraProjects.filter((p) => existsSync(p)), ...pinned, ...seatedNow], pinned, config.hiddenProjects, config.projectRoots)).filter((p) => !isGone(p.path));
   // The owner's archived folders (config "archivedProjects") go to the cupboard and stay there,
   // however busy they get.
   const filed = (p: { path: string }) => config.archivedProjects.includes(p.path);
-  const projects = [...found.filter((p) => !filed(p)), ...found.filter(filed)];
-  const onFloor = Math.min(MAX_ROOMS, found.filter((p) => !filed(p)).length);
+  // No room leaves the floor without the owner's yes on a button: seated rooms stay,
+  // newcomers only take a free spot.
+  const seatedPaths = seatFloor(found.filter((p) => !filed(p)).map((p) => p.path), seats, MAX_ROOMS, pinned);
+  const seated = new Set(seatedPaths);
+  const projects = [...found.filter((p) => seated.has(p.path)), ...found.filter((p) => !seated.has(p.path))];
+  const onFloor = seatedPaths.length;
+  // A seated room missing from this scan (a disk not mounted, history aged out) keeps its seat for later.
+  const missing = (seats?.seated ?? []).filter((p) => !found.some((f) => f.path === p) && !config.archivedProjects.includes(p) && !config.hiddenProjects.includes(p));
+  saveFloorSeats(seats, [...seatedPaths, ...missing]);
   // Only folders with a room on the floor own their worktrees; an archived or overflow
   // nested repo leaves them to the parent room.
   setRoomFolders(projects.slice(0, onFloor).map((p) => p.path));
@@ -91,6 +102,15 @@ const floors = new FloorCache(async () => {
   return floor;
 });
 void floors.get(); // start the first scan straight away
+// Remember who is on the floor, so the next scan keeps them (only when it changed).
+function saveFloorSeats(seats: Seats | undefined, seated: string[]): void {
+  if (seats && seats.seated.length === seated.length && seated.every((p) => seats.seated.includes(p))) return;
+  try {
+    saveSeats(floorPath(DATA_DIR), { seated, away: seats?.away ?? [] });
+  } catch (err) {
+    console.error('could not save who is on the floor:', err);
+  }
+}
 
 // The note each room's session starts with: its office name, its room, who its manager
 // is (agents/worker-brief.md, filled in per room). The office adds it when the owner

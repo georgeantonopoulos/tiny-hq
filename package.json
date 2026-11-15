@@ -23,6 +23,7 @@
     "manager/ask",
     "manager/delegate",
     "manager/desk",
+    "manager/floor",
     "manager/job",
     "manager/profiles",
     "manager/schedule",
