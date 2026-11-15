@@ -21,7 +21,7 @@
 // refused. It guards against accidents; a room set on getting round it on the owner's own account could.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -36,11 +36,15 @@ const HOW = 'Put the exact text and where it goes to the owner first: manager/as
 // commands, unless that command is a shell (bash <<EOF runs it). Rooms writing a file or a script
 // that only mentions a deploy or a gh post used to be refused.
 const HEREDOC_RUNS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'eval', 'source', '.', 'ssh', 'xargs', 'env', 'sudo', 'exec', 'command', 'nohup', 'time', 'timeout']);
-export function words(cmd) {
+// `live`, when given, gets each word as the shell would expand it: the same length, with text it
+// leaves alone (single-quoted, or after a backslash) blanked to "_", so a $( … ) or ` … ` found
+// there is one the shell really runs (approved text often quotes `code` in single quotes).
+export function words(cmd, live) {
   const out = [];
-  let cur = '', q = null, any = false;
+  let cur = '', lv = '', q = null, any = false;
   const pending = []; // here-document ends waiting for the next newline: { end, tabs, keep }
-  const flush = () => { if (cur || any) out.push(cur); cur = ''; any = false; };
+  const push = (w, l = w) => { out.push(w); live?.push(l); };
+  const flush = () => { if (cur || any) push(cur, lv); cur = ''; lv = ''; any = false; };
   // The program of the command being built: the first word after the last separator.
   const program = () => {
     let k = out.length;
@@ -75,7 +79,7 @@ export function words(cmd) {
     }
     if (!q && ch === '\n' && pending.length) {
       flush();
-      out.push(';');
+      push(';');
       // Skip (or keep, for a shell) each pending body up to its end line.
       let j = i + 1;
       for (const h of pending.splice(0)) {
@@ -90,27 +94,31 @@ export function words(cmd) {
           }
           body += line + '\n';
         }
-        if (h.keep) out.push(...words(body), ';');
+        if (h.keep) {
+          const bl = [];
+          words(body, bl).forEach((w, k) => push(w, bl[k]));
+          push(';');
+        }
       }
       i = j - 1;
       continue;
     }
-    if (q === "'") { if (ch === "'") q = null; else cur += ch; continue; }
+    if (q === "'") { if (ch === "'") q = null; else { cur += ch; lv += '_'; } continue; }
     if (q === '"') {
       if (ch === '"') q = null;
-      else if (ch === '\\' && i + 1 < cmd.length && '"\\$`\n'.includes(cmd[i + 1])) cur += cmd[++i];
-      else cur += ch;
+      else if (ch === '\\' && i + 1 < cmd.length && '"\\$`\n'.includes(cmd[i + 1])) { cur += cmd[++i]; lv += '_'; }
+      else { cur += ch; lv += ch; }
       continue;
     }
     if (ch === "'" || ch === '"') { q = ch; any = true; continue; }
-    if (ch === '\\' && i + 1 < cmd.length) { if (cmd[i + 1] !== '\n') cur += cmd[i + 1]; i++; any = true; continue; }
-    if (ch === '\n') { flush(); out.push(';'); continue; }
+    if (ch === '\\' && i + 1 < cmd.length) { if (cmd[i + 1] !== '\n') { cur += cmd[i + 1]; lv += '_'; } i++; any = true; continue; }
+    if (ch === '\n') { flush(); push(';'); continue; }
     // A comment, as the shell reads it (a # starting a word): the rest of the line never runs, so it
     // is never read (e.g. "gh pr comment 44 -b x # -R a/b" showed the guard a/b).
     if (ch === '#' && !cur && !any) { while (i + 1 < cmd.length && cmd[i + 1] !== '\n') i++; continue; }
     if (/\s/.test(ch)) { flush(); continue; }
-    if (';&|()<>'.includes(ch)) { flush(); out.push(ch); continue; }
-    cur += ch; any = true;
+    if (';&|()<>'.includes(ch)) { flush(); push(ch); continue; }
+    cur += ch; lv += ch; any = true;
   }
   flush();
   return out;
@@ -121,12 +129,16 @@ const SEP_CHARS = SEP;
 // Commands inside commands: the strings given to bash -c, sh -c, eval, xargs, env, and words that
 // themselves look like a command line, are read too.
 function segments(cmd, depth = 0) {
-  const w = words(String(cmd ?? ''));
+  const lw = [];
+  const w = words(String(cmd ?? ''), lw);
   const segs = [[]];
-  for (const t of w) {
-    if (SEP.has(t)) { if (segs[segs.length - 1].length) segs.push([]); continue; }
+  const lsegs = [[]]; // each word's live form (see words), alongside
+  w.forEach((t, k) => {
+    if (SEP.has(t)) { if (segs[segs.length - 1].length) { segs.push([]); lsegs.push([]); } return; }
     segs[segs.length - 1].push(t);
-  }
+    lsegs[lsegs.length - 1].push(lw[k]);
+  });
+  const liveOf = new Map(segs.map((s, k) => [s, lsegs[k]]));
   const out = segs.filter((s) => s.length);
   // Only text that will be run: after -c (bash -c, sh -lc), or given to eval, xargs, watch and the
   // like. A commit message or grep that merely mentions "gh pr comment" isn't a post.
@@ -135,26 +147,32 @@ function segments(cmd, depth = 0) {
     const runner = /^-[a-z]*c$/.test(s[j - 1] ?? '') || RUNS.has(basename(s[0]));
     if (runner && /\s/.test(t) && /\b(gh|curl|wget|xh|http|vercel|netlify|gh-pages|firebase|surge|wrangler|fly|flyctl|git)\b/.test(t)) out.push(...segments(t, depth + 1));
     // $( … ) and ` … ` are run wherever they sit, quoted words included ("$(gh pr comment …)").
-    for (const inner of substitutions(t)) out.push(...segments(inner, depth + 1));
+    // Only where the shell expands them: not inside single quotes or after a backslash.
+    for (const inner of substitutions(t, liveOf.get(s)?.[j] ?? t)) out.push(...segments(inner, depth + 1));
   });
   return out;
 }
 
 // The command text inside each $( … ) and ` … ` in a word (balanced parentheses; an unclosed one
 // runs to the end of the word, which is read anyway).
-export function substitutions(t) {
+// `live`: the word as words() saw the shell expand it (same length, quoted text blanked).
+export function substitutions(t, live = t) {
   const out = [];
+  const L = live.length === t.length ? live : t;
   for (let i = 0; i < t.length; i++) {
-    if (t[i] === '$' && t[i + 1] === '(' && t[i + 2] !== '(') {
+    if (L[i] === '$' && L[i + 1] === '(' && L[i + 2] !== '(') {
       let depth = 0, k = i + 1;
       for (; k < t.length; k++) {
-        if (t[k] === '(') depth++;
-        else if (t[k] === ')' && --depth === 0) break;
+        // A quoted ")" inside doesn't close it (review: "$(echo ')' ; gh pr comment …)" hid the post).
+        // An unclosed quote runs on, which only reads more.
+        if (L[k] === "'" || L[k] === '"') { const e = t.indexOf(L[k], k + 1); if (e < 0) { k = t.length; break; } k = e; }
+        else if (L[k] === '(') depth++;
+        else if (L[k] === ')' && --depth === 0) break;
       }
       out.push(t.slice(i + 2, k));
       i = k;
-    } else if (t[i] === '`') {
-      const k = t.indexOf('`', i + 1);
+    } else if (L[i] === '`') {
+      const k = L.indexOf('`', i + 1);
       out.push(t.slice(i + 1, k < 0 ? t.length : k));
       i = k < 0 ? t.length : k;
     }
@@ -302,11 +320,33 @@ export function postingCommand(cmd) {
 }
 
 // The text a gh post puts up: its title (if any), a blank line, then its body. Undefined when it
-// can't be read for certain: a body file, an editor, stdin, the web form, a GraphQL or API call
-// without a literal body, or $ / backticks the shell would expand.
-export function ghPostText(cmd, post = posts(cmd)[0]) {
-  if (!post || /[`$]/.test(String(cmd))) return undefined;
+// can't be read for certain: an editor, stdin, the web form, a GraphQL or API call without a
+// literal body, or $ / backticks the shell would expand. Text in single quotes is literal, so a
+// `code span` there is fine. A pr/issue
+// --body-file is read here (a regular file, up to 1 MB); it must hold exactly the approved text.
+const BODY_FILE_MAX = 1024 * 1024;
+function readBodyFile(path, cwd) {
+  try {
+    const full = resolve(cwd, path);
+    const st = statSync(full);
+    if (!st.isFile() || st.size > BODY_FILE_MAX) return undefined;
+    return readFileSync(full, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+export function ghPostText(cmd, post = posts(cmd)[0], cwd = process.cwd()) {
+  if (!post) return undefined;
+  const live = [];
+  const raw = words(String(cmd), live);
+  // A here-document's text isn't in the words; read the command as it stands there.
+  if (/<</.test(String(cmd)) ? /[`$]/.test(String(cmd)) : live.some((w) => /[`$]/.test(w))) return undefined;
+  // Would the shell change this value before gh sees it: an unquoted *, ?, [ ], {a,b} or a leading ~
+  // (review: -F [a]bc is read as "[a]bc" by us, but gh is handed the file abc)?
+  const expanded = (v) => raw.some((w, k) => w.endsWith(v) && /[*?[]|\{[^}]*,|^~/.test(live[k].slice(w.length - v.length)));
   const args = post.seg.slice(post.at + 1);
+  const sub = args.find((a, k) => !a.startsWith('-') && !GH_TAKES_VALUE.has(args[k - 1] ?? ''));
+  const prOrIssue = sub === 'pr' || sub === 'issue';
   let title, body, bad = false;
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
@@ -316,7 +356,12 @@ export function ghPostText(cmd, post = posts(cmd)[0]) {
     if (flag === '-b' || flag === '--body' || flag === '-c' || flag === '--comment') body = val();
     else if (flag === '-t' || flag === '--title') title = val();
     else if (/^-[bct].+/.test(a)) { if (a[1] === 't') title = a.slice(2); else body = a.slice(2); }
-    else if (['-F', '--body-file', '-e', '--editor', '-w', '--web', '--input'].includes(flag)) bad = true;
+    else if (prOrIssue && (flag === '-F' || flag === '--body-file' || /^-F.+/.test(a))) {
+      const v = /^-F.+/.test(a) ? a.slice(2) : val();
+      const text = v && v !== '-' && !expanded(v) ? readBodyFile(v, cwd) : undefined;
+      if (text === undefined) bad = true;
+      else body = text;
+    } else if (['-F', '--body-file', '-e', '--editor', '-w', '--web', '--input'].includes(flag) || /^-F.+/.test(a)) bad = true;
     else if (flag === '-f' || flag === '--field' || flag === '--raw-field') {
       const kv = val() ?? '';
       const key = kv.slice(0, kv.indexOf('='));
@@ -325,7 +370,7 @@ export function ghPostText(cmd, post = posts(cmd)[0]) {
       else if (/\bbody\b|comment|message|text|description/.test(key)) bad = true; // more public text than one body
     }
   }
-  if (bad) return undefined;
+  if (bad || [title, body].some((v) => v !== undefined && expanded(v))) return undefined;
   if (body === undefined) return title;
   return title !== undefined ? `${title}\n\n${body}` : body;
 }
@@ -650,8 +695,8 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
       if (passes.use(`make ${vis} public`, session, cwd, undefined, vis)) return 'pass';
       return { deny: `Making a repository public is button-only: the owner hasn't approved "make ${vis} public". Ask with manager/ask "<why>" --why post --tried "<what you did>" --text "make ${vis} public" --target ${vis}; once they approve, run this command on its own within 2 hours.` };
     }
-    const text = found[0].why.startsWith('sending data') ? undefined : ghPostText(cmd, found[0]);
-    if (text === undefined) return { deny: `Public posts are button-only: this is ${why}, and its exact text can't be read for certain (write it out with -b "<text>"; no $, backticks, files or editors). ${HOW}` };
+    const text = found[0].why.startsWith('sending data') ? undefined : ghPostText(cmd, found[0], cwd);
+    if (text === undefined) return { deny: `Public posts are button-only: this is ${why}, and its exact text can't be read for certain (write it out with -b '<text>' in single quotes, or --body-file <file> holding exactly that text; no $ or backticks the shell would expand, no editors or stdin). ${HOW}` };
     const target = ghTarget(found[0], cwd, passes.repo);
     if (!target) return { deny: `Public posts are button-only, each for one PR or issue: this is ${why}, and the office can't tell for certain which PR or issue it goes on. Name it: the number (gh pr comment 44 ...) and -R owner/repo when you're outside its own folder. ${HOW}` };
     if (passes.use(text, session, cwd, undefined, target)) return 'pass';

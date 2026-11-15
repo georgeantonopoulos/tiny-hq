@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 // @ts-expect-error: a plain .mjs hook, no types
 import { decide, postingCommand } from '../hooks/public-post-guard.mjs';
 
@@ -370,4 +370,52 @@ test('an uploaded build folder must be in the approved commit, and the last depl
   denies(D('netlify deploy --prod --dir dist'), /uploads dist, which git ignores/);
   assert.equal(D('netlify deploy --prod --dir public'), 'pass'); // a committed folder is the approved commit
   assert.equal(pa.loadBaselines(baselines).site?.commit, head);
+});
+
+// An approved PR description with `code spans` in single quotes was read as commands and refused,
+// and so was --body-file.
+test('approved text with backticks in single quotes, or in a --body-file, passes; live substitutions still refused', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tiny-bodyfile-'));
+  const path = join(dir, 'post-approvals.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as { usePass: (t: string, s: string, now: number, p: string, cwd?: string, where?: unknown, target?: string) => boolean };
+  const passes = { use: (t: string, s: string, cwd?: string, where?: unknown, target?: string) => pa.usePass(t, s, Date.now(), path, cwd, where, target), click: () => false, repo: () => 'owner/notes' };
+  const text = 'Adds `npm run build --workspace` and fixes $HOME paths.';
+  const give = () => grantPass(path, text, dir, Date.now(), 'owner/notes#19');
+  const D = (command: string) => decide('Bash', { command }, {}, 's', passes, dir);
+  give();
+  assert.equal(D(`gh pr edit 19 -R owner/notes --body '${text}'`), 'pass');
+  denies(D(`gh pr edit 19 -R owner/notes --body '${text}'`), /hasn't approved/); // one use
+  // A body file holding exactly the approved text.
+  writeFileSync(join(dir, 'body.md'), `${text}\n`);
+  give();
+  assert.equal(D('gh pr edit 19 -R owner/notes --body-file body.md'), 'pass');
+  give();
+  assert.equal(D(`gh pr edit 19 -R owner/notes -F ${join(dir, 'body.md')}`), 'pass');
+  // Not the approved text, stdin, a missing file, or a different PR: refused.
+  writeFileSync(join(dir, 'other.md'), 'something else');
+  give();
+  denies(D('gh pr edit 19 -R owner/notes --body-file other.md'), /hasn't approved/);
+  denies(D('gh pr edit 19 -R owner/notes --body-file -'), /can't be read for certain/);
+  denies(D('gh pr edit 19 -R owner/notes --body-file nope.md'), /can't be read for certain/);
+  denies(D('gh pr edit 20 -R owner/notes --body-file body.md'), /hasn't approved/);
+  // What the shell would really run is still caught: double quotes, $( … ), a bare backtick.
+  denies(D(`gh pr edit 19 -R owner/notes --body "${text}"`), /can't be read|alongside/);
+  denies(D('gh pr edit 19 -R owner/notes --body "x $(gh pr comment 3 -b y)"'), /alongside|can't be read/);
+  denies(D("gh pr edit 19 -R owner/notes --body 'a'`gh pr comment 3 -b y`"), /alongside|can't be read/);
+  // The approved pass is still there for the real one.
+  assert.equal(D('gh pr edit 19 -R owner/notes --body-file body.md'), 'pass');
+  // Review: what gh is handed must be what we read. A glob path names another file; -Ffile is a body file.
+  writeFileSync(join(dir, '[a]bc'), `${text}\n`);
+  give();
+  denies(D('gh pr edit 19 -R owner/notes -F [a]bc'), /can't be read for certain/);
+  denies(D('gh pr edit 19 -R owner/notes --body-file b*.md'), /can't be read for certain/);
+  denies(D('gh pr edit 19 -R owner/notes -t T -Fother.md'), /hasn't approved/);
+  assert.equal(D('gh pr edit 19 -R owner/notes -Fbody.md'), 'pass');
+  give();
+  denies(D('gh pr comment 19 -R owner/notes -b fix[x]'), /can't be read for certain/);
+  assert.equal(D(`gh pr edit 19 -R owner/notes -b '${text}'`), 'pass');
+  // A quoted ")" doesn't end a $( … ) early: the gh call inside is still seen.
+  denies(D(`echo "$(echo ')' ; gh pr comment 5 -R o/r -b evil)"`), /alongside|hasn't approved|can't be read/);
 });
