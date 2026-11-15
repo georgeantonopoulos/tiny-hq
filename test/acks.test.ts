@@ -99,6 +99,13 @@ test('a mid-turn answer stamped before the office noted it still counts', () => 
   // An old copy of the same answer from minutes before isn't this one.
   const old = { ...queued, timestamp: new Date(at - 5 * 60_000).toISOString() };
   assert.deepEqual(ackFrom([old, said(-290, [{ type: 'text', text: 'ok' }])] as never, at, at + 10_000, ANSWER), { status: 'wait' });
+  // Another answer from 30 s before that opens with the same 60 characters, picked up at -25 s, isn't
+  // this one: this one was followed only by an API error.
+  const other = { ...queued, timestamp: new Date(at - 30_000).toISOString(), attachment: { type: 'queued_command', prompt: `${ANSWER.slice(0, 70)} something else entirely` } };
+  const broken = { type: 'assistant', timestamp: new Date(at + 3_000).toISOString(), isApiErrorMessage: true, message: { content: [{ type: 'text', text: 'API Error: 500' }] } };
+  const mixed = [other, said(-25, [{ type: 'text', text: 'on it' }]), { ...queued, timestamp: new Date(at + 1_000).toISOString() }, broken];
+  assert.equal(ackFrom(mixed as never, at, at + 10_000, ANSWER).status, 'failed');
+  assert.equal(ackFrom([other, said(-25, [{ type: 'text', text: 'on it' }])] as never, at, at + 10_000, ANSWER).status, 'wait');
 });
 
 test('a session that moved into a worktree after the answer is still found, and an answer scrolled out of the tail counts as taken up', () => {

@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export const ACK_MS = 90_000;
-// How long before the noted time a record carrying the answer's own text still counts as it. A busy
+// How long before the noted time a record carrying the answer's whole text still counts as it. A busy
 // session stamps a mid-turn answer when it lands, which can be before the office finished typing and
 // noted it; with only 2 s of slack, a long answer that was taken up was reported as never shown.
 const EARLY_MS = 60_000;
@@ -73,7 +73,10 @@ export function ackFrom(records: Records, at: number, now = Date.now(), answer =
     // A busy session gets a typed answer mid-turn as a queued command, not as a user message.
     const text = r.type === 'user' ? textOf(r.message?.content) : r.type === 'attachment' && r.attachment?.type === 'queued_command' ? textOf(r.attachment.prompt) : undefined;
     if (text === undefined) continue;
-    if (!key || squash(text).includes(key)) {
+    // Inside the wider early window, the record must carry the whole answer, not just its opening: two
+    // answers share their first words ("The owner chose: ..."), and an older one's reply isn't this one's.
+    const early = Date.parse(r.timestamp) < at - 2_000;
+    if (!key || squash(text).includes(early ? squash(answer) : key)) {
       from = i;
       shownAt = Date.parse(r.timestamp);
       break;
