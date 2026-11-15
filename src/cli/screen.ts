@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { DATA_DIR, REPO_ROOT } from '../paths.ts';
-import { clearMarker, DEFAULT_MINUTES, helperInstalled, helperRunning, idleMs, keepAwake, lastInputPath, letSleep, macLocked, markerPath, readLastInput, readMarker, startHelper, STILL_MS, stillEnough, stopHelper, writeLastInput, writeMarker } from '../team/screen.ts';
+import { clearMarker, DEFAULT_MINUTES, helperInstalled, helperRunning, idleMs, keepAwake, lastInputPath, letSleep, macLocked, markerPath, readLastInput, readMarker, startHelper, STILL_MS, stillEnough, stopHelper, writeLastInput, clearLastInput, ownEvent, writeMarker } from '../team/screen.ts';
 // @ts-expect-error a plain-JS hook module, no type declarations
 import { INPUT_VERBS, isInput } from '../../hooks/screen-click-guard.mjs';
 
@@ -75,11 +75,17 @@ async function input(verb: string, args: string[]): Promise<number> {
     await new Promise((r) => setTimeout(r, 1000));
   }
   if (told) console.log(`Still for ${STILL_MS / 1000} s after ${Math.round((Date.now() - start) / 1000)} s of waiting; going ahead.`);
+  const ran = Date.now();
   const r = spawnSync('peekaboo', [verb, ...args], { stdio: 'inherit' });
-  // When the Mac's last input event happened, which is now the room's own: the next command may go
-  // ahead only while that is still the last event.
+  const done = Date.now();
+  // When the Mac's last input event happened: the next command may go ahead early only while that
+  // is still the last event. It counts as the room's own only when it happened while this command
+  // ran; the owner touching the Mac in that same moment can't be told apart, so it's also left out
+  // when the command took long enough for that to be likely.
   const after = idleMs();
-  if (r.status === 0 && after !== undefined) writeLastInput(lastPath, Date.now() - after);
+  const at = after === undefined ? undefined : Date.now() - after;
+  if (r.status === 0 && at !== undefined && ownEvent(at, ran, done)) writeLastInput(lastPath, at);
+  else clearLastInput(lastPath);
   return r.status ?? 1;
 }
 

@@ -16,13 +16,15 @@ export const INPUT_VERBS = ['click', 'type', 'press', 'hotkey', 'scroll', 'move'
 const WRAPPERS = new Set(['exec', 'command', 'env', 'sudo', 'timeout', 'time', 'nice', 'nohup', 'xargs', 'caffeinate', 'stdbuf', 'polter']);
 const KEYWORDS = new Set(['do', 'then', 'else', 'elif', 'while', 'until', 'if', '{', '!']);
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
+const LISTING_VERBS = new Set(['app', 'window', 'menu', 'menubar', 'dock', 'dialog', 'space']);
 const VALUE_FLAGS = new Set(['--log-level', '--bridge-socket']); // peekaboo's global flags that take a value
 
 // Whether `peekaboo <verb> <args>` would touch the screen, rather than only list or show help.
 export function isInput(verb, args = []) {
   if (!INPUT_VERBS.includes(verb)) return false;
   if (args.some((a) => a === '--help' || a === '-h')) return false;
-  return !/^(list|help)/.test(args[0] ?? '');
+  // Only verbs with their own subcommands list things; `type "list of items"` is still typing.
+  return !(LISTING_VERBS.has(verb) && /^(list|list-all|help)$/.test(args[0] ?? ''));
 }
 
 // Split a shell command into simple commands (lists of words). Quotes make one word; heredoc

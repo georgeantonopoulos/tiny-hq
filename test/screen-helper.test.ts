@@ -72,6 +72,15 @@ test('a click waits for 30 s without keyboard or mouse, unless the last input wa
   assert.equal(stillEnough(500, now, now - 1_000), false);
 });
 
+test("a command's last input counts as its own only if it fell during a short run", async () => {
+  const { ownEvent, OWN_RUN_MAX_MS } = await import('../src/team/screen.ts');
+  const ran = 1_000_000;
+  assert.equal(ownEvent(ran + 400, ran, ran + 800), true);
+  assert.equal(ownEvent(ran + 1_500, ran, ran + 800), false, 'after the command ended: the owner');
+  assert.equal(ownEvent(ran - 5_000, ran, ran + 800), false, 'before it started: the owner');
+  assert.equal(ownEvent(ran + 400, ran, ran + OWN_RUN_MAX_MS + 1), false, 'a long run: not sure whose');
+});
+
 test('manager/screen waits only for real input, not for help or a list', async () => {
   // @ts-expect-error a plain-JS hook module, no type declarations
   const { isInput } = (await import('../hooks/screen-click-guard.mjs')) as { isInput: (v: string, a?: string[]) => boolean };
@@ -79,6 +88,10 @@ test('manager/screen waits only for real input, not for help or a list', async (
   assert.equal(isInput('click', ['--help']), false);
   assert.equal(isInput('menu', ['list-all', '--app', 'Finder']), false);
   assert.equal(isInput('space', ['list']), false);
+  // Typing text that starts with "list" or "help" is still typing.
+  assert.equal(isInput('type', ['list of items']), true);
+  assert.equal(isInput('type', ['help me']), true);
+  assert.equal(isInput('window', ['listing']), true);
   assert.equal(isInput('image', ['--path', 'a.png']), false);
 });
 

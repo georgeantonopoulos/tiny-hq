@@ -163,6 +163,21 @@ export function readLastInput(path: string): number | undefined {
   }
 }
 
+// A command's last input event is taken as its own only if it fell while the command ran, and the
+// command was short: the longer it runs, the likelier the owner touched the Mac in between.
+export const OWN_RUN_MAX_MS = 3000;
+export function ownEvent(at: number, ran: number, done: number): boolean {
+  return done - ran <= OWN_RUN_MAX_MS && at >= ran - OWN_EVENT_SLACK_MS && at <= done + OWN_EVENT_SLACK_MS;
+}
+
+export function clearLastInput(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // nothing saved
+  }
+}
+
 export function writeLastInput(path: string, at = Date.now()): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, `${at}\n`, { mode: 0o600 });
