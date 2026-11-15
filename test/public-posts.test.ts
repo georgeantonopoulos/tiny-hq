@@ -419,3 +419,14 @@ test('approved text with backticks in single quotes, or in a --body-file, passes
   // A quoted ")" doesn't end a $( … ) early: the gh call inside is still seen.
   denies(D(`echo "$(echo ')' ; gh pr comment 5 -R o/r -b evil)"`), /alongside|hasn't approved|can't be read/);
 });
+
+// From review: double-quoted text isn't globbed, so ? * [ { in it are fine; and a $( … ) inside double
+// quotes keeps its own quoting, so a quoted ")" in it can't hide a post after it.
+test('double-quoted ? * { pass with a pass; a quoted ) inside "$( … )" hides no post', () => {
+  const passes = { use: () => true, click: () => false, repo: () => 'o/r' };
+  const D = (command: string) => decide('Bash', { command }, {}, 's', passes, '/x');
+  for (const b of ['"Does this work?"', '"**Fixed** in abc"', '"see {a, b}"', '"[draft]"']) assert.equal(D(`gh pr comment 5 -R o/r -b ${b}`), 'pass', b);
+  assert.equal(typeof D('gh pr comment 5 -R o/r -b Does?'), 'object', 'unquoted ? is globbed: refused');
+  for (const c of ['echo "$(echo ")" ; gh pr comment 5 -R o/r -b spam)"', 'echo "a $(echo "x)y" && gh issue comment 1 -R o/r -b z) b"', `echo "$(echo ')'; gh pr comment 5 -R o/r -b spam)"`])
+    assert.equal(typeof D(c), 'object', c);
+});

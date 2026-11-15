@@ -39,6 +39,24 @@ const HEREDOC_RUNS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'eval'
 // `live`, when given, gets each word as the shell would expand it: the same length, with text it
 // leaves alone (single-quoted, or after a backslash) blanked to "_", so a $( … ) or ` … ` found
 // there is one the shell really runs (approved text often quotes `code` in single quotes).
+// Where the ")" closing a $( … ) is, from just inside it: quotes, backslashes and nested $( … ) are
+// skipped as the shell would. The end of the text when it never closes.
+function subEnd(cmd, from) {
+  let depth = 1;
+  for (let j = from; j < cmd.length; j++) {
+    const c = cmd[j];
+    if (c === '\\') j++;
+    else if (c === "'") { const e = cmd.indexOf("'", j + 1); if (e < 0) return cmd.length - 1; j = e; }
+    else if (c === '"') {
+      for (j++; j < cmd.length && cmd[j] !== '"'; j++) {
+        if (cmd[j] === '\\') j++;
+        else if (cmd[j] === '$' && cmd[j + 1] === '(') j = subEnd(cmd, j + 2);
+      }
+    } else if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) return j;
+  }
+  return cmd.length - 1;
+}
 export function words(cmd, live) {
   const out = [];
   let cur = '', lv = '', q = null, any = false;
@@ -107,7 +125,12 @@ export function words(cmd, live) {
     if (q === '"') {
       if (ch === '"') q = null;
       else if (ch === '\\' && i + 1 < cmd.length && '"\\$`\n'.includes(cmd[i + 1])) { cur += cmd[++i]; lv += '_'; }
-      else { cur += ch; lv += ch; }
+      // A $( … ) inside double quotes is shell code with its own quoting: a quoted ")" in it doesn't
+      // close it, and its quotes don't end the outer ones (review: echo "$(echo ")" ; gh pr comment …)"
+      // hid the post). It's kept whole, so substitutions() reads it.
+      else if (ch === '$' && cmd[i + 1] === '(' && cmd[i + 2] !== '(') { const e = subEnd(cmd, i + 2); cur += cmd.slice(i, e + 1); lv += cmd.slice(i, e + 1); i = e; }
+      // The shell doesn't glob or expand braces inside double quotes: only $ and backticks stay live.
+      else { cur += ch; lv += '*?[{~'.includes(ch) ? '_' : ch; }
       continue;
     }
     if (ch === "'" || ch === '"') { q = ch; any = true; continue; }
