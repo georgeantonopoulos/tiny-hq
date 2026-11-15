@@ -28,7 +28,9 @@ function commitsSinceLastDeploy(folder: string, name: string, head: string): str
   }
 }
 import { realpathSync, statSync } from 'node:fs';
-import { MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
+import { DATA_DIR, MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
+import { floorPath, loadSeats } from '../office/seats.ts';
+import { roomOfFolder, roomOfSession } from '../office/room-of-folder.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
 import { addAsk, afterCancel, asksPath, loadAsks, MAX_OPTIONS, roomsOwnQuestion, saveAsks, validOptions } from '../team/asks.ts';
 
@@ -49,6 +51,22 @@ for (const [flag, set] of [['--text', (v: string) => (postText = v)], ['--target
     args = [...args.slice(0, i), ...args.slice(i + 2)];
   }
 }
+// The room a button is filed under (its question mark shows over that room's head): the asking
+// session's own room, else the room the folder is in or is a worktree or clone of (same git repo or
+// remote). Without this, a button raised from a worktree kept outside the project showed over
+// nobody's head. A folder that is no room can't be shown at all, so it's refused. Without a floor
+// record yet, as before.
+function floorRoom(f: string, session?: string): string {
+  const seats = loadSeats(floorPath(DATA_DIR));
+  if (!seats) return f;
+  const rooms = [...seats.seated.map((r) => { try { return realpathSync(r); } catch { return r; } }), realpathSync(MANAGER_DIR)];
+  const found = (session ? roomOfSession(session, rooms) : undefined) ?? roomOfFolder(f, rooms);
+  if (!found) {
+    console.error(`No button: ${f} isn't a room on the office floor, or a worktree or clone of one, so the owner would never see it. Run ask from your room's folder (or a worktree of it).`);
+    process.exit(2);
+  }
+  return found;
+}
 let folder = realpathSync(process.cwd());
 let askedFor = false;
 const me = process.env.CLAUDE_CODE_SESSION_ID;
@@ -64,6 +82,8 @@ if (args[0] === '--room') {
     process.exit(2);
   }
   args = args.slice(2);
+  // Filed and cancelled under the floor room itself (a worktree path names its room).
+  folder = floorRoom(folder);
   // The owner's answer must come back to the asker, never to the room's own session.
   if (!me) {
     console.error('ask --room needs to run inside a Claude Code session (CLAUDE_CODE_SESSION_ID is not set)');
@@ -102,7 +122,8 @@ if (args[0] === 'list') {
     process.exit(2);
   }
   // The room already asks the owner itself: a second button over the same head would ask them twice.
-  const own = askedFor ? roomsOwnQuestion(asks, folder) : undefined;
+  const room = floorRoom(folder, askedFor ? undefined : me);
+  const own = askedFor ? roomsOwnQuestion(asks, room) : undefined;
   if (own) {
     console.error(`Not added: that room already has its own question up for the owner (${own.id}: "${own.question.slice(0, 120)}"). Their answer goes straight to the room; don't ask them the same thing twice. If yours is different, ask the room to add it to its own question, or wait until they have answered.`);
     process.exit(2);
@@ -145,7 +166,7 @@ if (args[0] === 'list') {
     deploy = { changes, proven, commits: commitsSinceLastDeploy(folder, name, m[1]!) };
   }
   // Claude Code tells its shell which session this is: the answer goes back to exactly this one.
-  saveAsks(path, addAsk(asks, folder, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(deploy ? { deploy } : {}) } : {}) }));
+  saveAsks(path, addAsk(asks, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(deploy ? { deploy } : {}) } : {}) }, folder));
   console.log(
     choices
       ? `The owner now sees a question mark over your head; tapping it shows your question with ${choices.length} buttons: ${choices.map((c) => `"${c}"`).join(', ')}. Their pick will arrive in this chat as "The owner chose: ..."; stop here and wait for it.`

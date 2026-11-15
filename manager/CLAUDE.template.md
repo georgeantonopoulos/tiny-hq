@@ -57,6 +57,8 @@ You already know which projects exist: the office keeps this list current (every
 
 @office.md
 
+**Rooms leave the floor only on {{ownerName}}'s yes.** A room keeps its spot however quiet it gets. To send one to the archive cupboard, ask {{ownerName}} on a button first; after their pick, `{{cli}}/floor away <folder>`. `{{cli}}/floor back <folder>` brings one back when they ask; `{{cli}}/floor list` shows who's seated.
+
 Don't rebuild the picture from chat history. Use what already exists, cheapest first:
 
 1. **Your notebook** (its path is at the top of the office list above, and it's the only place you may write; use the Write tool, not the shell). One short section per project, headed `## <room name> (<lead>)`: what's in flight, who's on it (session name), what's waiting on {{ownerName}}, a `- Next:` line (the one thing you'd suggest they work on next there; "nothing pressing" is fine), and `- Updated: <date>`. {{ownerName}} reads this on your whiteboard, so keep each line short and plain. Update it every time you hand out work and every time a project reports back. Prune finished items.

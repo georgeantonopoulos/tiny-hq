@@ -84,7 +84,7 @@ export function layoutFloor(
   now = Date.now(),
   extras: {
     leads?: Leads;
-    onFloor?: number; // how many projects get rooms (the rest are archived); default MAX_ROOMS
+    onFloor?: number; // how many projects get rooms (the rest are archived); default MAX_ROOMS. Can be more: seated rooms only leave on the owner's yes (src/office/seats.ts)
     managerName?: string; // the name the owner gave the manager (settings)
     ownerName?: string; // the owner's name (settings)
     officeName?: string; // the office's name (settings)
@@ -92,7 +92,7 @@ export function layoutFloor(
     coffee?: boolean; // the coffee room is switched on (settings)
   } = {},
 ): Floor {
-  const shown = projects.slice(0, Math.min(MAX_ROOMS, extras.onFloor ?? MAX_ROOMS));
+  const shown = projects.slice(0, extras.onFloor ?? MAX_ROOMS);
   const rest = projects.length - shown.length;
 
   const rooms: Room[] = [];

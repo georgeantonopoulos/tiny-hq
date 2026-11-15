@@ -186,6 +186,14 @@ test('a pass asked for from a worktree works in the main checkout and its other 
   assert.equal(D('/Dev/Atlas/.claude/worktrees/other'), 'pass');
   grantPass(path, 'make owner/atlas-plugins public', '/Dev/Atlas', Date.now(), 'owner/atlas-plugins');
   assert.equal(D('/Dev/Atlas/.claude/worktrees/proto'), 'pass');
+  // Asked from a clone kept outside the room: the one pass works there or in the room, once.
+  grantPass(path, 'make owner/atlas-plugins public', '/Dev/Atlas', Date.now(), 'owner/atlas-plugins', '/Work/atlas-clone');
+  assert.equal(D('/Work/atlas-clone/sub'), 'pass');
+  denies(D('/Dev/Atlas'), /hasn't approved/); // used up for both
+  grantPass(path, 'make owner/atlas-plugins public', '/Dev/Atlas', Date.now(), 'owner/atlas-plugins', '/Work/atlas-clone');
+  assert.equal(D('/Dev/Atlas'), 'pass');
+  denies(D('/Work/atlas-clone'), /hasn't approved/);
+  denies(D('/Work/other'), /hasn't approved/);
 });
 
 test('targets read the same in the hook and the office', async () => {
