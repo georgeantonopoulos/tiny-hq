@@ -6,7 +6,7 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { CLAUDE_BIN, CONFIG_PATH, DATA_DIR, REPO_ROOT, DEFAULT_PORT, DEVICES_PATH, LEADS_PATH, MANAGER_NOTES_DIR, MANAGER_DIR, MODELS_PATH, OFFICE_SKILL, WORKER_BRIEF, REMOTE_AUDIT_PATH, SCENE_PATH, TOKEN_PATH } from '../paths.ts';
 import { loadConfig } from '../config.ts';
 import { BRIEF_PROMPT } from './brief.ts';
@@ -80,8 +80,10 @@ const floors = new FloorCache(async () => {
   const filed = (p: { path: string }) => config.archivedProjects.includes(p.path);
   // No room leaves the floor without the owner's yes on a button: seated rooms stay,
   // newcomers only take a free spot.
-  // A seated room missing from this scan (a disk not mounted, history aged out) keeps its seat for later.
-  const missing = (seats?.seated ?? []).filter((p) => !found.some((f) => f.path === p) && !config.archivedProjects.includes(p) && !config.hiddenProjects.includes(p));
+  // A seated room missing from this scan keeps its seat for later when its disk isn't there (not
+  // mounted: the folder above it is missing too). One whose folder was deleted or moved gives its seat up.
+  const keepsSeat = (p: string) => existsSync(p) || !existsSync(dirname(p));
+  const missing = (seats?.seated ?? []).filter((p) => !found.some((f) => f.path === p) && keepsSeat(p) && !config.archivedProjects.includes(p) && !config.hiddenProjects.includes(p));
   const seatedPaths = seatFloor(found.filter((p) => !filed(p)).map((p) => p.path), seats, MAX_ROOMS, pinned, missing.length);
   const seated = new Set(seatedPaths);
   const projects = [...found.filter((p) => seated.has(p.path)), ...found.filter((p) => !seated.has(p.path))];
@@ -1106,8 +1108,9 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
   // Button-only posts: the owner's Approve on a post's exact text is the one way it can go up.
   if (yes && ask.post) {
     // For that PR/issue only; a button from before --target names it in its question ("PR #44").
-    // The pass is for where the asker runs the post (a worktree or clone kept outside the room counts).
-    grantPass(approvalsPath(DATA_DIR), ask.post, ask.from ?? ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '');
+    // The pass works in the room and, when it asked from elsewhere, in that folder too (a worktree or
+    // clone kept outside the room): one pass, used up wherever it's used.
+    grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '', ask.from ?? '');
     console.log(`posts: the owner approved a post's exact text for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
   }
   const id = ask.id;

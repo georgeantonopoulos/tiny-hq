@@ -78,4 +78,7 @@ test('the floor scan leaves the record alone when it changed during the scan', (
   const main = readFileSync(new URL('../src/daemon/main.ts', import.meta.url), 'utf8');
   assert.match(main, /JSON\.stringify\(now\) !== JSON\.stringify\(seats\)\) return;/);
   assert.match(main, /MAX_ROOMS, pinned, missing\.length\)/);
+  // ...but a seated folder that was deleted or moved (the folder above it is still there) gives its seat up.
+  assert.match(main, /const keepsSeat = \(p: string\) => existsSync\(p\) \|\| !existsSync\(dirname\(p\)\);/);
+  assert.match(main, /f\.path === p\) && keepsSeat\(p\)/);
 });

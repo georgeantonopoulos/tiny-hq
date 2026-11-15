@@ -122,12 +122,14 @@ const inRoom = (cwd, folder) => {
   const room = roomOf(folder);
   return cwd === room || cwd.startsWith(`${room}/`);
 };
+// A pass also works where the asker ran from, when that's outside the room (a worktree or clone kept elsewhere).
+const passHere = (cwd, p) => inRoom(cwd, p.from) || (typeof p.alsoFrom === 'string' && p.alsoFrom !== '' && inRoom(cwd, p.alsoFrom));
 
 // the owner's Approve: one pass for this exact text, at this target, for the room that asked.
-export function grantPass(text, from, now = Date.now(), path = approvalsPath(), target = '') {
+export function grantPass(text, from, now = Date.now(), path = approvalsPath(), target = '', alsoFrom = '') {
   locked(path, () => {
     const keep = loadPasses(path).filter((p) => p.expires > now - 24 * 60 * 60_000).slice(-50);
-    save(path, [...keep, { text: String(text), from: String(from ?? ''), target: normTarget(target), at: now, expires: now + PASS_TTL_MS }]);
+    save(path, [...keep, { text: String(text), from: String(from ?? ''), ...(alsoFrom && alsoFrom !== from ? { alsoFrom: String(alsoFrom) } : {}), target: normTarget(target), at: now, expires: now + PASS_TTL_MS }]);
   });
 }
 
@@ -136,7 +138,7 @@ export function grantPass(text, from, now = Date.now(), path = approvalsPath(), 
 export function usePass(text, session, now = Date.now(), path = approvalsPath(), cwd, where, target) {
   return locked(path, () => {
     const list = loadPasses(path);
-    const i = list.findIndex((p) => !p.usedAt && p.expires > now && inRoom(cwd, p.from) && sameText(p.text, text) && sameTarget(p.target, target));
+    const i = list.findIndex((p) => !p.usedAt && p.expires > now && passHere(cwd, p) && sameText(p.text, text) && sameTarget(p.target, target));
     if (i < 0) return false;
     list[i] = { ...list[i], usedAt: now, session: String(session ?? ''), ...(where ? { tab: String(where.tab), site: String(where.site) } : {}) };
     save(path, list);
@@ -151,7 +153,7 @@ export function usePass(text, session, now = Date.now(), path = approvalsPath(),
 export function useTargetPass(session, now = Date.now(), path = approvalsPath(), cwd, target) {
   return locked(path, () => {
     const list = loadPasses(path);
-    const i = list.findIndex((p) => !p.usedAt && p.expires > now && inRoom(cwd, p.from) && sameTarget(p.target, target));
+    const i = list.findIndex((p) => !p.usedAt && p.expires > now && passHere(cwd, p) && sameTarget(p.target, target));
     if (i < 0) return false;
     list[i] = { ...list[i], usedAt: now, session: String(session ?? '') };
     save(path, list);
