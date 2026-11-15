@@ -318,6 +318,7 @@ async function snapshot(): Promise<{ list: StatusSession[]; rooms: { id: string;
       name: s.name,
       kind: s.kind,
       status: s.status,
+      servers: s.servers,
       state,
       claudeState: s.state,
       alive,

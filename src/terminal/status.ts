@@ -10,6 +10,7 @@ export interface StatusSession {
   name?: string;
   kind?: string; // background | interactive
   status?: string;
+  servers?: boolean; // idle, but background servers it started are still running
   state?: string;
   claudeState?: string; // what `claude agents` says, before the office reads the transcript (it may downgrade 'blocked' to 'done')
   alive: boolean;
@@ -32,7 +33,7 @@ const oneLine = (t: string) => t.replace(/[\x00-\x1f\x7f`@]/g, ' ').replace(/\s+
 
 export function sessionLine(s: StatusSession): string {
   const state = s.state === 'blocked' ? 'BLOCKED' : s.status === 'busy' ? 'working' : 'idle';
-  const parts = [`**${oneLine(s.name ?? s.id)}** (${s.id}): ${state}`];
+  const parts = [`**${oneLine(s.name ?? s.id)}** (${s.id}): ${state}${s.servers && state === 'idle' ? ', servers left running' : ''}`];
   if (s.kind === 'interactive') parts.push("the owner's own session: your message lands in their chat with it");
   if (s.state === 'blocked' && s.waiting && s.waiting.kind !== 'unknown') {
     const what = s.waiting.kind === 'question' ? 'waiting for the owner to answer: ' : 'waiting for the owner to approve: ';
@@ -50,6 +51,13 @@ export function renderStatus(sessions: StatusSession[], rooms: string[], now = D
     const here = sessions.filter((s) => s.room === room && s.alive && (s.kind !== 'interactive' || room !== 'Manager'));
     out.push(`## ${oneLine(room)}`, ...(here.length ? here.map(sessionLine) : ['- nobody running']), '');
   }
+  const servers = sessions.filter((s) => s.alive && s.servers && s.kind !== 'interactive');
+  if (servers.length)
+    out.push(
+      '## Servers left running (the session is idle; only background servers it started keep running)',
+      ...servers.map((s) => `- ${oneLine(s.name ?? s.id)} (${s.id})${s.room ? ` in ${oneLine(s.room)}` : ''}: ask the room whether it still needs them, and to stop them if not`),
+      '',
+    );
   const mine = sessions.filter((s) => s.alive && s.kind === 'interactive');
   out.push(
     "## The owner's own sessions (a real approval comes from here)",
