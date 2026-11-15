@@ -61,4 +61,6 @@ test('the floor scan goes through seatFloor and saves who is seated', () => {
   assert.match(main, /seatFloor\(/);
   assert.match(main, /saveFloorSeats\(/);
   assert.doesNotMatch(main, /onFloor = Math\.min\(MAX_ROOMS/);
+  // A broken floor file is never overwritten (it holds the owner's cupboard picks).
+  assert.match(main, /if \(!seats && existsSync\(floorPath\(DATA_DIR\)\)\) return;/);
 });

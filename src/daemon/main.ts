@@ -103,7 +103,10 @@ const floors = new FloorCache(async () => {
 });
 void floors.get(); // start the first scan straight away
 // Remember who is on the floor, so the next scan keeps them (only when it changed).
+// A floor file that exists but can't be read is left as it is (the owner's picks of who went
+// to the cupboard are in it); the floor uses the busiest rooms until it's fixed.
 function saveFloorSeats(seats: Seats | undefined, seated: string[]): void {
+  if (!seats && existsSync(floorPath(DATA_DIR))) return;
   if (seats && seats.seated.length === seated.length && seated.every((p) => seats.seated.includes(p))) return;
   try {
     saveSeats(floorPath(DATA_DIR), { seated, away: seats?.away ?? [] });
