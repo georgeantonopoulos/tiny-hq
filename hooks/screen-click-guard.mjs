@@ -27,9 +27,37 @@ export function isInput(verb, args = []) {
   return !(LISTING_VERBS.has(verb) && /^(list|list-all|help)$/.test(args[0] ?? ''));
 }
 
-// A shell given no -c script (bash, bash -s, sh -x ...) runs what it reads on stdin.
-const programOf = (w) => w.find((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x) && !WRAPPERS.has(x.split('/').pop()) && !KEYWORDS.has(x)) ?? '';
-const runsStdin = (w) => SHELLS.has(programOf(w).split('/').pop()) && !w.includes('-c');
+// Where in a command the first word that passes `is` runs as the program: before it may come only
+// FOO=bar, wrappers (time, nice -n 5, timeout 30, sudo -u x, xargs -I{}) with their options and
+// option values, and shell keywords that start a command inside a loop or an if (do, then, {, !).
+export function programAt(w, is) {
+  for (let i = 0; i < w.length; i++) {
+    const x = w[i];
+    if (is(x)) return i;
+    const skip = /^[A-Za-z_][A-Za-z0-9_]*=/.test(x) || WRAPPERS.has(x.split('/').pop()) || KEYWORDS.has(x) || /^-/.test(x) || /^\d+[smh]?$/.test(x) || (i > 0 && /^-/.test(w[i - 1]));
+    if (!skip) return -1;
+  }
+  return -1;
+}
+const isShell = (x) => SHELLS.has(x.split('/').pop());
+// How a shell in this command gets its script: { c: the -c text } (also -lc, -ec ...), { stdin: true }
+// when it reads stdin (no script file, or -s), or undefined when there's no shell.
+function shellScript(w) {
+  const at = programAt(w, isShell);
+  if (at < 0) return undefined;
+  const rest = w.slice(at + 1);
+  const opts = [];
+  let k = 0;
+  for (; k < rest.length && /^[-+]/.test(rest[k]) && rest[k] !== '--'; k++) {
+    opts.push(rest[k]);
+    if (/^[-+]o$/.test(rest[k])) k++; // set -o name
+  }
+  const flags = opts.filter((o) => /^-[A-Za-z]+$/.test(o)).join('');
+  if (flags.includes('c')) return { c: rest[k] ?? '' };
+  if (rest[k] === '--') k++;
+  return { stdin: flags.includes('s') || k >= rest.length };
+}
+const runsStdin = (w) => !!shellScript(w)?.stdin;
 
 // Split a shell command into simple commands (lists of words). Quotes make one word; comments and
 // heredoc bodies are dropped (except a body a shell runs as its script); $(...), `...`, and `bash -c "..."`/eval are read as commands too.
@@ -40,8 +68,13 @@ export function commands(src, depth = 0) {
   let cur = '';
   let inWord = false;
   const heredocs = [];
+  const fed = []; // heredoc bodies and here-strings: { owner, text }, read once the command is parsed
+  const pipeTo = new Map(); // a command -> the next one in its pipeline
+  let hereString = false;
   const endWord = () => {
-    if (inWord) words.push(cur);
+    if (inWord && hereString) fed.push({ owner: words, text: cur });
+    else if (inWord) words.push(cur);
+    if (inWord) hereString = false;
     cur = '';
     inWord = false;
   };
@@ -102,15 +135,19 @@ export function commands(src, depth = 0) {
       i = e;
     } else if (c === '#' && !inWord) {
       while (i + 1 < src.length && src[i + 1] !== '\n') i++;
-    } else if (c === '<' && src[i + 1] === '<' && src[i + 2] !== '<') {
+    } else if (c === '<' && src[i + 1] === '<' && src[i + 2] === '<') {
+      endWord();
+      hereString = true;
+      i += 2;
+    } else if (c === '<' && src[i + 1] === '<') {
       endWord();
       i += 2;
       const strip = src[i] === '-';
       if (strip) i++;
       while (src[i] === ' ' || src[i] === '\t') i++;
-      const m = /^(['"]?)([A-Za-z0-9_.-]+)\1/.exec(src.slice(i));
+      const m = /^(?:(['"])([^'"\n]+)\1|\\?([^\s;&|<>()'"]+))/.exec(src.slice(i));
       if (m) {
-        heredocs.push({ tag: m[2], strip, owner: words });
+        heredocs.push({ tag: m[2] ?? m[3], strip, owner: words });
         i += m[0].length - 1;
       } else i--;
     } else if (c === '\n') {
@@ -128,9 +165,17 @@ export function commands(src, depth = 0) {
           body.push(line);
         }
         i = at - 1;
-        if (runsStdin(h.owner)) sub(body.join('\n'));
+        fed.push({ owner: h.owner, text: body.join('\n') });
       }
-    } else if (';&|()'.includes(c)) {
+    } else if (c === '|' && src[i + 1] !== '|') {
+      const from = words;
+      endCmd();
+      pipeTo.set(from, words);
+      if (src[i + 1] === '&') i++;
+    } else if (c === '|') {
+      endCmd();
+      i++;
+    } else if (';&()'.includes(c)) {
       endCmd();
     } else if (c === ' ' || c === '\t') {
       endWord();
@@ -140,13 +185,21 @@ export function commands(src, depth = 0) {
     }
   }
   endCmd();
+  // Text fed to a command is only data, unless a shell reads it as its script: `bash <<'EOF'`,
+  // `sh <<< "..."`, or further down the pipeline (`cat <<'EOF' | bash`).
+  for (const f of fed) {
+    for (let w = f.owner; w; w = pipeTo.get(w)) {
+      if (runsStdin(w)) {
+        sub(f.text);
+        break;
+      }
+    }
+  }
   for (const w of [...out]) {
-    const prog = w.find((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x) && !WRAPPERS.has(x)) ?? '';
-    const base = prog.split('/').pop();
-    if (SHELLS.has(base)) {
-      const at = w.indexOf('-c');
-      if (at >= 0 && w[at + 1] !== undefined) sub(w[at + 1]);
-    } else if (base === 'eval') sub(w.slice(w.indexOf(prog) + 1).join(' '));
+    const script = shellScript(w);
+    if (script && 'c' in script) sub(script.c);
+    const ev = programAt(w, (x) => x === 'eval');
+    if (ev >= 0) sub(w.slice(ev + 1).join(' '));
   }
   return out;
 }
@@ -155,11 +208,8 @@ export function commands(src, depth = 0) {
 export function directInput(command) {
   if (typeof command !== 'string' || !command.includes('peekaboo')) return undefined;
   for (const words of commands(command)) {
-    let i = 0;
-    // FOO=bar, wrappers (time, nice -n 5, timeout 30, xargs -I{}) and their options
-    // and shell keywords that start a command inside a loop or an if (do, then, {, !)
-    while (i < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || WRAPPERS.has(words[i].split('/').pop()) || KEYWORDS.has(words[i]) || /^-/.test(words[i]) || /^\d+[smh]?$/.test(words[i]))) i++;
-    if (!/(^|\/)peekaboo$/.test(words[i] ?? '')) continue;
+    let i = programAt(words, (x) => /(^|\/)peekaboo$/.test(x));
+    if (i < 0) continue;
     i++;
     while (i < words.length && words[i].startsWith('-')) i += VALUE_FLAGS.has(words[i]) ? 2 : 1;
     const verb = words[i];
