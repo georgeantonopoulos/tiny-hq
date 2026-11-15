@@ -12,7 +12,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { MANAGER_NOTES_DIR } from '../paths.ts';
+import { MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
 import { addAsk, asksPath, loadAsks, saveAsks } from '../team/asks.ts';
 import { normTarget } from '../team/posts.ts';
@@ -85,7 +85,7 @@ switch (cmd) {
     const what = words.slice(1).join(' ').trim();
     if (!what) fail('usage: job wait <id> "<the one thing the owner must do>" --why <reason> --tried "<what was tried>"');
     // Only the owner's things reach the owner (src/team/only-owner.ts).
-    const refused = checkOnlyOwner(proof.why, proof.tried);
+    const refused = checkOnlyOwner(proof.why, proof.tried, realpathSync(process.cwd()) === realpathSync(MANAGER_DIR));
     if (refused) fail(`Not waiting on the owner: ${j.id} stays active.\n${refused}`);
     const isPost = proof.why!.trim().toLowerCase() === 'post';
     if (isPost && (!postText?.trim() || !normTarget(postTarget)))

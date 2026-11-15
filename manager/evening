@@ -1,0 +1,6 @@
+#!/bin/sh
+# The evening note: what a room decided or did, for the owner to read on their desk tonight (no button, no message).
+#   ./evening add "<what you decided, and why>" [--kind decision|merge|step|note]   |   ./evening list
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/evening.ts" "$@"

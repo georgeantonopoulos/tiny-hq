@@ -37,7 +37,8 @@ import { logStep, loadSteps, pickRoom, stepLine, stepsPath, type Candidate } fro
 import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.ts';
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
-import { listReports, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
+import { fileReport, listReports, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
+import { addEntry, eveningDue, eveningNote, eveningPath, expiredAsks, expiredLine, lastFiled, loadEntries, markFiled, restJobs } from '../team/evening.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
 import { applyBreak, applyTidy, boardPath, minRooms, onBoard, breakDue, brewChat, coffeePrompt, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, removeTip, saveCoffee, tidyDue, tidyPrompt } from '../team/coffee.ts';
 import { foldIn, loadGhState, lookAtGithub, lookAtInbox, ottoLine, prReposIn, renderGithub, roomFor, saveGhState, tellLine, writeOttoReport, type Gh } from '../team/github.ts';
@@ -1148,8 +1149,13 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
       await startRoomWith(who.path, name, toRoom);
       reached = `started ${name}'s session with it`;
     }
-    // The manager hears it too. Their copy can't undo the room's (The owner must never be asked twice), so any
-    // failure here is only logged.
+    // The manager hears it only when the room couldn't take it (a copy of an answer the room already
+    // acts on woke them for nothing). Their copy can't undo the room's (the owner must never be asked
+    // twice), so any failure here is only logged.
+    if (!reached.startsWith('NOT')) {
+      console.log(`asks: the owner ${'choice' in answer ? `chose "${ask.options?.[answer.choice]}" for` : `${'signIn' in answer ? 'said sign in yourself to' : `said ${yes ? 'yes' : 'no'} to`}`} "${ask.question}" (${reached}; the manager not woken)`);
+      return;
+    }
     const copy = `${answerLine(ask, answer)} [Office: their answer was also ${reached}${reached.startsWith('NOT') ? '.' : ', so the room acts on it itself: don\'t relay it or ask the room to wait for you.'} Update your notebook, and make it a job with a brief if it needs one.]`;
     try {
       const told = asker ? await typeInto(asker, copy, true, () => undefined, true) : await tellManager(copy);
@@ -1166,6 +1172,11 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
     if (ok !== true) throw Object.assign(new Error("Couldn't get your answer to the manager; try again."), { status: 503 });
     console.log(`asks: the owner's answer to "${ask.question}" went to the manager (the asker has gone)`);
     resumeJob(ask, answer); // a job riding on this button is back to work too
+    return;
+  }
+  // "Nothing now" on one of the manager's own choices: nothing for them to do, so they aren't woken for it.
+  if (who?.id === 'manager' && 'choice' in answer && !wantsAction(ask, answer) && !ask.job && !ask.forJob) {
+    console.log(`asks: the owner chose "${ask.options?.[answer.choice]}" for the manager's "${ask.question}" (nothing to do; the manager not woken)`);
     return;
   }
   // Another answer may be starting this room's session right now: wait for it, then use that session.
@@ -1342,6 +1353,46 @@ function logAsks(): void {
       /* best effort */
     }
   }
+}
+
+// Quiet office (src/team/evening.ts): buttons left unanswered for 2 days come down as "not now"
+// (the room that asked is told; a job it carried rests a week), and once a day at EVENING_AT
+// the evening note goes on the owner's desk with everything that didn't need them. No tokens.
+const EVENING = eveningPath(MANAGER_NOTES_DIR);
+async function runEvening(): Promise<void> {
+  const now = Date.now();
+  const { left, expired } = expiredAsks(loadAsks(ASKS), now);
+  if (expired.length) {
+    // The note entries go first, so the owner's note lists them even if telling the room fails.
+    for (const a of expired) {
+      addEntry(EVENING, { at: now, kind: 'expired', folder: a.folder, text: `"${a.question}" (up since ${new Date(a.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })})` });
+      console.log(`asks: "${a.question}" came down after 2 days unanswered (not now)`);
+    }
+    saveAsks(ASKS, left);
+    saveJobs(JOBS, restJobs(loadJobs(JOBS), expired, now));
+    try {
+      const live = await liveSessions();
+      for (const a of expired) {
+        // The room that asked hears it now; a job's own button (job wait) has no asker, so the
+        // room's session hears it. The manager (who asks over rooms too) reads it in the note.
+        const asker = a.askedFor ? undefined : a.sessionId ? live.find((x) => x.sessionId === a.sessionId) : a.job ? pick(live.filter((x) => worksIn(x.realCwd, a.folder)), a.folder) : undefined;
+        if (asker && !worksIn(asker.realCwd, MANAGER_DIR)) await typeInto(asker, expiredLine(a), false).catch(() => undefined);
+      }
+    } catch (e) {
+      console.log(`asks: could not tell the rooms about expired buttons (${(e as Error).message})`);
+    }
+  }
+  const due = eveningDue(lastFiled(MANAGER_NOTES_DIR), new Date(now));
+  if (due === undefined) return;
+  const note = eveningNote(loadEntries(EVENING), loadJobs(JOBS), lastFiled(MANAGER_NOTES_DIR) || due - 86_400_000, now, roomName);
+  markFiled(MANAGER_NOTES_DIR, now);
+  if (!note) return console.log('evening note: nothing to say today, no page');
+  try {
+    fileReport(DATA_DIR, note.title, note.markdown, 'The office');
+  } catch (e) {
+    return console.log(`evening note: could not file it (${(e as Error).message})`);
+  }
+  console.log(`evening note: on the owner's desk (${note.title})`);
 }
 
 let scoreCache: { at: number; lines: string[] } | undefined;
@@ -1643,6 +1694,7 @@ server.listen(port, '127.0.0.1', () => {
         await runJobs();
         await runGoals();
         logAsks();
+        await runEvening();
         await clearAnsweredInChat();
         await retireExtraRoomSessions();
         await compactLongSessions();

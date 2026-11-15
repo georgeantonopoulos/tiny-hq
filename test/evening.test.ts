@@ -1,0 +1,116 @@
+// The quiet office: buttons only for money, public text or the irreversible; buttons expire after
+// 2 days as "not now"; one evening note on the owner's desk.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { checkOnlyOwner, ROOM_DECIDES } from '../src/team/only-owner.ts';
+import { addEntry, ASK_TTL_MS, eveningDue, eveningNote, eveningPath, EXPIRED_HOLD_MS, expiredAsks, expiredLine, lastFiled, loadEntries, markFiled, restJobs } from '../src/team/evening.ts';
+import { nudgeLine, type Job } from '../src/team/jobs.ts';
+import { stepLine } from '../src/team/autonomy.ts';
+import type { Ask } from '../src/team/asks.ts';
+// @ts-expect-error a plain-JS hook module, no type declarations
+import { REASON } from '../hooks/room-ask-guard.mjs';
+
+const H = 3_600_000;
+const job = (o: Partial<Job>): Job => ({ id: 'j1', room: '/d/app', title: 'Ship it', done: 'shipped', status: 'active', createdAt: 0, updatedAt: 0, ...o });
+const ask = (o: Partial<Ask>): Ask => ({ id: 'aaaaaaaa', folder: '/d/app', question: 'Merge PR #46?', createdAt: 0, ...o }) as Ask;
+
+test('a room decides its own choices; only the manager may still ask the owner to choose', () => {
+  assert.equal(checkOnlyOwner('choice', 'compared both', false), ROOM_DECIDES);
+  assert.match(ROOM_DECIDES, /manager\/evening add/);
+  assert.equal(checkOnlyOwner('choice', 'compared both', true), undefined);
+  assert.equal(checkOnlyOwner('irreversible', 'deleting the old bucket loses 3 GB of renders', false), undefined);
+  assert.equal(checkOnlyOwner('pay', 'checked the price', false), undefined);
+});
+
+test('a button up for 2 days comes down as "not now"; a trust button stays; its job rests a week', () => {
+  const now = 10 * 24 * H;
+  const old = ask({ id: 'oldoldol', createdAt: now - ASK_TTL_MS, job: 'j1' });
+  const fresh = ask({ id: 'freshfre', createdAt: now - ASK_TTL_MS + 1 });
+  const trust = ask({ id: 'trusttru', createdAt: 0, trust: { name: 'Sam', task: 'checks' } });
+  const { left, expired } = expiredAsks([old, fresh, trust], now);
+  assert.deepEqual(left.map((a) => a.id), ['freshfre', 'trusttru']);
+  assert.deepEqual(expired.map((a) => a.id), ['oldoldol']);
+  const [rested, other] = restJobs([job({ status: 'waiting', waitingFor: 'Merge PR #46' }), job({ id: 'j2', status: 'waiting' })], expired, now);
+  assert.equal(rested!.status, 'active');
+  assert.equal(rested!.waitingFor, undefined);
+  assert.equal(rested!.holdUntil, now + EXPIRED_HOLD_MS);
+  assert.match(rested!.holdFor!, /not now/);
+  assert.equal(other!.status, 'waiting', 'a job with no expired button is untouched');
+  const line = expiredLine(old);
+  assert.match(line, /not now/);
+  assert.match(line, /Job j1 rests for a week/);
+  assert.ok(!line.includes('\n'));
+});
+
+test('the evening note: one page of what did not need the owner, nothing when there is nothing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'th-eve-'));
+  const path = eveningPath(dir);
+  const at = new Date(2026, 10, 15, 12).getTime();
+  assert.equal(eveningNote([], [], 0, at, (f) => f), undefined);
+  addEntry(path, { at, kind: 'decision', folder: '/d/app', text: 'Kept the old icon:\nthe new one blurs at 16px' });
+  addEntry(path, { at, kind: 'merge', folder: '/d/site', text: 'Merged PR #12 (dependency bump)' });
+  assert.equal(addEntry(path, { kind: 'nonsense' as never, folder: '/d', text: 'x' }), undefined);
+  assert.equal(addEntry(path, { kind: 'note', folder: '/d', text: '   ' }), undefined);
+  const entries = loadEntries(path);
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0]!.text, 'Kept the old icon: the new one blurs at 16px');
+  const note = eveningNote(entries, [job({ status: 'done', updatedAt: at }), job({ id: 'old', status: 'done', updatedAt: 1 })], 100, at + 1, (f) => f.split('/').pop()!)!;
+  assert.match(note.title, /^Evening note, 15 Nov: 1 job done, 1 decision, 1 merge$/);
+  assert.match(note.markdown, /## Jobs finished\n\n- \*\*app\*\*: Ship it/);
+  assert.match(note.markdown, /## Merged by a room\n\n- \*\*site\*\*: Merged PR #12/);
+  assert.equal(eveningNote(entries, [], at, at + 1, (f) => f), undefined, 'only what came since the last note');
+  // Filed once a day at 19:00.
+  assert.equal(eveningDue(0, new Date(2026, 10, 15, 18, 59)), undefined);
+  assert.equal(eveningDue(0, new Date(2026, 10, 15, 19, 1)), new Date(2026, 10, 15, 19).getTime());
+  markFiled(dir, new Date(2026, 10, 15, 19, 1).getTime());
+  assert.equal(eveningDue(lastFiled(dir), new Date(2026, 10, 15, 23)), undefined);
+  assert.ok(eveningDue(lastFiled(dir), new Date(2026, 10, 16, 19, 5)));
+});
+
+test('manager/evening add files a line under the room, refuses an empty one and the office-only kind', () => {
+  const data = mkdtempSync(join(tmpdir(), 'th-evecli-'));
+  const room = realpathSync(mkdtempSync(join(tmpdir(), 'th-everoom-')));
+  const cli = new URL('../src/cli/evening.ts', import.meta.url).pathname;
+  const run = (...a: string[]) => spawnSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', cli, ...a], { cwd: room, env: { ...process.env, CM_DATA_DIR: data, CLAUDE_CODE_SESSION_ID: '' }, encoding: 'utf8' });
+  assert.equal(run('add', 'Picked', 'the', 'smaller', 'build').status, 0);
+  assert.equal(run('add', 'Merged #12', '--kind', 'merge').status, 0);
+  assert.equal(run('add').status, 2);
+  assert.equal(run('add', 'x', '--kind', 'expired').status, 2);
+  assert.equal(run('add', 'x', '--kind', 'bogus').status, 2);
+  const rows = loadEntries(eveningPath(join(data, 'manager')));
+  assert.deepEqual(rows.map((r) => [r.kind, r.text, r.folder]), [['decision', 'Picked the smaller build', room], ['merge', 'Merged #12', room]]);
+  assert.match(run('list').stdout, /Picked the smaller build/);
+});
+
+test('rooms are told to decide, not to ask: guard, nudge, brief and goal step', () => {
+  assert.match(REASON, /--why <send\|post\|pay\|irreversible\|permission\|hands\|password>/);
+  assert.match(REASON, /manager\/evening add/);
+  const nudge = nudgeLine(job({}), '/x/manager/job');
+  assert.match(nudge, /--why <send\|post\|pay\|irreversible\|permission\|hands\|password>/);
+  assert.match(nudge, /evening add/);
+  const step = stepLine('Polish the app', 'week 62% used', '/x/manager/ask');
+  assert.match(step, /\/x\/manager\/evening add .* --kind step/);
+  assert.doesNotMatch(step, /SendMessage/);
+  const skill = readFileSync(new URL('../skills/theoffice/SKILL.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(skill, /--why choice|\|choice\|/);
+  assert.match(skill, /manager\/evening add/);
+  const delegate = readFileSync(new URL('../manager/delegate', import.meta.url), 'utf8');
+  assert.match(delegate, /manager\/evening add/);
+  const rules = readFileSync(new URL('../manager/CLAUDE.template.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(rules, /One next move for every room|next move toward <its goal>/);
+  assert.match(rules, /evening list/);
+});
+
+test('every manager/ command can be run', () => {
+  const dir = new URL('../manager/', import.meta.url).pathname;
+  for (const f of readdirSync(dir)) {
+    const st = statSync(join(dir, f));
+    if (!st.isFile() || f.startsWith('.') || /\.(md|json|txt|log)$/.test(f)) continue;
+    assert.ok(st.mode & 0o100, `manager/${f} is not executable`);
+    assert.match(readFileSync(join(dir, f), 'utf8').slice(0, 2), /^#!/, `manager/${f} has no #! line`);
+  }
+});

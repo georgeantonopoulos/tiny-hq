@@ -68,7 +68,7 @@ test('a goal step goes to an idle goal room with no job or question, longest-wai
 
 test('the goal step keeps the owner\'s hard lines', () => {
   const line = stepLine('Polish the app', 'week 62% used', '/x/manager/ask');
-  for (const must of [/email/, /public site/, /merging to main/, /releases/, /paying/, /\/x\/manager\/ask/, /worktree/, /one line to the manager/]) assert.match(line, must);
+  for (const must of [/email/, /public site/, /merging to main/, /releases/, /paying/, /\/x\/manager\/ask/, /worktree/, /evening add .* --kind step/]) assert.match(line, must);
   assert.ok(!line.includes('\n'));
 });
 

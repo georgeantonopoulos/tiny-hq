@@ -29,7 +29,7 @@ export function isRoom(dir, data = DATA, manager = MANAGER) {
 }
 
 export const REASON =
-  'Question check (the office): your reply asks the owner a question in chat, so no question mark shows over your head and they may never see it. A question to them is a button: run ~/.tiny-hq/app/manager/ask "<the question>" --why <send|post|pay|choice|permission|hands|password> --tried "<what you tried>" (add --choices "<a>" "<b>" for options), and take down any older button of yours it replaces (manager/ask list, manager/ask cancel <id>). Then reply again, saying the question is on the button. If it was only rhetorical, say it as a statement.';
+  'Question check (the office): your reply asks the owner a question in chat, so no question mark shows over your head and they may never see it. A question to them is a button: run ~/.tiny-hq/app/manager/ask "<the question>" --why <send|post|pay|irreversible|permission|hands|password> --tried "<what you tried>", and take down any older button of yours it replaces (manager/ask list, manager/ask cancel <id>). Then reply again, saying the question is on the button. If the choice is yours to make (anything that is not money, public text or something that cannot be undone), decide it, say what you decided as a statement, and add it to their evening note: ~/.tiny-hq/app/manager/evening add "<what you decided, and why>". If it was only rhetorical, say it as a statement.';
 
 const NOTE = join(DATA, 'room-ask-guard.json');
 function sentBack(transcript, key) {
