@@ -477,37 +477,38 @@ function roomPrRepos(path: string): Record<string, number> {
   return repos;
 }
 // Each room with a session running hears what's new on its repos; a room that's busy with the
-// owner (they're viewing or typing) is tried again each tick for up to an hour. Everything, told
-// or not, goes in the owner's evening note.
+// owner (they're viewing or typing), or whose session didn't take the line, is tried again each
+// tick for up to an hour. Everything, told or not, goes in the owner's evening note.
 const ghPutOff = new Map<string, number>(); // room name -> when telling it was first put off
 async function tellGithub(): Promise<void> {
   const untold = loadGhState(GH_STATE).untold;
   if (!untold.length || ottoBusy) return;
   const floor = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project);
+  // Right after a restart the floor isn't scanned yet: every item would look roomless.
+  if (!floor.length) return;
   const byRoom = new Map<string, GhItem[]>(); // '' = no room on the floor
   for (const i of untold) {
     const name = i.room && floor.some((r) => r.name === i.room) ? i.room : '';
     byRoom.set(name, [...(byRoom.get(name) ?? []), i]);
   }
   const live = await liveSessions();
-  const passed = new Set<string>();
   for (const [name, items] of byRoom) {
     const path = floor.find((r) => r.name === name)?.project?.path;
     const s = path ? pick(live.filter((x) => worksIn(x.realCwd, path) && !worksIn(x.realCwd, MANAGER_DIR)), path) : undefined;
     const told = s ? await typeInto(s, roomGithubLine(items), false).catch(() => false as const) : false;
-    if (told === 'later') {
+    if (told === 'later' || (s && told !== true)) {
       const first = ghPutOff.get(name) ?? Date.now();
       ghPutOff.set(name, first);
       if (Date.now() - first < 60 * 60_000) continue; // next tick
     }
     ghPutOff.delete(name);
     for (const i of items) addEntry(EVENING, { kind: 'github', folder: path ?? i.repo, text: eveningGithubLine(i) });
-    for (const i of items) passed.add(i.key);
-    console.log(`github: ${told === true ? `told ${name}` : `evening note only${name ? ` (${name} not running)` : ''}`} about ${items.length} new`);
+    // Saved room by room: a later room going wrong never has this one told twice.
+    const passed = new Set(items.map((i) => i.key));
+    const now = loadGhState(GH_STATE);
+    saveGhState(GH_STATE, { ...now, untold: now.untold.filter((i) => !passed.has(i.key)) });
+    console.log(`github: ${told === true ? `told ${name}` : `evening note only${name ? ` (${name} ${s ? 'did not take it' : 'not running'})` : ''}`} about ${items.length} new`);
   }
-  if (!passed.size) return;
-  const now = loadGhState(GH_STATE);
-  saveGhState(GH_STATE, { ...now, untold: now.untold.filter((i) => !passed.has(i.key)) });
 }
 
 // Left-over blocked sessions (in no room, or their process gone) are closed by the
