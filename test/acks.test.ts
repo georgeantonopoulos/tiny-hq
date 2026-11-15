@@ -91,6 +91,16 @@ test('an answer handed to a busy session as a queued command counts as shown', (
   assert.deepEqual(ackFrom(recs as never, at, at + 40 * 60_000, ANSWER), { status: 'ok' });
 });
 
+test('a mid-turn answer stamped before the office noted it still counts', () => {
+  // The chat stamped the queued answer 8 s before the office finished typing (a long answer) and noted it.
+  const queued = { type: 'attachment', timestamp: new Date(at - 8_000).toISOString(), attachment: { type: 'queued_command', prompt: ANSWER } };
+  const recs = [queued, said(3, [{ type: 'tool_use', name: 'SendMessage', input: {} }])];
+  assert.deepEqual(ackFrom(recs as never, at, at + 30 * 60_000, ANSWER), { status: 'ok' });
+  // An old copy of the same answer from minutes before isn't this one.
+  const old = { ...queued, timestamp: new Date(at - 5 * 60_000).toISOString() };
+  assert.deepEqual(ackFrom([old, said(-290, [{ type: 'text', text: 'ok' }])] as never, at, at + 10_000, ANSWER), { status: 'wait' });
+});
+
 test('a session that moved into a worktree after the answer is still found, and an answer scrolled out of the tail counts as taken up', () => {
   // Claude Code moves the transcript to the worktree's folder; the newest copy wins.
   const home = mkdtempSync(join(tmpdir(), 'acks-home-'));

@@ -8,6 +8,10 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 export const ACK_MS = 90_000;
+// How long before the noted time a record carrying the answer's own text still counts as it. A busy
+// session stamps a mid-turn answer when it lands, which can be before the office finished typing and
+// noted it; with only 2 s of slack, a long answer that was taken up was reported as never shown.
+const EARLY_MS = 60_000;
 const GIVE_UP_MS = 30 * 60_000; // a check that can't be read for this long is dropped
 
 // `why`: it wasn't picked up, and the manager hasn't been told yet (kept until they are).
@@ -65,7 +69,7 @@ export function ackFrom(records: Records, at: number, now = Date.now(), answer =
   if (seen !== undefined && from < -1) from = records.length - 1; // nothing new yet
   for (let i = 0; seen === undefined && i < records.length; i++) {
     const r = records[i]!;
-    if (r.isSidechain || !r.timestamp || Date.parse(r.timestamp) < at - 2_000) continue;
+    if (r.isSidechain || !r.timestamp || Date.parse(r.timestamp) < at - (key ? EARLY_MS : 2_000)) continue;
     // A busy session gets a typed answer mid-turn as a queued command, not as a user message.
     const text = r.type === 'user' ? textOf(r.message?.content) : r.type === 'attachment' && r.attachment?.type === 'queued_command' ? textOf(r.attachment.prompt) : undefined;
     if (text === undefined) continue;

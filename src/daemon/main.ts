@@ -1004,9 +1004,10 @@ function openAsks(): Record<string, { id: string; question: string; more?: numbe
 }
 // Every answer the owner clicks is watched until the session takes it up (src/team/acks.ts).
 const ACKS = acksPath(MANAGER_NOTES_DIR);
-function watchAck(s: { sessionId: string; cwd: string }, ask: Ask, line: string): void {
+// at: when the office started typing it (the chat stamps the answer then, not when typing ends).
+function watchAck(s: { sessionId: string; cwd: string }, ask: Ask, line: string, at: number): void {
   try {
-    addAck(ACKS, { sessionId: s.sessionId, cwd: s.cwd, room: roomName(ask.folder), question: ask.question.slice(0, 200), answer: line.slice(0, 200), at: Date.now() });
+    addAck(ACKS, { sessionId: s.sessionId, cwd: s.cwd, room: roomName(ask.folder), question: ask.question.slice(0, 200), answer: line.slice(0, 200), at });
   } catch (e) {
     console.error('acks:', e);
   }
@@ -1132,8 +1133,9 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
     const name = roomName(who.path);
     let reached: string;
     if (roomSession) {
+      const typedAt = Date.now();
       const ok = await typeInto(roomSession, toRoom, false, () => undefined, true);
-      if (ok) watchAck(roomSession, ask, toRoom);
+      if (ok) watchAck(roomSession, ask, toRoom, typedAt);
       // Nothing typed (its screen never came up): safe for the owner to try again.
       if (ok === 'later') throw Object.assign(new Error(`Couldn't get your answer into ${name}'s chat; try again, or open the room.`), { status: 503 });
       // Typed but not yet seen in its chat (a busy session takes it later): never typed twice.
@@ -1175,8 +1177,9 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
   const s = asker ?? (who ? pick(nowLive, who.path) : nowLive[0]);
   let ok: true | string | false | 'later' | undefined;
   if (s) {
+    const typedAt = Date.now();
     ok = await typeInto(s, line, who?.id === 'manager', () => undefined, true);
-    if (ok === true) watchAck(s, ask, line);
+    if (ok === true) watchAck(s, ask, line, typedAt);
   }
   else if (who && who.id !== 'manager' && wantsAction(ask, answer) && isTrusted(who.path)) {
     // Nobody in the room: a yes or a real pick starts the room's session with the owner's answer, and the job's brief when there is one.
