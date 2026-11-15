@@ -114,3 +114,14 @@ test('every manager/ command can be run', () => {
     assert.match(readFileSync(join(dir, f), 'utf8').slice(0, 2), /^#!/, `manager/${f} has no #! line`);
   }
 });
+
+// package.json lists manager commands one by one; one left out is missing for everyone who installs.
+test('every manager/ command ships in the npm package', () => {
+  const dir = new URL('../manager/', import.meta.url).pathname;
+  const files = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { files: string[] }).files;
+  for (const f of readdirSync(dir)) {
+    const st = statSync(join(dir, f));
+    if (!st.isFile() || f.startsWith('.') || /\.(md|json|txt|log)$/.test(f)) continue;
+    assert.ok(files.includes(`manager/${f}`) || files.includes('manager'), `manager/${f} is not in package.json "files"`);
+  }
+});

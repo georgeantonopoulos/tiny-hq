@@ -1385,13 +1385,17 @@ async function runEvening(): Promise<void> {
   const due = eveningDue(lastFiled(MANAGER_NOTES_DIR), new Date(now));
   if (due === undefined) return;
   const note = eveningNote(loadEntries(EVENING), loadJobs(JOBS), lastFiled(MANAGER_NOTES_DIR) || due - 86_400_000, now, roomName);
-  markFiled(MANAGER_NOTES_DIR, now);
-  if (!note) return console.log('evening note: nothing to say today, no page');
+  if (!note) {
+    markFiled(MANAGER_NOTES_DIR, now);
+    return console.log('evening note: nothing to say today, no page');
+  }
   try {
     fileReport(DATA_DIR, note.title, note.markdown, 'The office');
   } catch (e) {
+    // Not marked filed, so the next tick tries again with the same entries.
     return console.log(`evening note: could not file it (${(e as Error).message})`);
   }
+  markFiled(MANAGER_NOTES_DIR, now);
   console.log(`evening note: on the owner's desk (${note.title})`);
 }
 
