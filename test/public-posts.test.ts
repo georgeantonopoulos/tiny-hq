@@ -169,6 +169,25 @@ test('a pass never lands on another place: inherited GH_REPO, a body that looks 
   assert.equal(pa.sameTarget('https://example.com/t?b=2&a=1', 'https://example.com/t?a=1&b=2'), true);
 });
 
+test('a pass asked for from a worktree works in the main checkout and its other worktrees, not in another room', async () => {
+  const path = join(mkdtempSync(join(tmpdir(), 'th-vis-')), 'post-approvals.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as { usePass: (t: string, s: string, now: number, p: string, cwd?: string, where?: unknown, target?: string) => boolean };
+  const passes = { use: (t: string, s: string, cwd?: string, where?: unknown, target?: string) => pa.usePass(t, s, Date.now(), path, cwd, where, target), click: () => false, repo: () => 'owner/atlas' };
+  const flip = 'gh repo edit owner/atlas-plugins --visibility public --accept-visibility-change-consequences';
+  const D = (cwd: string) => decide('Bash', { command: flip }, {}, 's', passes, cwd);
+  const give = () => grantPass(path, 'make owner/atlas-plugins public', '/Dev/Atlas/.claude/worktrees/proto', Date.now(), 'owner/atlas-plugins');
+  give();
+  denies(D('/Dev/Atlas-other'), /hasn't approved/); // a folder that only starts with the same name
+  denies(D('/Dev/Garden'), /hasn't approved/); // another room
+  assert.equal(D('/Dev/Atlas'), 'pass'); // asked from the worktree, run from the main checkout
+  give();
+  assert.equal(D('/Dev/Atlas/.claude/worktrees/other'), 'pass');
+  grantPass(path, 'make owner/atlas-plugins public', '/Dev/Atlas', Date.now(), 'owner/atlas-plugins');
+  assert.equal(D('/Dev/Atlas/.claude/worktrees/proto'), 'pass');
+});
+
 test('targets read the same in the hook and the office', async () => {
   const { normTarget } = await import('../src/team/posts.ts');
   // @ts-expect-error a plain-JS hook module, no type declarations
