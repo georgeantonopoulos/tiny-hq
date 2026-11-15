@@ -48,12 +48,16 @@ test('uninstall takes the screen helper out too, and rooms are told to turn it o
   assert.ok(pkg.files.includes('manager/screen'), 'the rooms\' screen command ships');
 });
 
-test("a locked Mac: screen on wakes the display and puts a 'hands' unlock button over the room", () => {
+test('a locked Mac: no unlock button; the room is sent to a hidden browser for web pages', () => {
   const cli = readFileSync(new URL('../src/cli/screen.ts', import.meta.url), 'utf8');
-  assert.match(cli, /if \(macLocked\(\)\) askToUnlock\(/);
-  assert.match(cli, /'\/usr\/bin\/caffeinate', \['-u', '-t', '5'\]/);
-  assert.match(cli, /join\(REPO_ROOT, 'manager', 'ask'\)[\s\S]*'--why',\s*'hands'/);
-  assert.doesNotMatch(cli, /cwd:/, 'the button goes up from the room folder the command runs in');
+  assert.doesNotMatch(cli, /'ask'|manager', 'ask|Screen Sharing|askToUnlock/, 'no unlock button');
+  assert.match(cli, /hidden \(headless\) browser/);
+  assert.match(cli, /Don't ask them to unlock it/);
+  assert.equal([...cli.matchAll(/if \(macLocked\(\)\) console\.log\(LOCKED_NOTE\)/g)].length, 2, 'screen on and screen status both say so');
+  assert.ok(cli.indexOf('const LOCKED_NOTE') < cli.indexOf("if (cmd === 'on')"), 'declared before use');
+  const skill = readFileSync(new URL('../skills/theoffice/SKILL.md', import.meta.url), 'utf8');
+  assert.match(skill, /never ask the owner to unlock it/);
+  assert.doesNotMatch(skill, /asking the owner to unlock/);
 });
 
 test('a click waits for 30 s without keyboard or mouse, unless the last input was a room click', async () => {
