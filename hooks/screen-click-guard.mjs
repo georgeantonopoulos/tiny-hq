@@ -3,7 +3,7 @@
 // input goes through `manager/screen <verb> ...`, which waits until the Mac's keyboard and mouse
 // have been still for 30 s, so a click never lands under the owner's own hands while they work in
 // the same app. Looking (image, see, list, permissions, --help) is never held up, and text that only
-// mentions peekaboo (a quoted commit message, a heredoc body) is not a command. Only in sessions
+// mentions peekaboo (a quoted commit message, a heredoc body given to cat) is not a command. Only in sessions
 // whose project has an office name tag; never blocks if anything can't be read.
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -27,8 +27,12 @@ export function isInput(verb, args = []) {
   return !(LISTING_VERBS.has(verb) && /^(list|list-all|help)$/.test(args[0] ?? ''));
 }
 
-// Split a shell command into simple commands (lists of words). Quotes make one word; heredoc
-// bodies and comments are dropped; $(...), `...`, and `bash -c "..."`/eval are read as commands too.
+// A shell given no -c script (bash, bash -s, sh -x ...) runs what it reads on stdin.
+const programOf = (w) => w.find((x) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(x) && !WRAPPERS.has(x.split('/').pop()) && !KEYWORDS.has(x)) ?? '';
+const runsStdin = (w) => SHELLS.has(programOf(w).split('/').pop()) && !w.includes('-c');
+
+// Split a shell command into simple commands (lists of words). Quotes make one word; comments and
+// heredoc bodies are dropped (except a body a shell runs as its script); $(...), `...`, and `bash -c "..."`/eval are read as commands too.
 export function commands(src, depth = 0) {
   const out = [];
   if (depth > 4) return out;
@@ -106,21 +110,25 @@ export function commands(src, depth = 0) {
       while (src[i] === ' ' || src[i] === '\t') i++;
       const m = /^(['"]?)([A-Za-z0-9_.-]+)\1/.exec(src.slice(i));
       if (m) {
-        heredocs.push({ tag: m[2], strip });
+        heredocs.push({ tag: m[2], strip, owner: words });
         i += m[0].length - 1;
       } else i--;
     } else if (c === '\n') {
       endCmd();
       for (const h of heredocs.splice(0)) {
-        // drop the body, up to and including the line that is just the tag
+        // skip the body, up to and including the line that is just the tag; it is only data,
+        // unless a shell reads it as its script (`bash <<'EOF'`)
         let at = i + 1;
+        const body = [];
         for (;;) {
           const nl = src.indexOf('\n', at);
           const line = src.slice(at, nl < 0 ? src.length : nl);
           at = nl < 0 ? src.length : nl + 1;
           if ((h.strip ? line.replace(/^\t+/, '') : line) === h.tag || nl < 0) break;
+          body.push(line);
         }
         i = at - 1;
+        if (runsStdin(h.owner)) sub(body.join('\n'));
       }
     } else if (';&|()'.includes(c)) {
       endCmd();

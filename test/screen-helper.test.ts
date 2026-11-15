@@ -134,6 +134,11 @@ test('peekaboo input run directly is sent through manager/screen; looking is not
   assert.equal(directInput(`git commit -m "a; ${pb} click is refused"`), undefined);
   assert.equal(directInput(`cat > notes.md <<'EOF'\n${pb} click --on B1\nEOF\necho done`), undefined);
   assert.equal(directInput(`cat > n.md <<EOF\n${pb} click\nEOF\n${pb} click --on B2`), 'click', 'a command after the heredoc still counts');
+  // ...but a heredoc a shell runs as its script is commands.
+  assert.equal(directInput(`bash <<'EOF'\n${pb} click --coords 1,2\nEOF`), 'click');
+  assert.equal(directInput(`sh -s <<-EOF\n\t${pb} type hi\n\tEOF`), 'type');
+  assert.equal(directInput(`env FOO=1 /bin/zsh <<EOF\necho a; ${pb} click\nEOF`), 'click');
+  assert.equal(directInput(`bash -c 'cat' <<EOF\n${pb} click\nEOF`), undefined, 'with -c, stdin is only data');
   assert.equal(directInput(`${pb} menu list-all --app Finder`), undefined);
   assert.equal(directInput(`${pb} click --help`), undefined);
   assert.equal(directInput(`${pb} help click`), undefined);
