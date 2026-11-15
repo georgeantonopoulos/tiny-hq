@@ -7,7 +7,7 @@ import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkOnlyOwner, ROOM_DECIDES } from '../src/team/only-owner.ts';
-import { addEntry, ASK_TTL_MS, eveningDue, eveningNote, eveningPath, EXPIRED_HOLD_MS, expiredAsks, expiredLine, lastFiled, loadEntries, markFiled, restJobs } from '../src/team/evening.ts';
+import { addEntry, ASK_TTL_MS, eveningDue, eveningNote, eveningPath, EXPIRED_HOLD_MS, expiredAsks, expiredLine, fileEvening, lastFiled, loadEntries, markFiled, restJobs } from '../src/team/evening.ts';
 import { nudgeLine, type Job } from '../src/team/jobs.ts';
 import { stepLine } from '../src/team/autonomy.ts';
 import type { Ask } from '../src/team/asks.ts';
@@ -124,4 +124,26 @@ test('every manager/ command ships in the npm package', () => {
     if (!st.isFile() || f.startsWith('.') || /\.(md|json|txt|log)$/.test(f)) continue;
     assert.ok(files.includes(`manager/${f}`) || files.includes('manager'), `manager/${f} is not in package.json "files"`);
   }
+});
+
+// The note was once marked filed before the page was written, so a failed write lost the day's entries.
+test('a failed evening note is tried again next tick; marked filed only once it is on the desk', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-evefile-'));
+  const path = eveningPath(dir);
+  addEntry(path, { at: new Date(2026, 10, 15, 12).getTime(), kind: 'decision', folder: '/d/app', text: 'Kept the old icon' });
+  const at = new Date(2026, 10, 15, 19, 1).getTime();
+  const filed: string[] = [];
+  const said = fileEvening(dir, path, [], at, (f) => f, () => {
+    throw new Error('disk full');
+  });
+  assert.match(said!, /could not file it/);
+  assert.equal(lastFiled(dir), 0, 'not marked filed');
+  assert.match(fileEvening(dir, path, [], at + 60_000, (f) => f, (t, md) => filed.push(t, md))!, /on the owner's desk/);
+  assert.match(filed[1]!, /Kept the old icon/, 'same entries on the retry');
+  assert.equal(lastFiled(dir), at + 60_000);
+  assert.equal(fileEvening(dir, path, [], at + 120_000, (f) => f, () => assert.fail('filed twice')), undefined);
+  // Nothing to say: marked, no page.
+  const empty = mkdtempSync(join(tmpdir(), 'cm-evefile-'));
+  assert.match(fileEvening(empty, eveningPath(empty), [], at, (f) => f, () => assert.fail('no page'))!, /nothing to say/);
+  assert.equal(lastFiled(empty), at);
 });

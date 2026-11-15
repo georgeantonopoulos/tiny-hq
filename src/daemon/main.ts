@@ -38,7 +38,7 @@ import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
 import { fileReport, listReports, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
-import { addEntry, eveningDue, eveningNote, eveningPath, expiredAsks, expiredLine, lastFiled, loadEntries, markFiled, restJobs } from '../team/evening.ts';
+import { addEntry, eveningPath, expiredAsks, expiredLine, fileEvening, restJobs } from '../team/evening.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
 import { applyBreak, applyTidy, boardPath, minRooms, onBoard, breakDue, brewChat, coffeePrompt, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, removeTip, saveCoffee, tidyDue, tidyPrompt } from '../team/coffee.ts';
 import { foldIn, loadGhState, lookAtGithub, lookAtInbox, ottoLine, prReposIn, renderGithub, roomFor, saveGhState, tellLine, writeOttoReport, type Gh } from '../team/github.ts';
@@ -1382,21 +1382,8 @@ async function runEvening(): Promise<void> {
       console.log(`asks: could not tell the rooms about expired buttons (${(e as Error).message})`);
     }
   }
-  const due = eveningDue(lastFiled(MANAGER_NOTES_DIR), new Date(now));
-  if (due === undefined) return;
-  const note = eveningNote(loadEntries(EVENING), loadJobs(JOBS), lastFiled(MANAGER_NOTES_DIR) || due - 86_400_000, now, roomName);
-  if (!note) {
-    markFiled(MANAGER_NOTES_DIR, now);
-    return console.log('evening note: nothing to say today, no page');
-  }
-  try {
-    fileReport(DATA_DIR, note.title, note.markdown, 'The office');
-  } catch (e) {
-    // Not marked filed, so the next tick tries again with the same entries.
-    return console.log(`evening note: could not file it (${(e as Error).message})`);
-  }
-  markFiled(MANAGER_NOTES_DIR, now);
-  console.log(`evening note: on the owner's desk (${note.title})`);
+  const said = fileEvening(MANAGER_NOTES_DIR, EVENING, loadJobs(JOBS), now, roomName, (title, md) => fileReport(DATA_DIR, title, md, 'The office'));
+  if (said) console.log(said);
 }
 
 let scoreCache: { at: number; lines: string[] } | undefined;

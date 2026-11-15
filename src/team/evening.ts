@@ -119,3 +119,23 @@ export function restJobs(jobs: Job[], expired: Ask[], now: number): Job[] {
 export function expiredLine(ask: Ask): string {
   return `[Office: your question "${ask.question}" was up for 2 days with no answer from the owner, so the office took it down: take it as "not now".${ask.job ? ` Job ${ask.job} rests for a week, then carries on.` : ''} Don't put it up again unless something has changed; carry on with whatever you can do without it, and make any choice that's yours yourself (it goes in the evening note). No reply needed.]`;
 }
+
+// Files today's note if it's due. Marked filed only once the page is on the desk (or there was
+// nothing to say), so a failed write is tried again next tick with the same entries instead of
+// losing the day.
+export function fileEvening(notesDir: string, entriesPath: string, jobs: Job[], now: number, roomName: (folder: string) => string, file: (title: string, markdown: string) => void): string | undefined {
+  const due = eveningDue(lastFiled(notesDir), new Date(now));
+  if (due === undefined) return undefined;
+  const note = eveningNote(loadEntries(entriesPath), jobs, lastFiled(notesDir) || due - 86_400_000, now, roomName);
+  if (!note) {
+    markFiled(notesDir, now);
+    return 'evening note: nothing to say today, no page';
+  }
+  try {
+    file(note.title, note.markdown);
+  } catch (e) {
+    return `evening note: could not file it, trying again next tick (${(e as Error).message})`;
+  }
+  markFiled(notesDir, now);
+  return `evening note: on the owner's desk (${note.title})`;
+}
