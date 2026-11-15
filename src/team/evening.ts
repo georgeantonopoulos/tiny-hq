@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import type { Job } from './jobs.ts';
 import type { Ask } from './asks.ts';
 
-export const KINDS = { decision: 'Decisions rooms made', merge: 'Merged by a room', step: 'Goal steps', expired: 'Buttons that came down unanswered (taken as "not now")', note: 'Other news' } as const;
+export const KINDS = { decision: 'Decisions rooms made', merge: 'Merged by a room', step: 'Goal steps', expired: 'Buttons that came down unanswered (taken as "not now")', github: 'New on GitHub from other people', note: 'Other news' } as const;
 export type Kind = keyof typeof KINDS;
 export interface Entry {
   at: number;
@@ -74,7 +74,7 @@ export function eveningDue(lastAt: number, now: Date): number | undefined {
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const COUNT_WORD: Record<Kind, string> = { decision: 'decision', merge: 'merge', step: 'goal step', expired: 'button', note: 'note' };
+const COUNT_WORD: Record<Kind, string> = { decision: 'decision', merge: 'merge', step: 'goal step', expired: 'button', github: 'GitHub item', note: 'note' };
 
 // The page itself: everything since the last note, grouped. undefined when there's nothing.
 export function eveningNote(entries: Entry[], jobs: Job[], since: number, now: number, roomName: (folder: string) => string): { title: string; markdown: string } | undefined {

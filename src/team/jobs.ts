@@ -170,7 +170,7 @@ export type Decision = 'none' | 'nudge' | 'no-session' | 'stuck' | 'check';
 
 // A job waiting on the owner is checked every so often: has they done it yet (sent
 // the email, clicked the thing)? Nobody else tells the room when they do.
-export const CHECK_MS = 15 * 60_000;
+export const CHECK_MS = 60 * 60_000; // hourly: every 15 minutes, one waiting job could be checked dozens of times in a few days
 export const MAX_CHECKS_PER_DAY = 16;
 
 export const MAX_HOLD_MS = 14 * 86_400_000;

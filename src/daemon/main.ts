@@ -41,7 +41,7 @@ import { fileReport, listReports, openReport, renderMarkdown, unreadCount } from
 import { addEntry, eveningPath, expiredAsks, expiredLine, fileEvening, restJobs } from '../team/evening.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
 import { applyBreak, applyTidy, boardPath, minRooms, onBoard, breakDue, brewChat, coffeePrompt, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, removeTip, saveCoffee, tidyDue, tidyPrompt } from '../team/coffee.ts';
-import { foldIn, loadGhState, lookAtGithub, lookAtInbox, ottoLine, prReposIn, renderGithub, roomFor, saveGhState, tellLine, writeOttoReport, type Gh } from '../team/github.ts';
+import { eveningGithubLine, foldIn, loadGhState, lookAtGithub, lookAtInbox, prReposIn, renderGithub, roomFor, roomGithubLine, saveGhState, writeOttoReport, type Gh, type GhItem, type GhState } from '../team/github.ts';
 
 const token = loadOrCreateToken(TOKEN_PATH);
 const config = loadConfig(CONFIG_PATH);
@@ -389,8 +389,8 @@ async function waiting(): Promise<Record<string, { kind: string; text: string }>
   return out;
 }
 
-// The owner's GitHub, watched for other people (src/team/github.ts): every 15 minutes,
-// and the manager is told about anything new (again on later ticks if they were busy).
+// The owner's GitHub, watched for other people (src/team/github.ts): every 15 minutes. Anything new
+// goes to its room's running session and into the owner's evening note; it doesn't wake the manager.
 const GH_STATE = join(MANAGER_NOTES_DIR, 'github.json');
 const gh: Gh = async (args) => {
   const env = await userEnv();
@@ -401,8 +401,8 @@ const gh: Gh = async (args) => {
 let ghOwner: string | undefined;
 let ghLookedAt = 0;
 let ghBusy = false;
-// The look takes ~40 s, so it runs alongside the tick; telling the manager happens in the
-// tick itself (tellGithub), one at a time with everything else that types into them.
+// The look takes ~40 s, so it runs alongside the tick; telling the rooms happens in the
+// tick itself (tellGithub), one at a time with everything else that types into sessions.
 async function lookGithub(): Promise<void> {
   if (Date.now() - ghLookedAt < 15 * 60_000) return;
   ghLookedAt = Date.now();
@@ -416,18 +416,19 @@ async function lookGithub(): Promise<void> {
     const inbox = await lookAtInbox(gh, ghOwner, inboxSince);
     const after = foldIn(loadGhState(GH_STATE), { ...look, ...inbox }, Date.now(), since + 60 * 60_000);
     saveGhState(GH_STATE, after);
-    // Otto words what's new for the manager (Sonnet, no tools); a report already written isn't redone.
+    // Each new item gets its room; Otto words it for his bubble and the status page (Sonnet, no
+    // tools); a report already written isn't redone.
     const keys = after.untold.map((i) => i.key);
     if (keys.length && keys.join('\n') !== after.report?.keys.join('\n')) {
       ottoBusy = true;
       try {
         const rooms = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project).map((r) => ({ name: r.name, remote: r.project!.remote ?? folderRemote(r.project!.path), prRepos: roomPrRepos(r.project!.path) }));
         const withRooms = after.untold.map((i) => ({ ...i, room: roomFor(i.repo, rooms) }));
-        const text = await writeOttoReport(withRooms, { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'otto'), env: await userEnv() });
-        const cur = loadGhState(GH_STATE);
-        // Each item keeps its room for the manager's line; the write-up is for the bubble and status page.
         const roomOf = new Map(withRooms.map((i) => [i.key, i.room]));
-        saveGhState(GH_STATE, { ...cur, untold: cur.untold.map((i) => (roomOf.get(i.key) ? { ...i, room: roomOf.get(i.key) } : i)), ...(text ? { report: { text, at: new Date().toISOString(), keys } } : {}) });
+        const placed = (cur: GhState) => ({ ...cur, untold: cur.untold.map((i) => (roomOf.get(i.key) ? { ...i, room: roomOf.get(i.key) } : i)) });
+        saveGhState(GH_STATE, placed(loadGhState(GH_STATE))); // rooms first: the report can fail
+        const text = await writeOttoReport(withRooms, { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'otto'), env: await userEnv() });
+        if (text) saveGhState(GH_STATE, { ...placed(loadGhState(GH_STATE)), report: { text, at: new Date().toISOString(), keys } });
       } finally {
         ottoBusy = false;
       }
@@ -475,17 +476,38 @@ function roomPrRepos(path: string): Record<string, number> {
   prRepoCache.set(path, { at: Date.now(), repos });
   return repos;
 }
+// Each room with a session running hears what's new on its repos; a room that's busy with the
+// owner (they're viewing or typing) is tried again each tick for up to an hour. Everything, told
+// or not, goes in the owner's evening note.
+const ghPutOff = new Map<string, number>(); // room name -> when telling it was first put off
 async function tellGithub(): Promise<void> {
-  const state = loadGhState(GH_STATE);
-  const untold = state.untold;
+  const untold = loadGhState(GH_STATE).untold;
   if (!untold.length || ottoBusy) return;
-  // Otto's report when it covers exactly what's untold; else the plain list.
-  const own = state.report && state.report.keys.join('\n') === untold.map((i) => i.key).join('\n');
-  if ((await tellManager(own ? ottoLine(untold) : tellLine(untold))) !== true) return; // busy: next tick
-  const told = new Set(untold.map((i) => i.key));
+  const floor = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project);
+  const byRoom = new Map<string, GhItem[]>(); // '' = no room on the floor
+  for (const i of untold) {
+    const name = i.room && floor.some((r) => r.name === i.room) ? i.room : '';
+    byRoom.set(name, [...(byRoom.get(name) ?? []), i]);
+  }
+  const live = await liveSessions();
+  const passed = new Set<string>();
+  for (const [name, items] of byRoom) {
+    const path = floor.find((r) => r.name === name)?.project?.path;
+    const s = path ? pick(live.filter((x) => worksIn(x.realCwd, path) && !worksIn(x.realCwd, MANAGER_DIR)), path) : undefined;
+    const told = s ? await typeInto(s, roomGithubLine(items), false).catch(() => false as const) : false;
+    if (told === 'later') {
+      const first = ghPutOff.get(name) ?? Date.now();
+      ghPutOff.set(name, first);
+      if (Date.now() - first < 60 * 60_000) continue; // next tick
+    }
+    ghPutOff.delete(name);
+    for (const i of items) addEntry(EVENING, { kind: 'github', folder: path ?? i.repo, text: eveningGithubLine(i) });
+    for (const i of items) passed.add(i.key);
+    console.log(`github: ${told === true ? `told ${name}` : `evening note only${name ? ` (${name} not running)` : ''}`} about ${items.length} new`);
+  }
+  if (!passed.size) return;
   const now = loadGhState(GH_STATE);
-  saveGhState(GH_STATE, { ...now, untold: now.untold.filter((i) => !told.has(i.key)) });
-  console.log(`github: ${own ? 'Otto told' : 'told'} the manager about ${told.size} new`);
+  saveGhState(GH_STATE, { ...now, untold: now.untold.filter((i) => !passed.has(i.key)) });
 }
 
 // Left-over blocked sessions (in no room, or their process gone) are closed by the

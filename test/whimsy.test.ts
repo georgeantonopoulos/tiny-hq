@@ -5,10 +5,12 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeF
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error: a plain .mjs hook, no types
-import { askedWithButton, lastReply, questionsOwner, thisTurn } from '../hooks/manager-ask-guard.mjs';
+import { askedWithButton, lastReply, questionsOwner, thisTurn } from '../hooks/room-ask-guard.mjs';
 import { fill, HAPPENINGS, MANAGER_HAPPENINGS, nextHappening } from '../web/app/whimsy.ts';
 
-const HOOK = new URL('../hooks/manager-ask-guard.mjs', import.meta.url).pathname;
+// The manager's check is the rooms' check, run from the manager's own settings with --manager.
+const HOOK = new URL('../hooks/room-ask-guard.mjs', import.meta.url).pathname;
+const MANAGER_DIR = '/Users/owner/.tiny-hq/app/manager';
 const user = (text: string) => ({ type: 'user', timestamp: '2026-11-10T08:00:00Z', message: { content: text } });
 const said = (text: string) => ({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
 const ran = (command: string) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
@@ -18,7 +20,7 @@ function runHook(rows: object[], active = false, o: { hook?: string; dir?: strin
   const dir = o.dir ?? mkdtempSync(join(tmpdir(), 'cm-askguard-'));
   const t = join(dir, 't.jsonl');
   writeFileSync(t, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
-  return execFileSync(process.execPath, [o.hook ?? HOOK], { input: JSON.stringify({ transcript_path: t, stop_hook_active: active }), encoding: 'utf8', env: { ...process.env, CM_DATA_DIR: dir } });
+  return execFileSync(process.execPath, [o.hook ?? HOOK, '--manager'], { input: JSON.stringify({ transcript_path: t, stop_hook_active: active, cwd: MANAGER_DIR }), encoding: 'utf8', env: { ...process.env, CM_DATA_DIR: dir, CLAUDE_PROJECT_DIR: MANAGER_DIR } });
 }
 
 test('a question to the owner in chat sends the manager back to make it a button', () => {
@@ -49,9 +51,9 @@ test('a question to the owner in chat sends the manager back to make it a button
 test('the check runs from a folder reached by a symlink, with a space in its path', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cm-askguard-'));
   mkdirSync(join(dir, 'real dir'));
-  copyFileSync(HOOK, join(dir, 'real dir', 'manager-ask-guard.mjs'));
+  copyFileSync(HOOK, join(dir, 'real dir', 'room-ask-guard.mjs'));
   symlinkSync(join(dir, 'real dir'), join(dir, 'linked dir'));
-  assert.match(runHook([user('a'), said('Want me to start Rex?')], false, { hook: join(dir, 'linked dir', 'manager-ask-guard.mjs') }), /block/);
+  assert.match(runHook([user('a'), said('Want me to start Rex?')], false, { hook: join(dir, 'linked dir', 'room-ask-guard.mjs') }), /block/);
 });
 
 test('rhetorical asides and statements are not questions to them', () => {
@@ -93,5 +95,6 @@ test("The manager's voice: never 'boss'; Lesson 8 kept", () => {
   }
   assert.match(rules, /8\. \*\*A question is a button\.\*\*/);
   const settings = JSON.parse(readFileSync(new URL('../manager/.claude/settings.json', import.meta.url), 'utf8'));
-  assert.ok(JSON.stringify(settings.hooks.Stop).includes('manager-ask-guard.mjs'), 'the check runs after every manager turn');
+  assert.ok(JSON.stringify(settings.hooks.Stop).includes('room-ask-guard.mjs\\" --manager'), 'the check runs after every manager turn, even without the optional global hook');
+  assert.ok(!JSON.stringify(settings.hooks.Stop).includes('manager-ask-guard'), 'one question check for everyone');
 });

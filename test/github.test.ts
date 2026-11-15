@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { foldIn, lookAtGithub, renderGithub, tellLine, type Gh, type GhState } from '../src/team/github.ts';
+import { foldIn, lookAtGithub, renderGithub, roomGithubLine, type Gh, type GhState } from '../src/team/github.ts';
 
 const now = Date.parse('2026-11-09T09:00:00Z');
 const repo = (r: string) => `https://api.github.com/repos/owner/${r}`;
@@ -41,10 +41,10 @@ test('GitHub watch: other people only, first look learns, later looks tell the m
   const pr = { ...look.open[0]!, key: 'owner/Harbor#60', number: 60, title: 'New PR' };
   const later = foldIn(again, { open: [...look.open, pr], comments: look.comments }, now + 1_800_000);
   assert.deepEqual(later.untold.map((i) => i.number), [60]);
-  assert.match(tellLine(later.untold), /^\[Office: GitHub\] New from other people on the owner's repos: owner\/Harbor#60 \(PR, opened\)\. /);
-  assert.doesNotMatch(tellLine(later.untold), /New PR|contrib/, "strangers' titles and names never reach the manager's chat");
-  assert.match(tellLine(later.untold), /only once they say so/);
+  assert.match(roomGithubLine(later.untold), /^\[Office: GitHub\] New from other people on your repos: owner\/Harbor#60 \(PR, opened by /);
+  assert.doesNotMatch(roomGithubLine(later.untold), /New PR/, "strangers' titles never reach a chat");
+  assert.match(roomGithubLine(later.untold), /only once the owner asks/);
   const bot = { ...pr, key: 'owner/orbit#7', repo: 'owner/orbit', number: 7, bot: true };
   assert.equal(foldIn(later, { open: [...look.open, pr, bot], comments: look.comments }, now + 1_900_000).untold.length, 1, 'an app\'s PR is listed, not announced');
-  assert.equal(foldIn(later, { open: [...look.open, pr], comments: [] }, now + 2_700_000).untold.length, 1, 'still untold until the manager hears it');
+  assert.equal(foldIn(later, { open: [...look.open, pr], comments: [] }, now + 2_700_000).untold.length, 1, 'still untold until its room hears it');
 });
