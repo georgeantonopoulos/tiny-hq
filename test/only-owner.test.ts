@@ -11,7 +11,7 @@ import { leftovers, LEFTOVER_QUIET_MS } from '../src/terminal/status.ts';
 import { validAsk } from '../src/team/asks.ts';
 
 test('only the owner: a reason from the short list and a real attempt, nothing else', () => {
-  assert.deepEqual(Object.keys(REASONS).sort(), ['choice', 'hands', 'irreversible', 'password', 'pay', 'permission', 'post']);
+  assert.deepEqual(Object.keys(REASONS).sort(), ['camera', 'choice', 'hands', 'irreversible', 'password', 'pay', 'permission', 'post']);
   assert.match(checkOnlyOwner('send', 'Drafted it, subject "Testers"')!, /never a button/);
   assert.equal(checkOnlyOwner('PASSWORD', 'Opened pypi.org in their Chrome: signed out, password box'), undefined);
   assert.match(checkOnlyOwner(undefined, 'tried lots of things')!, /Missing --why/);
@@ -148,7 +148,7 @@ test("The manager's rules: try first, the owner last, and no more 'The owner can
   const g = readFileSync(new URL('../manager/CLAUDE.template.md', import.meta.url), 'utf8');
   assert.match(g, /## Try first: the owner comes last/);
   assert.match(g, /Office faults[^\n]*tiny-hq doctor/);
-  assert.match(g, /--why <post\|pay\|irreversible\|choice\|permission\|hands\|password>/);
+  assert.match(g, /--why <post\|pay\|irreversible\|choice\|permission\|hands\|camera\|password>/);
   assert.match(g, /Try before you ask/);
   assert.doesNotMatch(g, /sessions the owner can close/);
   assert.doesNotMatch(g, /or a login\/2-factor prompt\./);

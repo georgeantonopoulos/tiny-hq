@@ -55,6 +55,8 @@ export function normTarget(t: string | undefined): string {
   // A public deploy of one project (deploys are button-only, like posts).
   const d = /^deploy:([A-Za-z0-9._-]{1,100})$/.exec(s);
   if (d) return `deploy:${d[1]!.toLowerCase()}`;
+  // A device on the owner's Mac: one camera or microphone capture they approved.
+  if (/^device:camera$/i.test(s)) return 'device:camera';
   if (!/^https?:\/\//i.test(s)) return '';
   try {
     const u = new URL(s);

@@ -12,6 +12,7 @@ export const REASONS = {
   choice: 'a choice that changes what the owner gets (which data source, design or approach they will live with): put the options on --choices, your recommendation first. Small, reversible mechanics you decide yourself and write in the evening note',
   permission: 'approve one exact command or tool their settings refuse (name it)',
   hands: 'a step only their hands can do, such as a switch in macOS System Settings (list the exact steps; their button reads Done, I did it / Stuck)',
+  camera: 'turn on the camera or microphone of their Mac (say what for and the exact command; their Approve lets that one capture run once, within 2 hours)',
   password: 'type a password or a 2-factor code that no session has (their Chrome is not already signed in)',
 } as const;
 

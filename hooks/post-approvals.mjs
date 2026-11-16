@@ -34,6 +34,8 @@ export function normTarget(t) {
   // A public deploy of one project (deploys are button-only, like posts).
   const d = /^deploy:([A-Za-z0-9._-]{1,100})$/.exec(s);
   if (d) return `deploy:${d[1].toLowerCase()}`;
+  // A device on the owner's Mac: one camera or microphone capture they approved.
+  if (/^device:camera$/i.test(s)) return 'device:camera';
   if (!/^https?:\/\//i.test(s)) return '';
   try {
     const u = new URL(s);
@@ -43,7 +45,7 @@ export function normTarget(t) {
     return '';
   }
 }
-const isRepoTarget = (t) => /^[a-z0-9-]+\/[\w.-]+(#\d+)?$/.test(t) || t.startsWith('deploy:');
+const isRepoTarget = (t) => /^[a-z0-9-]+\/[\w.-]+(#\d+)?$/.test(t) || t.startsWith('deploy:') || t.startsWith('device:');
 // A pass's target against where the post actually goes: a PR, issue or repo exactly; a site page, or
 // a page under it, with the same query (a thread's ?id=1 is not ?id=2). A pass with no target (from before targets existed) goes nowhere.
 export function sameTarget(pass, actual) {

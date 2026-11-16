@@ -1,5 +1,5 @@
 // What Tiny HQ adds to the owner's Mac outside its own folder, each only with their yes, and how
-// each comes off again: five Claude Code hooks (in ~/.claude/settings.json), the theoffice skill
+// each comes off again: six Claude Code hooks (in ~/.claude/settings.json), the theoffice skill
 // (a link in ~/.claude/skills) and two login items (launchd agents). Every hook command carries the
 // marker `# tiny-hq` so uninstall removes exactly what was added and nothing of the owner's.
 // What was added is also recorded in <dataDir>/installed.json.
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 export const MARK = '# tiny-hq';
 
 export interface HookSpec {
-  id: 'name-tag' | 'waiting' | 'public-posts' | 'room-questions' | 'screen-clicks';
+  id: 'name-tag' | 'waiting' | 'public-posts' | 'room-questions' | 'screen-clicks' | 'camera';
   event: 'SessionStart' | 'PermissionRequest' | 'PreToolUse' | 'Stop';
   matcher?: string;
   file: string; // under <app>/hooks
@@ -52,6 +52,13 @@ export const HOOKS: HookSpec[] = [
     matcher: 'Bash',
     file: 'screen-click-guard.mjs',
     what: "Clicks wait for you: when a room tests a desktop app, its clicks and typing wait until you've left the keyboard and mouse alone for 30 s, so they never land under your hands. Only in your rooms.",
+  },
+  {
+    id: 'camera',
+    event: 'PreToolUse',
+    matcher: 'Bash',
+    file: 'camera-guard.mjs',
+    what: 'Camera and microphone guard: any session about to turn on your Mac\'s camera or microphone (ffmpeg, imagesnap, sox, Photo Booth, capture code in a script) stops and asks you first on a button; your Approve lets that one capture run.',
   },
 ];
 

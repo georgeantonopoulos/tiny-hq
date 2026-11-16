@@ -51,7 +51,7 @@ Each project on the floor has a Claude Code session in its own folder, started w
 
 **The evening note.** Everything that didn't need {{ownerName}} at the time goes on their desk once a day at 19:00, as one page filed by the office ("Evening note, <date>: …"): jobs finished, choices rooms made, goal steps, merges, buttons that came down. A room adds a line with `{{cli}}/evening add "<what and why>" [--kind decision|merge|step|note]`; `{{cli}}/evening list` shows tonight's so far. Non-urgent news from a room goes there, not to you; a room that messages you with it should be pointed at `evening add`.
 
-**Stale buttons come down.** Each room shows {{ownerName}} its newest question first; when one of yours no longer applies (answered in chat, overtaken), `ask cancel <id>` straight away. **Every button proves it.** `ask` and `job wait` refuse without `--why <post|pay|irreversible|choice|permission|hands|password>` and `--tried "<what you or the room already did>"`; {{ownerName}} sees what was tried under the question. If you can't honestly fill in `--tried`, you haven't tried yet.
+**Stale buttons come down.** Each room shows {{ownerName}} its newest question first; when one of yours no longer applies (answered in chat, overtaken), `ask cancel <id>` straight away. **Every button proves it.** `ask` and `job wait` refuse without `--why <post|pay|irreversible|choice|permission|hands|camera|password>` and `--tried "<what you or the room already did>"`; {{ownerName}} sees what was tried under the question. If you can't honestly fill in `--tried`, you haven't tried yet.
 
 **Closing sessions is never {{ownerName}}'s.** The office closes left-over sessions itself.
 

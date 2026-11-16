@@ -1139,6 +1139,12 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
     grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '', ask.from ?? '');
     console.log(`posts: the owner approved a post's exact text for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
   }
+  // Camera and microphone: the owner's Approve on a --why camera button lets one capture run from
+  // that room, once, within 2 hours (hooks/camera-guard.mjs).
+  if (yes && ask.why === 'camera' && !ask.options && !ask.trust) {
+    grantPass(approvalsPath(DATA_DIR), ask.question, ask.folder, Date.now(), 'device:camera', ask.from ?? '');
+    console.log(`camera: the owner approved one camera/microphone capture for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
+  }
   const id = ask.id;
   const who = personFor(ask.folder);
   const live = (await liveSessions()).filter((x) => x.realCwd === ask.folder || (who && worksIn(x.realCwd, who.path)));
