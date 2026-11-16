@@ -36,6 +36,7 @@ test("a room's model is read from its session: a /model typed in the chat shows,
   // Wiring: the daemon serves the live models on the status poll, and the page applies them to badges.
   const main = read('../src/daemon/main.ts');
   assert.match(main, /models: roomModels,/);
-  assert.match(main, /cur\.switchedAt > pickedAt/, "only a /model newer than the owner's last card pick replaces it");
+  assert.match(main, /cur\.switchedAt > \(pickedAt\.get\(path\) \?\? picksSavedAtStart\)/, "only a /model newer than the owner's last card pick for that same room replaces it");
+  assert.match(main, /pickedAt\.set\(projectPath, Date\.now\(\)\);\n  saveModels\(\);/, 'a card pick records its own room only');
   assert.match(read('../web/app/main.ts'), /office\.showModels\(r\.models\)/);
 });

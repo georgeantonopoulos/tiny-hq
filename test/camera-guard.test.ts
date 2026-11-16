@@ -76,7 +76,12 @@ test('a capture waits for the owner: refused without a pass; their Approve lets 
   const room = '/Users/x/Dev/desk-lamp';
   const now = Date.now();
   assert.match(decideCamera('Bash', cmd, { cwd: room, session_id: 's' }, now, path), /--why camera/);
-  grantPass(path, 'Photograph the lamp: ffmpeg ...', room, now, 'device:camera');
+  // A yes for one capture can't be spent on another: the pass holds the exact command.
+  grantPass(path, 'Photograph the lamp: imagesnap lamp.jpg', room, now, 'device:camera');
+  assert.match(decideCamera('Bash', { command: 'rec private.wav' }, { cwd: room, session_id: 's' }, now, path), /microphone|camera/, 'a different capture');
+  assert.match(decideCamera('Bash', cmd, { cwd: room, session_id: 's' }, now, path), /camera/, 'not the approved command');
+  assert.equal(decideCamera('Bash', { command: 'imagesnap  lamp.jpg' }, { cwd: room, session_id: 's' }, now, path), undefined, 'the approved one, spaces aside');
+  grantPass(path, 'Photograph the lamp: ffmpeg -f avfoundation -i 0 -frames:v 1 lamp.jpg', room, now, 'device:camera');
   assert.match(decideCamera('Bash', cmd, { cwd: '/Users/x/Dev/other', session_id: 's' }, now, path), /camera/, 'another room');
   assert.equal(decideCamera('Bash', cmd, { cwd: `${room}/.claude/worktrees/w`, session_id: 's' }, now, path), undefined, 'the room, from its worktree');
   assert.match(decideCamera('Bash', cmd, { cwd: room, session_id: 's' }, now, path), /camera/, 'used up');

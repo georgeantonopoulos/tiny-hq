@@ -289,6 +289,7 @@ async function setModel(projectPath: string, model: string): Promise<{ applied: 
   if (!room) throw Object.assign(new Error('Not a project on the floor.'), { status: 404 });
   if (!(MODELS as readonly string[]).includes(model)) throw Object.assign(new Error(`Pick one of ${MODELS.join(', ')}.`), { status: 400 });
   models = { ...models, [projectPath]: model as Model };
+  pickedAt.set(projectPath, Date.now());
   saveModels();
   const live = pick(await live2s(), projectPath);
   if (!live || live.status === 'busy') return { applied: 'next' }; // never type into a session mid-task
@@ -314,16 +315,19 @@ function live2s(): ReturnType<typeof liveSessions> {
 // the running session's transcript, so a /model the owner types in the chat shows on
 // the floor. A switch to Opus, Sonnet or Haiku also becomes the room's pick, so the
 // room's next session starts on it (as /model saves it for the owner's own sessions).
+// When the owner last picked on each room's card (this run), so a pick in one room never makes
+// another room's /model look stale. Before any pick this run: when the picks file was last saved.
+const pickedAt = new Map<string, number>();
+let picksSavedAtStart = 0;
+try {
+  picksSavedAtStart = statSync(MODELS_PATH).mtimeMs;
+} catch {
+  // no picks yet
+}
 async function roomModels(): Promise<Record<string, string>> {
   const live = await live2s();
   const out: Record<string, string> = {};
   let changed = false;
-  let pickedAt = 0; // when the room picks were last saved
-  try {
-    pickedAt = statSync(MODELS_PATH).mtimeMs;
-  } catch {
-    // no picks yet
-  }
   for (const r of floors.latest()?.rooms ?? []) {
     if (r.kind !== 'project' || !r.project) continue;
     const path = r.project.path;
@@ -331,7 +335,7 @@ async function roomModels(): Promise<Record<string, string>> {
     const cur = s?.sessionId ? currentModel(s.sessionId, s.cwd) : undefined;
     // Only a /model typed after the owner's last pick on the card counts as a new pick
     // (a pick made while the room was busy waits for its next session; the live one still shows).
-    if (cur?.switchedAt && cur.switchedAt > pickedAt && (MODELS as readonly string[]).includes(cur.model) && models[path] !== cur.model) {
+    if (cur?.switchedAt && cur.switchedAt > (pickedAt.get(path) ?? picksSavedAtStart) && (MODELS as readonly string[]).includes(cur.model) && models[path] !== cur.model) {
       models = { ...models, [path]: cur.model as Model };
       changed = true;
     }

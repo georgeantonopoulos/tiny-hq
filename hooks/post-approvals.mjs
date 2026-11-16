@@ -152,10 +152,11 @@ export function usePass(text, session, now = Date.now(), path = approvalsPath(),
 // <project>"), used up by a host API call the guard can't put in fixed words: the first
 // unused pass for that target from this room, whatever its text. Never used for a deploy itself,
 // which still needs "deploy <project> at <commit> publicly".
-export function useTargetPass(session, now = Date.now(), path = approvalsPath(), cwd, target) {
+// `match`: an extra check on the pass (the camera guard binds a pass to the command the owner approved).
+export function useTargetPass(session, now = Date.now(), path = approvalsPath(), cwd, target, match = () => true) {
   return locked(path, () => {
     const list = loadPasses(path);
-    const i = list.findIndex((p) => !p.usedAt && p.expires > now && passHere(cwd, p) && sameTarget(p.target, target));
+    const i = list.findIndex((p) => !p.usedAt && p.expires > now && passHere(cwd, p) && sameTarget(p.target, target) && match(p));
     if (i < 0) return false;
     list[i] = { ...list[i], usedAt: now, session: String(session ?? '') };
     save(path, list);

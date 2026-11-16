@@ -115,8 +115,13 @@ export function deviceUse(command, cwd) {
   return undefined;
 }
 
+// A pass covers only the command the owner approved: the button's text must hold this exact command
+// (spaces aside), so a yes for one photo can't be spent on a different capture.
+const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+export const approves = (passText, command) => !!squash(command) && squash(passText).includes(squash(command));
+
 export function denyReason(what) {
-  return `This would turn on the owner's ${what}. Nothing switches on their camera or microphone without their yes for that one capture. Put it on a button and stop: \`${ASK} "<what you want to capture and why, with the exact command>" --why camera --tried "<what you tried without it>"\`. When they approve, the same command runs once (within 2 hours). Listing devices (ffmpeg -list_devices true, imagesnap -l) is fine without asking.`;
+  return `This would turn on the owner's ${what}. Nothing switches on their camera or microphone without their yes for that one capture. Put it on a button and stop: \`${ASK} "<what you want to capture and why, with the exact command>" --why camera --tried "<what you tried without it>"\`. When they approve, that exact command runs once (within 2 hours); a different capture needs its own button. Listing devices (ffmpeg -list_devices true, imagesnap -l) is fine without asking.`;
 }
 
 // undefined to let it run; a reason to refuse it. A capture with an unused pass for this room runs,
@@ -125,7 +130,7 @@ export function decideCamera(toolName, input, hook = {}, now = Date.now(), path 
   if (toolName !== 'Bash') return undefined;
   const what = deviceUse(input?.command, hook.cwd);
   if (!what) return undefined;
-  if (useTargetPass(hook.session_id, now, path, hook.cwd, TARGET)) return undefined;
+  if (useTargetPass(hook.session_id, now, path, hook.cwd, TARGET, (p) => approves(p.text, input.command))) return undefined;
   return denyReason(what);
 }
 
