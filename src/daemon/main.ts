@@ -404,7 +404,8 @@ let ghBusy = false;
 // The look takes ~40 s, so it runs alongside the tick; telling the rooms happens in the
 // tick itself (tellGithub), one at a time with everything else that types into sessions.
 async function lookGithub(): Promise<void> {
-  if (Date.now() - ghLookedAt < 15 * 60_000) return;
+  // No floor yet (just restarted): new items would get no room, so look once it's scanned.
+  if (Date.now() - ghLookedAt < 15 * 60_000 || !floors.latest()) return;
   ghLookedAt = Date.now();
   try {
     ghOwner ??= (await gh(['api', 'user', '-q', '.login'])).trim();
