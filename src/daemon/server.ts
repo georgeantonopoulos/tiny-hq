@@ -31,6 +31,8 @@ export interface DaemonDeps {
   sessions?: () => Promise<Record<string, 'busy' | 'idle'>>;
   // The owner picks the model for a room's Claude.
   setModel?: (projectPath: string, model: string) => Promise<{ applied: 'now' | 'next' }>;
+  // Person id ("lead:<room>") -> the model their Claude is on now (a /model typed in the chat shows).
+  models?: () => Promise<Record<string, string>>;
   // Person id -> the last thing their session said (the manager's speech bubble).
   said?: () => Promise<Record<string, { text: string; at: string; images?: number }>>;
   // The i-th picture the person's last message points at (a path the office found in it), if any.
@@ -337,11 +339,11 @@ export function createDaemon(deps: DaemonDeps): Server {
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/sessions' && deps.sessions) {
-      const [sessions, said, waiting, asks] = await Promise.all([deps.sessions(), deps.said ? deps.said().catch(() => ({})) : Promise.resolve({}), deps.waiting ? deps.waiting().catch(() => ({})) : Promise.resolve(undefined), deps.asks ? deps.asks.list().catch(() => ({})) : Promise.resolve(undefined)]);
+      const [sessions, said, waiting, asks, models] = await Promise.all([deps.sessions(), deps.said ? deps.said().catch(() => ({})) : Promise.resolve({}), deps.waiting ? deps.waiting().catch(() => ({})) : Promise.resolve(undefined), deps.asks ? deps.asks.list().catch(() => ({})) : Promise.resolve(undefined), deps.models ? deps.models().catch(() => undefined) : Promise.resolve(undefined)]);
       const lastDone = deps.lastDone?.();
       const deskUnread = deps.desk?.unread();
       const coffee = deps.coffee?.last();
-      return send(res, 200, { sessions, said, ...(asks ? { asks } : {}), ...(waiting ? { waiting } : {}), ...(lastDone ? { lastDone } : {}), ...(deskUnread !== undefined ? { deskUnread } : {}), ...(coffee ? { coffee } : {}) });
+      return send(res, 200, { sessions, said, ...(models ? { models } : {}), ...(asks ? { asks } : {}), ...(waiting ? { waiting } : {}), ...(lastDone ? { lastDone } : {}), ...(deskUnread !== undefined ? { deskUnread } : {}), ...(coffee ? { coffee } : {}) });
     }
     if (deps.boardAction && req.method === 'POST' && url.pathname === '/api/board/action') {
       let b: { room?: unknown; next?: unknown };

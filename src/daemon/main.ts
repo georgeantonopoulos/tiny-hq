@@ -29,7 +29,7 @@ import { MAX_ROOMS, layoutFloor } from '../office/layout.ts';
 import { floorPath, loadSeats, saveSeats, seatFloor, type Seats } from '../office/seats.ts';
 import { applyScene, loadScene } from '../office/scene.ts';
 import { loadLeads, saveLeads, staffRooms, writeNameTag, type Leads } from '../team/leads.ts';
-import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
+import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, currentModel, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
 import { Allowance, meters, plan, usageReader, type Plan } from '../team/budget.ts';
@@ -307,6 +307,38 @@ function live2s(): ReturnType<typeof liveSessions> {
     list.catch(() => (liveCache = undefined));
   }
   return liveCache.list;
+}
+
+// The model each room's Claude is on now, by person id ("lead:<room>"): read from
+// the running session's transcript, so a /model the owner types in the chat shows on
+// the floor. A switch to Opus, Sonnet or Haiku also becomes the room's pick, so the
+// room's next session starts on it (as /model saves it for the owner's own sessions).
+async function roomModels(): Promise<Record<string, string>> {
+  const live = await live2s();
+  const out: Record<string, string> = {};
+  let changed = false;
+  let pickedAt = 0; // when the room picks were last saved
+  try {
+    pickedAt = statSync(MODELS_PATH).mtimeMs;
+  } catch {
+    // no picks yet
+  }
+  for (const r of floors.latest()?.rooms ?? []) {
+    if (r.kind !== 'project' || !r.project) continue;
+    const path = r.project.path;
+    const s = pick(live, path);
+    const cur = s?.sessionId ? currentModel(s.sessionId, s.cwd) : undefined;
+    // Only a /model typed after the owner's last pick on the card counts as a new pick
+    // (a pick made while the room was busy waits for its next session; the live one still shows).
+    if (cur?.switchedAt && cur.switchedAt > pickedAt && (MODELS as readonly string[]).includes(cur.model) && models[path] !== cur.model) {
+      models = { ...models, [path]: cur.model as Model };
+      changed = true;
+    }
+    const m = cur?.model ?? models[path];
+    if (m) out[`lead:${r.id}`] = m;
+  }
+  if (changed) saveModels();
+  return out;
 }
 
 let lastManagerTidy = 0;
@@ -612,10 +644,15 @@ const server = createDaemon({
   // The page opens the manager's terminal on this folder.
   floor: async (refresh) => {
     const f = await floors.get(refresh);
-    return { ...f, managerPath: MANAGER_DIR, rooms: f.rooms.map((r) => (r.kind === 'project' && r.project && models[r.project.path] ? { ...r, model: models[r.project.path] } : r)) };
+    const now: Record<string, string> = await roomModels().catch(() => ({}));
+    return { ...f, managerPath: MANAGER_DIR, rooms: f.rooms.map((r) => {
+      const m = now[`lead:${r.id}`] ?? (r.project ? models[r.project.path] : undefined);
+      return r.kind === 'project' && r.project && m ? { ...r, model: m } : r;
+    }) };
   },
   setModel,
   sessions,
+  models: roomModels,
   said,
   waiting,
   // The timetable on the manager's wall: every task, when it runs next, and on/off.

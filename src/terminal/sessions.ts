@@ -388,7 +388,7 @@ const plainText = (t: string): string =>
     .trim();
 
 type Block = { type?: string; text?: string; name?: string; id?: string; tool_use_id?: string; input?: Record<string, unknown> };
-type Rec = { type?: string; timestamp?: string; message?: { content?: Block[] | string } };
+type Rec = { type?: string; timestamp?: string; content?: string; message?: { model?: string; content?: Block[] | string } };
 
 // The tail of a session's transcript, newest record first.
 function tailRecords(sessionId: string, cwd: string, home: string): Rec[] {
@@ -441,6 +441,29 @@ export function lastAction(sessionId: string, cwd: string, home = homedir()): { 
     if (said) return { text: `said: ${plainText(said.text!)}`.slice(0, 160), at: r.timestamp ?? '' };
   }
   return undefined;
+}
+
+// The model a session is on now, from its transcript: the newer of its latest
+// reply's model and its latest `/model` switch ("Set model to `Sonnet 5.5`", typed
+// in the chat by the owner or by the office). `switchedAt`: when that latest /model
+// ran (ms), if it is in the transcript's tail. Models: 'opus' | 'sonnet' | 'haiku' | 'fable'.
+export function currentModel(sessionId: string, cwd: string, home = homedir()): { model: string; switchedAt?: number } | undefined {
+  const family = (name: string): string | undefined => /\b(opus|sonnet|haiku|fable)\b/i.exec(name)?.[1]?.toLowerCase();
+  let model: string | undefined;
+  for (const r of tailRecords(sessionId, cwd, home)) {
+    if (r.type === 'assistant') {
+      model ??= family(r.message?.model ?? ''); // an error stand-in ("<synthetic>") says nothing
+      continue;
+    }
+    const text = typeof r.message?.content === 'string' ? r.message.content : (r.content ?? '');
+    const set = /<local-command-stdout>\s*Set model to\s+`?([^`<]+)/.exec(text);
+    const m = set ? family(set[1]!) : undefined;
+    if (m) {
+      const at = Date.parse(r.timestamp ?? '');
+      return { model: model ?? m, ...(Number.isFinite(at) ? { switchedAt: at } : {}) };
+    }
+  }
+  return model ? { model } : undefined;
 }
 
 // What a blocked session is waiting for the owner on: a question it asked them

@@ -269,6 +269,7 @@ async function start(): Promise<void> {
     sessions = r.sessions;
     waiting = r.waiting;
     office.showSessions(sessions);
+    office.showModels(r.models); // a /model typed in a room's chat shows on its badge and card
     office.showDesk(r.deskUnread);
     // A coffee break that started in the last 10 minutes and hasn't been shown yet: they walk over.
     if (r.coffee && r.coffee.at !== coffeeSeen) {
