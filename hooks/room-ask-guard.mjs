@@ -116,10 +116,10 @@ export function isRoom(dir, data = DATA, manager = MANAGER) {
 }
 
 export const REASON =
-  'Question check (the office): your reply asks the owner a question in chat, so no question mark shows over your head and they may never see it. A question to them is a button: run ~/.tiny-hq/app/manager/ask "<the question>" --why <send|post|pay|irreversible|permission|hands|password> --tried "<what you tried>", and take down any older button of yours it replaces (manager/ask list, manager/ask cancel <id>). Then reply again, saying the question is on the button. If the choice is yours to make (anything that is not money, public text or something that cannot be undone), decide it, say what you decided as a statement, and add it to their evening note: ~/.tiny-hq/app/manager/evening add "<what you decided, and why>". If it was only rhetorical, say it as a statement.';
-// The manager may put a choice on the owner's button (--why choice is the manager's only).
+  'Question check (the office): your reply asks the owner a question in chat, so no question mark shows over your head and they may never see it. A question to them is a button: run ~/.tiny-hq/app/manager/ask "<the question>" --why <post|pay|irreversible|choice|permission|hands|password> --tried "<what you tried>" (for a choice, add --choices "<your pick>" "<other>"), and take down any older button of yours it replaces (manager/ask list, manager/ask cancel <id>). Then reply again, saying the question is on the button. If it is a small, reversible choice that does not change what the owner gets, decide it, say what you decided as a statement, and add it to their evening note: ~/.tiny-hq/app/manager/evening add "<what you decided, and why>". If it was only rhetorical, say it as a statement.';
+// The manager's version: no evening-note escape hatch, the owner's question goes on a button.
 export const MANAGER_REASON =
-  'Question check (the office): your reply asks the owner a question in chat. A question to them is a button: run ~/.tiny-hq/app/manager/ask "<the question>" --why <send|post|pay|choice|permission|hands|password> --tried "<what you tried>" (add --choices "<a>" "<b>" for options), then reply again without the question. If it was only rhetorical, say it as a statement.';
+  'Question check (the office): your reply asks the owner a question in chat. A question to them is a button: run ~/.tiny-hq/app/manager/ask "<the question>" --why <post|pay|irreversible|choice|permission|hands|password> --tried "<what you tried>" (add --choices "<a>" "<b>" for options), then reply again without the question. If it was only rhetorical, say it as a statement.';
 
 const NOTE = join(DATA, 'room-ask-guard.json');
 function sentBack(transcript, key) {

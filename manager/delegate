@@ -27,7 +27,7 @@ brief=''
 [ -n "$brief_file" ] && [ -f "$brief_file" ] && brief=$(cat "$brief_file")
 task="$3
 
-On a long task, note progress with manager/job note after each phase (not a message to the manager). Buttons for the owner only for money, public text or something that can't be undone; any other choice is yours: decide it and add it to their evening note with ~/.tiny-hq/app/manager/evening add \"<what you decided, and why>\".
+On a long task, note progress with manager/job note after each phase (not a message to the manager). Buttons for the owner for money, public text, something that can't be undone, or a choice that changes what they get (--why choice with --choices, your pick first); small, reversible choices are yours: decide them and add them to their evening note with ~/.tiny-hq/app/manager/evening add \"<what you decided, and why>\".
 
 When you're done, or if you need the owner, reply to the manager with SendMessage in three lines or fewer: what you did, what's left, and anything the owner must decide."
 set -- --bg -n "$2"

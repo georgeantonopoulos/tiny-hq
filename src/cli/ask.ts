@@ -2,7 +2,7 @@
 // over your head. Their answer arrives in your own chat as a message from them.
 //   ask "<one-line question>" --why <reason> --tried "<what you already tried>"   (from your project folder)
 //   ask "<what and where>" --why post --tried "..." --text "<exact text>" --target <owner/repo#N | owner/repo | https://page>   (a public post: the pass is for that text at that place only)
-//     reason: send | post | pay | choice | permission | password (src/team/only-owner.ts); anything else is refused
+//     reason: post | pay | irreversible | choice | permission | hands | password (src/team/only-owner.ts); anything else is refused
 //   ask "<question>" --why choice --tried "..." --choices "<option>" "<option>" [...]   (2 to 6: the owner picks one)
 //   ask --room "<room folder>" "<question>" --choices ...   (The manager: the button goes over that room's
 //                                 head, and the owner's pick still comes back to your own chat)
@@ -129,7 +129,7 @@ if (args[0] === 'list') {
     process.exit(2);
   }
   // Only the owner's things reach the owner: a reason from the short list, and what was already tried.
-  const refused = checkOnlyOwner(proofArgs.why, proofArgs.tried, realpathSync(process.cwd()) === realpathSync(MANAGER_DIR));
+  const refused = checkOnlyOwner(proofArgs.why, proofArgs.tried);
   if (refused) {
     console.error(`No button for the owner.\n${refused}`);
     process.exit(2);

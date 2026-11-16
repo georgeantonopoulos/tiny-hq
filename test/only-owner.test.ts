@@ -11,8 +11,8 @@ import { leftovers, LEFTOVER_QUIET_MS } from '../src/terminal/status.ts';
 import { validAsk } from '../src/team/asks.ts';
 
 test('only the owner: a reason from the short list and a real attempt, nothing else', () => {
-  assert.deepEqual(Object.keys(REASONS).sort(), ['choice', 'hands', 'irreversible', 'password', 'pay', 'permission', 'post', 'send']);
-  assert.equal(checkOnlyOwner('send', 'Drafted it, subject "Testers"'), undefined);
+  assert.deepEqual(Object.keys(REASONS).sort(), ['choice', 'hands', 'irreversible', 'password', 'pay', 'permission', 'post']);
+  assert.match(checkOnlyOwner('send', 'Drafted it, subject "Testers"')!, /never a button/);
   assert.equal(checkOnlyOwner('PASSWORD', 'Opened pypi.org in their Chrome: signed out, password box'), undefined);
   assert.match(checkOnlyOwner(undefined, 'tried lots of things')!, /Missing --why/);
   assert.match(checkOnlyOwner('login', 'tried lots of things')!, /not something only the owner can do/);
@@ -31,6 +31,20 @@ function run(cli: 'ask' | 'job', dir: string, ...a: string[]) {
   });
   return { code: r.status, out: r.stdout + r.stderr };
 }
+test('an email is never a button, on ask or job wait', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-only-'));
+  mkdirSync(join(dir, 'manager'));
+  const file = join(dir, 'manager', 'jobs.json');
+  writeFileSync(file, JSON.stringify({ jobs: [{ id: 'reply', room: dir, title: 'Reply to the supplier', done: 'draft saved', status: 'active', createdAt: 1, updatedAt: 1 }] }));
+  const ask = run('ask', dir, 'Send the draft to the supplier?', '--why', 'send', '--tried', 'Drafted it, subject "Invoice"');
+  assert.equal(ask.code, 2);
+  assert.match(ask.out, /never a button/);
+  const wait = run('job', dir, 'wait', 'reply', 'Send the draft to the supplier', '--why', 'email', '--tried', 'Drafted it, subject "Invoice"');
+  assert.equal(wait.code, 2);
+  assert.match(wait.out, /never a button/);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).jobs[0].status, 'active');
+});
+
 const asks = (dir: string) => JSON.parse(readFileSync(join(dir, 'manager', 'asks.json'), 'utf8')).asks as { question: string; why?: string; tried?: string; job?: string }[];
 
 test('manager/ask refuses a button without --why and --tried, and keeps what was tried', () => {
@@ -134,7 +148,7 @@ test("The manager's rules: try first, the owner last, and no more 'The owner can
   const g = readFileSync(new URL('../manager/CLAUDE.template.md', import.meta.url), 'utf8');
   assert.match(g, /## Try first: the owner comes last/);
   assert.match(g, /Office faults[^\n]*tiny-hq doctor/);
-  assert.match(g, /--why <send\|post\|pay\|irreversible\|choice\|permission\|hands\|password>/);
+  assert.match(g, /--why <post\|pay\|irreversible\|choice\|permission\|hands\|password>/);
   assert.match(g, /Try before you ask/);
   assert.doesNotMatch(g, /sessions the owner can close/);
   assert.doesNotMatch(g, /or a login\/2-factor prompt\./);
