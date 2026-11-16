@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { Floor, Room } from './layout.ts';
 
-export const OBJECT_KINDS = ['painting', 'plant', 'poster', 'rug', 'lamp', 'sofa', 'bookshelf', 'watercooler', 'whiteboard', 'sign', 'table', 'window', 'trophy'] as const;
+export const OBJECT_KINDS = ['painting', 'plant', 'poster', 'rug', 'lamp', 'sofa', 'bookshelf', 'watercooler', 'whiteboard', 'sign', 'table', 'window', 'trophy', 'calendar', 'kanban', 'cabinet', 'trays', 'letters'] as const;
 export type ObjectKind = (typeof OBJECT_KINDS)[number];
 
 export interface SceneObject {

@@ -29,6 +29,7 @@ import { MAX_ROOMS, layoutFloor } from '../office/layout.ts';
 import { floorPath, loadSeats, saveSeats, seatFloor, type Seats } from '../office/seats.ts';
 import { applyScene, loadScene } from '../office/scene.ts';
 import { loadLeads, saveLeads, staffRooms, writeNameTag, type Leads } from '../team/leads.ts';
+import { isOnCall, mayReach } from '../office/on-call.ts';
 import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, currentModel, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
@@ -980,7 +981,13 @@ async function tellManager(line: string, onTry: () => void = () => undefined): P
 // `owner`: the owner asked for it (their click), so go ahead even while they're watching,
 // and wait a few seconds for a fresh screen to come up.
 const typing = new Map<string, Promise<unknown>>(); // session id -> the line being typed into it now
-async function typeInto(s: { id: string; sessionId?: string; cwd: string }, line: string, keep: boolean, onTry: () => void = () => undefined, owner = false): Promise<boolean | 'later'> {
+// `job`: the nudge for a job the owner gave this room (on-call rooms take only that, and the owner's own lines).
+async function typeInto(s: { id: string; sessionId?: string; cwd: string }, line: string, keep: boolean, onTry: () => void = () => undefined, owner = false, job = false): Promise<boolean | 'later'> {
+  // An on-call room works only when asked: nothing the office sends by itself reaches it (src/office/on-call.ts).
+  if (!mayReach(s.cwd, owner ? 'owner' : job ? 'job' : 'office', config.onCallProjects)) {
+    console.log(`on call: not typed into ${s.cwd} (${s.id}): ${line.slice(0, 80)}`);
+    return false;
+  }
   // One line at a time per session: each is typed, then Enter half a second later, and a second
   // line arriving in between (The owner's mic while a nudge is mid-way) would merge the two.
   const before = typing.get(s.id) ?? Promise.resolve();
@@ -1146,7 +1153,7 @@ function startRoomWith(path: string, name: string, task: string): Promise<void> 
 async function startRoomNow(path: string, name: string, task: string): Promise<void> {
   const env = { ...(await userEnv()), CM_CLAUDE_BIN: CLAUDE_BIN, CM_DATA_DIR: DATA_DIR };
   const err = await new Promise<string | undefined>((resolve) =>
-    execFile(join(MANAGER_DIR, 'delegate'), [path, name, task], { env, timeout: 60_000 }, (e, _o, stderr) => resolve(e ? String(stderr || e.message).trim().slice(0, 200) : undefined)),
+    execFile(join(MANAGER_DIR, 'delegate'), [path, name, task], { env: { ...env, CM_FROM_OWNER: '1' }, timeout: 60_000 }, (e, _o, stderr) => resolve(e ? String(stderr || e.message).trim().slice(0, 200) : undefined)),
   );
   liveCache = undefined;
   const started = (await liveSessions()).some((x) => worksIn(x.realCwd, path));
@@ -1157,7 +1164,7 @@ async function trustAndStart(folder: string, name: string, task: string): Promis
   trustFolder(folder);
   const env = { ...(await userEnv()), CM_CLAUDE_BIN: CLAUDE_BIN, CM_DATA_DIR: DATA_DIR };
   await new Promise<void>((resolve, reject) =>
-    execFile(join(MANAGER_DIR, 'delegate'), [folder, name, task], { env, timeout: 60_000 }, (err, _out, stderr) =>
+    execFile(join(MANAGER_DIR, 'delegate'), [folder, name, task], { env: { ...env, CM_FROM_OWNER: '1' }, timeout: 60_000 }, (err, _out, stderr) =>
       err ? reject(Object.assign(new Error(`Trusted, but the session didn't start: ${String(stderr || err.message).trim().slice(0, 200)}`), { status: 503 })) : resolve(),
     ),
   );
@@ -1375,7 +1382,7 @@ async function runGoals(): Promise<void> {
   lastPlan = plan(allowance.latest(), now, working.size, undefined, config.usageCommand ? undefined : config.goalRooms);
   if (lastPlan.free < 1) return;
   const cands: Candidate[] = rooms
-    .filter((r) => goals[r.project!.path])
+    .filter((r) => goals[r.project!.path] && !isOnCall(r.project!.path, config.onCallProjects))
     .map((r) => ({
       room: r.project!.path,
       goal: goals[r.project!.path]!.goal,
@@ -1555,6 +1562,9 @@ async function runJobs(): Promise<void> {
     if (!room && trustPending(job.room)) continue;
     const d = decide(job, room, now, riding.has(job.id));
     if (d === 'none') continue;
+    // An on-call room with nobody in: the hourly check isn't relayed through the manager to start it;
+    // it waits until the room is in. The nudge and hand-off for the owner's job still go.
+    if (d === 'check' && !s && isOnCall(job.room, config.onCallProjects)) continue;
     const name = roomName(job.room);
     const ok =
       d === 'check'
@@ -1562,7 +1572,7 @@ async function runJobs(): Promise<void> {
           ? await typeInto(s, checkLine(job, JOB_CLI, briefPath(MANAGER_NOTES_DIR, job.id)), false)
           : await tellManager(checkLine(job, JOB_CLI, briefPath(MANAGER_NOTES_DIR, job.id)).replace('tell the manager in one line', 'tell the room'))
         : d === 'nudge'
-        ? await typeInto(s!, nudgeLine(job, JOB_CLI, briefPath(MANAGER_NOTES_DIR, job.id)), false)
+        ? await typeInto(s!, nudgeLine(job, JOB_CLI, briefPath(MANAGER_NOTES_DIR, job.id)), false, () => undefined, false, true)
         : d === 'no-session'
           ? await tellManager(`[Office: job "${job.title}" (${job.id}) has no session running in ${name}] Hand it to the room now (delegate, or SendMessage if a session appears), with the done line: ${job.done}`)
           : await tellManager(`[Office: job "${job.title}" (${job.id}) is stuck in ${name}] Nudged ${job.nudgesToday} times today and still not done. Read the room's last action on your status page and send the room its next step. Only if it truly needs the owner, tell them the one thing in one line.`);
@@ -1665,7 +1675,7 @@ function coffeeBreak(): void {
   // With no usage meter, the gentle default pace (as if a quarter of the week were used).
   const gap = config.usageCommand ? nextGap(u?.weekly?.usedPercent, u?.session?.usedPercent) : nextGap(25, 0);
   if (gap === undefined) return; // allowance tight or not read yet: look again next tick
-  const all = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project && r.lead);
+  const all = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project && r.lead && !isOnCall(r.project.path, config.onCallProjects));
   const rooms = all
     .map((r) => ({ id: `lead:${r.id}`, name: r.name, activity: r.project!.activity, notes: recentNotes(r.project!.path) }))
     .filter((r) => r.notes.length);

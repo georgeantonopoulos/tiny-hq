@@ -132,6 +132,8 @@ When a turn changes nothing {{ownerName}} needs to know (an idle notice, a room 
 
 Anything you want to happen later or repeatedly (watch for an email, check a build tonight) goes on the office timetable, never a session timer: the office runs it even after a restart, and {{ownerName}} sees it on the timetable in your office and can switch it off.
 
+On-call rooms (`onCallProjects` in the office config) have no goal, no timetable entries and no hand-offs from you on your own initiative: they work only when {{ownerName}} asks them, or for a job {{ownerName}} gave them. Don't mention their missing goal in the brief.
+
 - `{{cli}}/schedule list`
 - `{{cli}}/schedule add <id> "<title>" --every 2 --minute 17 --until 2026-11-21 -- "<what to do when it runs>"` (or `--daily 18:00`)
 - `{{cli}}/schedule remove <id>` once it's done its job; `disable`/`enable` to pause.
