@@ -22,7 +22,7 @@ test('done: no nudges', () => {
   assert.equal(decide({ ...job, status: 'done' }, quiet, now), 'none');
 });
 
-test('waiting on the owner: checked every 15 minutes whether they have done it, never while the room is busy', () => {
+test('waiting on the owner: checked every hour whether they have done it, never while the room is busy', () => {
   const waiting: Job = { ...job, status: 'waiting', waitingFor: 'send the email', updatedAt: now };
   assert.equal(decide(waiting, quiet, now + CHECK_MS - 1), 'none');
   assert.equal(decide(waiting, quiet, now + CHECK_MS), 'check');
@@ -73,7 +73,7 @@ test('the nudge points the room at the brief', () => {
   assert.match(nudgeLine(job, 'cli', '/b/pebble-beta.md'), /read the job brief, \/b\/pebble-beta\.md/);
 });
 
-test("a job waiting on the room's own open question isn't checked every 15 minutes", async () => {
+test("a job waiting on the room's own open question isn't checked every hour", async () => {
   const { decide, validJob, CHECK_MS } = await import('../src/team/jobs.ts');
   const now = new Date(2026, 10, 9, 16, 0).getTime();
   const waiting = validJob({ id: 'launch-posts', room: '/Users/g/Dev/atlas', title: 'Launch posts', done: 'posted', status: 'waiting', waitingFor: 'OK the X post', createdAt: 1, updatedAt: now - CHECK_MS - 1 })!;

@@ -6,12 +6,12 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error plain .mjs hook
-import { isRoom, tagFile } from '../hooks/room-ask-guard.mjs';
+import { isManager, isRoom, MANAGER_REASON, REASON, tagFile } from '../hooks/room-ask-guard.mjs';
 
 const HOOK = new URL('../hooks/room-ask-guard.mjs', import.meta.url).pathname;
 const line = (o: object) => JSON.stringify(o);
-const run = (data: string, cwd: string, transcript: string) =>
-  spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ transcript_path: transcript, cwd }), env: { ...process.env, CM_DATA_DIR: data, CLAUDE_PROJECT_DIR: cwd }, encoding: 'utf8' }).stdout;
+const run = (data: string, cwd: string, transcript: string, args: string[] = []) =>
+  spawnSync(process.execPath, [HOOK, ...args], { input: JSON.stringify({ transcript_path: transcript, cwd }), env: { ...process.env, CM_DATA_DIR: data, CLAUDE_PROJECT_DIR: cwd }, encoding: 'utf8' }).stdout;
 
 test('rooms are sessions with an office name tag, worktrees included, never the manager', () => {
   const data = mkdtempSync(join(tmpdir(), 'rag-'));
@@ -44,4 +44,21 @@ test('a room that asks the owner in chat without a button is sent back once; wit
   const t3 = join(data, 't3.jsonl');
   writeFileSync(t3, [user, plain].join('\n'));
   assert.equal(run(data, room, t3), '');
+});
+
+test("one check for everyone: the manager's own settings run it with --manager and get the manager's wording", () => {
+  const data = mkdtempSync(join(tmpdir(), 'rag-'));
+  const manager = '/Users/owner/.tiny-hq/app/manager';
+  assert.equal(isManager(manager), true);
+  assert.equal(isManager('/Users/owner/Dev/garden-planner'), false);
+  const t = join(data, 't.jsonl');
+  const user = line({ type: 'user', message: { content: 'what next?' } });
+  const ask = line({ type: 'assistant', message: { content: [{ type: 'text', text: 'Shall I start the garden room on it?' }] } });
+  writeFileSync(t, [user, ask].join('\n'));
+  assert.equal(run(data, manager, t), '', 'the global run leaves the manager to its own settings: never twice');
+  const out = run(data, manager, t, ['--manager']);
+  assert.equal(JSON.parse(out).reason, MANAGER_REASON);
+  assert.match(MANAGER_REASON, /--why <send\|post\|pay\|choice\|/, 'the manager may put a choice on a button');
+  assert.doesNotMatch(REASON, /\|choice\|/, 'a room may not');
+  assert.equal(run(data, '/Users/owner/Dev/garden-planner', t, ['--manager']), '', '--manager only checks the manager');
 });

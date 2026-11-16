@@ -26,12 +26,12 @@ test('room goals: the owner sets, changes and clears a room goal; bad files and 
   assert.deepEqual(loadGoals(path), {});
 });
 
-test("daily-brief next move: the manager's choice goes over the room's head and its answer comes back to the manager", () => {
+test("the manager's office-wide choice goes over the room's head and its answer comes back to the manager; no daily next-move buttons", () => {
   const data = mkdtempSync(join(tmpdir(), 'cm-data-'));
   const room = realpathSync(mkdtempSync(join(tmpdir(), 'cm-room-')));
   const manager = '11111111-2222-4333-8444-555555555555';
   const cli = (...a: string[]) =>
-    execFileSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', new URL('../src/cli/ask.ts', import.meta.url).pathname, ...a], { env: { ...process.env, CM_DATA_DIR: data, CLAUDE_CODE_SESSION_ID: manager }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', new URL('../src/cli/ask.ts', import.meta.url).pathname, ...a], { cwd: new URL('../manager', import.meta.url).pathname, env: { ...process.env, CM_DATA_DIR: data, CLAUDE_CODE_SESSION_ID: manager }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   cli('--room', room, 'Lumen: next move toward the Linux build?', '--why', 'choice', '--tried', 'Checked Lumen status and goal', '--choices', 'Build the tarball', 'Write the install page', 'Nothing now');
   const [a] = loadAsks(join(data, 'manager', 'asks.json'));
   assert.equal(a!.folder, room, 'shown over the room');
@@ -40,7 +40,7 @@ test("daily-brief next move: the manager's choice goes over the room's head and 
   assert.throws(() => cli('--room', join(room, 'nope'), 'Q?'), 'a folder that does not exist is refused');
   // The manager's instructions carry the step and the rule that only the owner sets goals.
   const g = readFileSync(new URL('../manager/CLAUDE.template.md', import.meta.url), 'utf8');
-  assert.match(g, /One next move for every room with no open job/);
+  assert.doesNotMatch(g, /One next move for every room|next move toward <its goal>/);
   assert.match(g, /Only the owner sets them/);
   // The manager cancelling their own next move leaves the room's own question alone.
   const asksFile = join(data, 'manager', 'asks.json');

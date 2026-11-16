@@ -37,10 +37,11 @@ import { logStep, loadSteps, pickRoom, stepLine, stepsPath, type Candidate } fro
 import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.ts';
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
-import { listReports, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
+import { fileReport, listReports, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
+import { addEntry, eveningPath, expiredAsks, expiredLine, fileEvening, restJobs } from '../team/evening.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
 import { applyBreak, applyTidy, boardPath, minRooms, onBoard, breakDue, brewChat, coffeePrompt, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, removeTip, saveCoffee, tidyDue, tidyPrompt } from '../team/coffee.ts';
-import { foldIn, loadGhState, lookAtGithub, lookAtInbox, ottoLine, prReposIn, renderGithub, roomFor, saveGhState, tellLine, writeOttoReport, type Gh } from '../team/github.ts';
+import { eveningGithubLine, foldIn, loadGhState, lookAtGithub, lookAtInbox, prReposIn, renderGithub, roomFor, roomGithubLine, saveGhState, writeOttoReport, type Gh, type GhItem, type GhState } from '../team/github.ts';
 
 const token = loadOrCreateToken(TOKEN_PATH);
 const config = loadConfig(CONFIG_PATH);
@@ -388,8 +389,8 @@ async function waiting(): Promise<Record<string, { kind: string; text: string }>
   return out;
 }
 
-// The owner's GitHub, watched for other people (src/team/github.ts): every 15 minutes,
-// and the manager is told about anything new (again on later ticks if they were busy).
+// The owner's GitHub, watched for other people (src/team/github.ts): every 15 minutes. Anything new
+// goes to its room's running session and into the owner's evening note; it doesn't wake the manager.
 const GH_STATE = join(MANAGER_NOTES_DIR, 'github.json');
 const gh: Gh = async (args) => {
   const env = await userEnv();
@@ -400,10 +401,11 @@ const gh: Gh = async (args) => {
 let ghOwner: string | undefined;
 let ghLookedAt = 0;
 let ghBusy = false;
-// The look takes ~40 s, so it runs alongside the tick; telling the manager happens in the
-// tick itself (tellGithub), one at a time with everything else that types into them.
+// The look takes ~40 s, so it runs alongside the tick; telling the rooms happens in the
+// tick itself (tellGithub), one at a time with everything else that types into sessions.
 async function lookGithub(): Promise<void> {
-  if (Date.now() - ghLookedAt < 15 * 60_000) return;
+  // No floor yet (just restarted): new items would get no room, so look once it's scanned.
+  if (Date.now() - ghLookedAt < 15 * 60_000 || !floors.latest()) return;
   ghLookedAt = Date.now();
   try {
     ghOwner ??= (await gh(['api', 'user', '-q', '.login'])).trim();
@@ -415,18 +417,19 @@ async function lookGithub(): Promise<void> {
     const inbox = await lookAtInbox(gh, ghOwner, inboxSince);
     const after = foldIn(loadGhState(GH_STATE), { ...look, ...inbox }, Date.now(), since + 60 * 60_000);
     saveGhState(GH_STATE, after);
-    // Otto words what's new for the manager (Sonnet, no tools); a report already written isn't redone.
+    // Each new item gets its room; Otto words it for his bubble and the status page (Sonnet, no
+    // tools); a report already written isn't redone.
     const keys = after.untold.map((i) => i.key);
     if (keys.length && keys.join('\n') !== after.report?.keys.join('\n')) {
       ottoBusy = true;
       try {
         const rooms = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project).map((r) => ({ name: r.name, remote: r.project!.remote ?? folderRemote(r.project!.path), prRepos: roomPrRepos(r.project!.path) }));
         const withRooms = after.untold.map((i) => ({ ...i, room: roomFor(i.repo, rooms) }));
-        const text = await writeOttoReport(withRooms, { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'otto'), env: await userEnv() });
-        const cur = loadGhState(GH_STATE);
-        // Each item keeps its room for the manager's line; the write-up is for the bubble and status page.
         const roomOf = new Map(withRooms.map((i) => [i.key, i.room]));
-        saveGhState(GH_STATE, { ...cur, untold: cur.untold.map((i) => (roomOf.get(i.key) ? { ...i, room: roomOf.get(i.key) } : i)), ...(text ? { report: { text, at: new Date().toISOString(), keys } } : {}) });
+        const placed = (cur: GhState) => ({ ...cur, untold: cur.untold.map((i) => (roomOf.get(i.key) ? { ...i, room: roomOf.get(i.key) } : i)) });
+        saveGhState(GH_STATE, placed(loadGhState(GH_STATE))); // rooms first: the report can fail
+        const text = await writeOttoReport(withRooms, { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'otto'), env: await userEnv() });
+        if (text) saveGhState(GH_STATE, { ...placed(loadGhState(GH_STATE)), report: { text, at: new Date().toISOString(), keys } });
       } finally {
         ottoBusy = false;
       }
@@ -474,17 +477,39 @@ function roomPrRepos(path: string): Record<string, number> {
   prRepoCache.set(path, { at: Date.now(), repos });
   return repos;
 }
+// Each room with a session running hears what's new on its repos; a room that's busy with the
+// owner (they're viewing or typing), or whose session didn't take the line, is tried again each
+// tick for up to an hour. Everything, told or not, goes in the owner's evening note.
+const ghPutOff = new Map<string, number>(); // room name -> when telling it was first put off
 async function tellGithub(): Promise<void> {
-  const state = loadGhState(GH_STATE);
-  const untold = state.untold;
+  const untold = loadGhState(GH_STATE).untold;
   if (!untold.length || ottoBusy) return;
-  // Otto's report when it covers exactly what's untold; else the plain list.
-  const own = state.report && state.report.keys.join('\n') === untold.map((i) => i.key).join('\n');
-  if ((await tellManager(own ? ottoLine(untold) : tellLine(untold))) !== true) return; // busy: next tick
-  const told = new Set(untold.map((i) => i.key));
-  const now = loadGhState(GH_STATE);
-  saveGhState(GH_STATE, { ...now, untold: now.untold.filter((i) => !told.has(i.key)) });
-  console.log(`github: ${own ? 'Otto told' : 'told'} the manager about ${told.size} new`);
+  const floor = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project);
+  // Right after a restart the floor isn't scanned yet: every item would look roomless.
+  if (!floor.length) return;
+  const byRoom = new Map<string, GhItem[]>(); // '' = no room on the floor
+  for (const i of untold) {
+    const name = i.room && floor.some((r) => r.name === i.room) ? i.room : '';
+    byRoom.set(name, [...(byRoom.get(name) ?? []), i]);
+  }
+  const live = await liveSessions();
+  for (const [name, items] of byRoom) {
+    const path = floor.find((r) => r.name === name)?.project?.path;
+    const s = path ? pick(live.filter((x) => worksIn(x.realCwd, path) && !worksIn(x.realCwd, MANAGER_DIR)), path) : undefined;
+    const told = s ? await typeInto(s, roomGithubLine(items), false).catch(() => false as const) : false;
+    if (told === 'later' || (s && told !== true)) {
+      const first = ghPutOff.get(name) ?? Date.now();
+      ghPutOff.set(name, first);
+      if (Date.now() - first < 60 * 60_000) continue; // next tick
+    }
+    ghPutOff.delete(name);
+    for (const i of items) addEntry(EVENING, { kind: 'github', folder: path ?? i.repo, text: eveningGithubLine(i) });
+    // Saved room by room: a later room going wrong never has this one told twice.
+    const passed = new Set(items.map((i) => i.key));
+    const now = loadGhState(GH_STATE);
+    saveGhState(GH_STATE, { ...now, untold: now.untold.filter((i) => !passed.has(i.key)) });
+    console.log(`github: ${told === true ? `told ${name}` : `evening note only${name ? ` (${name} ${s ? 'did not take it' : 'not running'})` : ''}`} about ${items.length} new`);
+  }
 }
 
 // Left-over blocked sessions (in no room, or their process gone) are closed by the
@@ -1150,8 +1175,13 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
       await startRoomWith(who.path, name, toRoom);
       reached = `started ${name}'s session with it`;
     }
-    // The manager hears it too. Their copy can't undo the room's (The owner must never be asked twice), so any
-    // failure here is only logged.
+    // The manager hears it only when the room couldn't take it (a copy of an answer the room already
+    // acts on woke them for nothing). Their copy can't undo the room's (the owner must never be asked
+    // twice), so any failure here is only logged.
+    if (!reached.startsWith('NOT')) {
+      console.log(`asks: the owner ${'choice' in answer ? `chose "${ask.options?.[answer.choice]}" for` : `${'signIn' in answer ? 'said sign in yourself to' : `said ${yes ? 'yes' : 'no'} to`}`} "${ask.question}" (${reached}; the manager not woken)`);
+      return;
+    }
     const copy = `${answerLine(ask, answer)} [Office: their answer was also ${reached}${reached.startsWith('NOT') ? '.' : ', so the room acts on it itself: don\'t relay it or ask the room to wait for you.'} Update your notebook, and make it a job with a brief if it needs one.]`;
     try {
       const told = asker ? await typeInto(asker, copy, true, () => undefined, true) : await tellManager(copy);
@@ -1168,6 +1198,11 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
     if (ok !== true) throw Object.assign(new Error("Couldn't get your answer to the manager; try again."), { status: 503 });
     console.log(`asks: the owner's answer to "${ask.question}" went to the manager (the asker has gone)`);
     resumeJob(ask, answer); // a job riding on this button is back to work too
+    return;
+  }
+  // "Nothing now" on one of the manager's own choices: nothing for them to do, so they aren't woken for it.
+  if (who?.id === 'manager' && 'choice' in answer && !wantsAction(ask, answer) && !ask.job && !ask.forJob) {
+    console.log(`asks: the owner chose "${ask.options?.[answer.choice]}" for the manager's "${ask.question}" (nothing to do; the manager not woken)`);
     return;
   }
   // Another answer may be starting this room's session right now: wait for it, then use that session.
@@ -1345,6 +1380,45 @@ function logAsks(): void {
       /* best effort */
     }
   }
+}
+
+// Quiet office (src/team/evening.ts): buttons left unanswered for 2 days come down as "not now"
+// (the room that asked is told; a job it carried rests a week), and once a day at EVENING_AT
+// the evening note goes on the owner's desk with everything that didn't need them. No tokens.
+const EVENING = eveningPath(MANAGER_NOTES_DIR);
+// Rooms not told yet that their button came down (busy with the owner, or not running), tried
+// each tick for up to a day. The button itself is already down.
+const expiredUntold = new Map<string, { ask: Ask; since: number }>();
+async function runEvening(): Promise<void> {
+  const now = Date.now();
+  const { left, expired } = expiredAsks(loadAsks(ASKS), now);
+  if (expired.length) {
+    // The note entries go first, so the owner's note lists them even if telling the room fails.
+    for (const a of expired) {
+      addEntry(EVENING, { at: now, kind: 'expired', folder: a.folder, text: `"${a.question}" (up since ${new Date(a.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })})` });
+      console.log(`asks: "${a.question}" came down after 2 days unanswered (not now)`);
+    }
+    saveAsks(ASKS, left);
+    saveJobs(JOBS, restJobs(loadJobs(JOBS), expired, now));
+    // The manager (who asks over rooms too) reads it in the note.
+    for (const a of expired) if (!a.askedFor) expiredUntold.set(a.id, { ask: a, since: now });
+  }
+  if (expiredUntold.size) {
+    try {
+      const live = await liveSessions();
+      for (const [id, { ask: a, since }] of expiredUntold) {
+        // The room that asked hears it; a job's own button (job wait) has no asker, so the
+        // room's session hears it.
+        const asker = a.sessionId ? live.find((x) => x.sessionId === a.sessionId) : a.job ? pick(live.filter((x) => worksIn(x.realCwd, a.folder)), a.folder) : undefined;
+        const told = asker && !worksIn(asker.realCwd, MANAGER_DIR) ? await typeInto(asker, expiredLine(a), false).catch(() => false as const) : false;
+        if (told === true || now - since > 86_400_000) expiredUntold.delete(id);
+      }
+    } catch (e) {
+      console.log(`asks: could not tell the rooms about expired buttons (${(e as Error).message})`);
+    }
+  }
+  const said = fileEvening(MANAGER_NOTES_DIR, EVENING, loadJobs(JOBS), now, roomName, (title, md) => fileReport(DATA_DIR, title, md, 'The office'));
+  if (said) console.log(said);
 }
 
 let scoreCache: { at: number; lines: string[] } | undefined;
@@ -1646,6 +1720,7 @@ server.listen(port, '127.0.0.1', () => {
         await runJobs();
         await runGoals();
         logAsks();
+        await runEvening();
         await clearAnsweredInChat();
         await retireExtraRoomSessions();
         await compactLongSessions();

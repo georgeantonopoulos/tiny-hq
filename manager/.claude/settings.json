@@ -110,7 +110,7 @@
           },
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/../hooks/manager-ask-guard.mjs\"",
+            "command": "node \"$CLAUDE_PROJECT_DIR/../hooks/room-ask-guard.mjs\" --manager",
             "timeout": 10
           }
         ]
