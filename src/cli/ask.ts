@@ -2,7 +2,7 @@
 // over your head. Their answer arrives in your own chat as a message from them.
 //   ask "<one-line question>" --why <reason> --tried "<what you already tried>"   (from your project folder)
 //   ask "<what and where>" --why post --tried "..." --text "<exact text>" --target <owner/repo#N | owner/repo | https://page>   (a public post: the pass is for that text at that place only)
-//     reason: send | post | pay | choice | permission | password (src/team/only-owner.ts); anything else is refused
+//     reason: post | pay | irreversible | choice | permission | hands | camera | password (src/team/only-owner.ts); anything else is refused
 //   ask "<question>" --why choice --tried "..." --choices "<option>" "<option>" [...]   (2 to 6: the owner picks one)
 //   ask --room "<room folder>" "<question>" --choices ...   (The manager: the button goes over that room's
 //                                 head, and the owner's pick still comes back to your own chat)
@@ -129,7 +129,7 @@ if (args[0] === 'list') {
     process.exit(2);
   }
   // Only the owner's things reach the owner: a reason from the short list, and what was already tried.
-  const refused = checkOnlyOwner(proofArgs.why, proofArgs.tried, realpathSync(process.cwd()) === realpathSync(MANAGER_DIR));
+  const refused = checkOnlyOwner(proofArgs.why, proofArgs.tried);
   if (refused) {
     console.error(`No button for the owner.\n${refused}`);
     process.exit(2);
@@ -138,6 +138,11 @@ if (args[0] === 'list') {
   // Button-only posts: a post's button carries its exact text; Approve passes only that text.
   if (why === 'post' && (!postText || !postText.trim() || choices)) {
     console.error('A post needs its exact text on the button: ask "<what and where>" --why post --tried "<what you did>" --text "<the exact text to post>" (yes/no, no --choices). The owner approves that text; only it can then be posted, once.');
+    process.exit(2);
+  }
+  // A camera or microphone button is Approve / No: Approve is one capture's pass.
+  if (why === 'camera' && choices) {
+    console.error('A camera button is yes/no (no --choices): ask "<what for, and the exact command>" --why camera --tried "<what you tried without it>". The owner\'s Approve lets one capture run, once, within 2 hours.');
     process.exit(2);
   }
   // Each pass is for one place.

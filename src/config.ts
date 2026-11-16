@@ -24,6 +24,7 @@ export interface Config {
   extraProjects: string[]; // folders always on the project list, wherever they are
   pinnedProjects: string[]; // folders that always get a room on the floor, never the archive cupboard (up to 12)
   hiddenProjects: string[]; // retired folders: no room and no archive entry, even if they still log sessions
+  onCallProjects: string[]; // rooms that work only when asked: the office never reaches them by itself (src/office/on-call.ts)
   archivedProjects: string[]; // folders kept in the archive cupboard, however busy, until the owner brings them back
   briefingTime?: string; // "HH:MM": when the manager does the daily brief; absent or malformed: no brief
 }
@@ -40,6 +41,7 @@ export const DEFAULT_CONFIG: Config = {
   pinnedProjects: [],
   hiddenProjects: [],
   archivedProjects: [],
+  onCallProjects: [],
   briefingTime: '08:30',
 };
 
@@ -80,6 +82,7 @@ export function loadConfig(path: string): Config {
       pinnedProjects: paths(raw.pinnedProjects).slice(0, 12), // the rooms the owner picked; the floor holds 12
       hiddenProjects: paths(raw.hiddenProjects, 1000),
       archivedProjects: paths(raw.archivedProjects, 1000),
+      onCallProjects: paths(raw.onCallProjects),
       ...(parseTime(raw.briefingTime) ? { briefingTime: parseTime(raw.briefingTime) } : {}),
     };
   } catch {

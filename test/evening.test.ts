@@ -6,9 +6,9 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkOnlyOwner, ROOM_DECIDES } from '../src/team/only-owner.ts';
+import { checkOnlyOwner, WHY_LIST } from '../src/team/only-owner.ts';
 import { addEntry, ASK_TTL_MS, eveningDue, eveningNote, eveningPath, EXPIRED_HOLD_MS, expiredAsks, expiredLine, fileEvening, lastFiled, loadEntries, markFiled, restJobs } from '../src/team/evening.ts';
-import { nudgeLine, type Job } from '../src/team/jobs.ts';
+import { briefTemplate, nudgeLine, type Job } from '../src/team/jobs.ts';
 import { stepLine } from '../src/team/autonomy.ts';
 import type { Ask } from '../src/team/asks.ts';
 // @ts-expect-error a plain-JS hook module, no type declarations
@@ -18,12 +18,11 @@ const H = 3_600_000;
 const job = (o: Partial<Job>): Job => ({ id: 'j1', room: '/d/app', title: 'Ship it', done: 'shipped', status: 'active', createdAt: 0, updatedAt: 0, ...o });
 const ask = (o: Partial<Ask>): Ask => ({ id: 'aaaaaaaa', folder: '/d/app', question: 'Merge PR #46?', createdAt: 0, ...o }) as Ask;
 
-test('a room decides its own choices; only the manager may still ask the owner to choose', () => {
-  assert.equal(checkOnlyOwner('choice', 'compared both', false), ROOM_DECIDES);
-  assert.match(ROOM_DECIDES, /manager\/evening add/);
-  assert.equal(checkOnlyOwner('choice', 'compared both', true), undefined);
-  assert.equal(checkOnlyOwner('irreversible', 'deleting the old bucket loses 3 GB of renders', false), undefined);
-  assert.equal(checkOnlyOwner('pay', 'checked the price', false), undefined);
+test('a room may ask the owner a choice on a button', () => {
+  assert.equal(checkOnlyOwner('choice', 'compared the cloud key and the local API'), undefined);
+  assert.match(checkOnlyOwner('choice', '') ?? '', /Missing --tried/);
+  assert.equal(checkOnlyOwner('irreversible', 'deleting the old bucket loses 3 GB of renders'), undefined);
+  assert.equal(checkOnlyOwner('pay', 'checked the price'), undefined);
 });
 
 test('a button up for 2 days comes down as "not now"; a trust button stays; its job rests a week', () => {
@@ -86,20 +85,32 @@ test('manager/evening add files a line under the room, refuses an empty one and 
   assert.match(run('list').stdout, /Picked the smaller build/);
 });
 
-test('rooms are told to decide, not to ask: guard, nudge, brief and goal step', () => {
-  assert.match(REASON, /--why <send\|post\|pay\|irreversible\|permission\|hands\|password>/);
+test('rooms are told the same reasons everywhere, choice included: guard, nudge, brief, skill and goal step', () => {
+  assert.ok(REASON.includes(`--why <${WHY_LIST}>`), 'the room question check names every reason');
+  assert.match(REASON, /--choices/);
   assert.match(REASON, /manager\/evening add/);
   const nudge = nudgeLine(job({}), '/x/manager/job');
-  assert.match(nudge, /--why <send\|post\|pay\|irreversible\|permission\|hands\|password>/);
+  assert.ok(nudge.includes(`--why <${WHY_LIST}>`));
+  assert.match(nudge, /--why choice .*--choices/);
   assert.match(nudge, /evening add/);
+  // The longest job a brief allows still gets every rule and the closing "done" step.
+  const long = nudgeLine(job({ title: 'T'.repeat(120), done: 'D'.repeat(1200) }), '/Users/someone/.tiny-hq/app/manager/job');
+  assert.match(long, /--why <[^>]*choice[^>]*>/);
+  assert.match(long, /and report to the manager\.$/);
+  const brief = briefTemplate({ id: 'j1', title: 'Ship it', done: 'shipped', room: '/d/app' });
+  assert.match(brief, /--why choice --choices/);
+  assert.doesNotMatch(brief, /Any other choice is yours/);
   const step = stepLine('Polish the app', 'week 62% used', '/x/manager/ask');
   assert.match(step, /\/x\/manager\/evening add .* --kind step/);
+  assert.match(step, /--why choice/);
   assert.doesNotMatch(step, /SendMessage/);
   const skill = readFileSync(new URL('../skills/theoffice/SKILL.md', import.meta.url), 'utf8');
-  assert.doesNotMatch(skill, /--why choice|\|choice\|/);
+  assert.ok(skill.includes(`--why <${WHY_LIST}>`), 'the skill names every reason');
+  assert.match(skill, /--why choice .*--choices/);
   assert.match(skill, /manager\/evening add/);
   const delegate = readFileSync(new URL('../manager/delegate', import.meta.url), 'utf8');
   assert.match(delegate, /manager\/evening add/);
+  assert.match(delegate, /--why choice/);
   const rules = readFileSync(new URL('../manager/CLAUDE.template.md', import.meta.url), 'utf8');
   assert.doesNotMatch(rules, /One next move for every room|next move toward <its goal>/);
   assert.match(rules, /evening list/);

@@ -86,5 +86,59 @@ export function drawObject(g: Graphics, o: SceneObject, T: number): void {
     case 'sign':
       g.roundRect(x + 2, y + 4, w - 4, h - 10, 3).fill(hex(o.colour, 0x2f3a45));
       break;
+    // Office admin: a wall calendar, a to-do board, a filing cabinet, in/out trays, letters.
+    case 'calendar': {
+      g.rect(x + 2, y + 3, w - 4, h - 5).fill(0xfbfaf5).stroke({ color: 0x9b93a6, width: 1 });
+      g.rect(x + 2, y + 3, w - 4, Math.max(6, h * 0.22)).fill(hex(o.colour, 0xc0504d));
+      for (const rx of [x + w * 0.3, x + w * 0.7]) g.rect(rx - 1, y, 2, 6).fill(0x3a3346);
+      const top = y + 3 + Math.max(6, h * 0.22) + 3;
+      const cw = (w - 10) / 5;
+      const ch = (y + h - 4 - top) / 4;
+      for (let r = 0; r < 4; r++) for (let i = 0; i < 5; i++) g.rect(x + 5 + i * cw, top + r * ch, cw - 1.5, ch - 1.5).fill(0xe6e1d6);
+      g.circle(x + 5 + 2.5 * cw, top + 1.5 * ch, Math.min(cw, ch) * 0.75).stroke({ color: 0xc0504d, width: 1.5 });
+      break;
+    }
+    case 'kanban': {
+      g.rect(x + 2, y + 2, w - 4, h - 4).fill(0xf4f1ea).stroke({ color: 0x6b4a2f, width: 2 });
+      const cols = 3;
+      const cw = (w - 8) / cols;
+      const notes = [0xf2c84b, 0x7fd1ff, 0x9fe0a0, 0xf6a6b2];
+      for (let i = 0; i < cols; i++) {
+        if (i) g.rect(x + 4 + i * cw, y + 5, 1, h - 10).fill(0xc9c2b4);
+        for (let n = 0; n < 3 - i; n++) g.rect(x + 6 + i * cw, y + 6 + n * 8, cw - 5, 6).fill(notes[(i + n) % notes.length]!);
+      }
+      break;
+    }
+    case 'cabinet': {
+      g.rect(x + 3, y + 2, w - 6, h - 3).fill(hex(o.colour, 0x8a8f99));
+      g.rect(x + 3, y + h - 3, w - 6, 2).fill(0x4a4f59);
+      const dh = (h - 8) / 3;
+      for (let d = 0; d < 3; d++) {
+        g.rect(x + 6, y + 4 + d * dh, w - 12, dh - 3).fill(darken(hex(o.colour, 0x8a8f99)));
+        g.rect(x + w / 2 - 4, y + 6 + d * dh, 8, 3).fill(0xf4f1ea);
+        g.rect(x + w / 2 - 3, y + 4 + d * dh + dh / 2, 6, 2).fill(0x3a3346);
+      }
+      break;
+    }
+    case 'trays': {
+      for (let t = 0; t < 2; t++) {
+        const ty = y + 4 + t * (h / 2 - 2);
+        g.rect(x + 6, ty, w - 12, 4).fill(0xffffff);
+        g.rect(x + 7, ty - 2, w - 16, 3).fill(0xf4f1ea);
+        g.rect(x + 3, ty + 4, w - 6, 5).fill(hex(o.colour, 0x6b4a2f));
+      }
+      break;
+    }
+    case 'letters': {
+      const env = (ex: number, ey: number, stamp: number) => {
+        g.rect(ex, ey, 16, 11).fill(0xfbfaf5).stroke({ color: 0x9b93a6, width: 1 });
+        g.moveTo(ex, ey).lineTo(ex + 8, ey + 6).lineTo(ex + 16, ey).stroke({ color: 0x9b93a6, width: 1 });
+        g.rect(ex + 12, ey + 1, 3, 3).fill(stamp);
+      };
+      env(x + 3, y + h - 15, 0xc0504d);
+      env(x + w - 19, y + h - 19, 0x3a9bb5);
+      env(x + w / 2 - 8, y + h - 23, 0x4f9a5c);
+      break;
+    }
   }
 }

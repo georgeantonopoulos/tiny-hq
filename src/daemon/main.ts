@@ -29,7 +29,8 @@ import { MAX_ROOMS, layoutFloor } from '../office/layout.ts';
 import { floorPath, loadSeats, saveSeats, seatFloor, type Seats } from '../office/seats.ts';
 import { applyScene, loadScene } from '../office/scene.ts';
 import { loadLeads, saveLeads, staffRooms, writeNameTag, type Leads } from '../team/leads.ts';
-import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
+import { isOnCall, mayReach } from '../office/on-call.ts';
+import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, currentModel, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
 import { Allowance, meters, plan, usageReader, type Plan } from '../team/budget.ts';
@@ -288,6 +289,7 @@ async function setModel(projectPath: string, model: string): Promise<{ applied: 
   if (!room) throw Object.assign(new Error('Not a project on the floor.'), { status: 404 });
   if (!(MODELS as readonly string[]).includes(model)) throw Object.assign(new Error(`Pick one of ${MODELS.join(', ')}.`), { status: 400 });
   models = { ...models, [projectPath]: model as Model };
+  pickedAt.set(projectPath, Date.now());
   saveModels();
   const live = pick(await live2s(), projectPath);
   if (!live || live.status === 'busy') return { applied: 'next' }; // never type into a session mid-task
@@ -307,6 +309,41 @@ function live2s(): ReturnType<typeof liveSessions> {
     list.catch(() => (liveCache = undefined));
   }
   return liveCache.list;
+}
+
+// The model each room's Claude is on now, by person id ("lead:<room>"): read from
+// the running session's transcript, so a /model the owner types in the chat shows on
+// the floor. A switch to Opus, Sonnet or Haiku also becomes the room's pick, so the
+// room's next session starts on it (as /model saves it for the owner's own sessions).
+// When the owner last picked on each room's card (this run), so a pick in one room never makes
+// another room's /model look stale. Before any pick this run: when the picks file was last saved.
+const pickedAt = new Map<string, number>();
+let picksSavedAtStart = 0;
+try {
+  picksSavedAtStart = statSync(MODELS_PATH).mtimeMs;
+} catch {
+  // no picks yet
+}
+async function roomModels(): Promise<Record<string, string>> {
+  const live = await live2s();
+  const out: Record<string, string> = {};
+  let changed = false;
+  for (const r of floors.latest()?.rooms ?? []) {
+    if (r.kind !== 'project' || !r.project) continue;
+    const path = r.project.path;
+    const s = pick(live, path);
+    const cur = s?.sessionId ? currentModel(s.sessionId, s.cwd) : undefined;
+    // Only a /model typed after the owner's last pick on the card counts as a new pick
+    // (a pick made while the room was busy waits for its next session; the live one still shows).
+    if (cur?.switchedAt && cur.switchedAt > (pickedAt.get(path) ?? picksSavedAtStart) && (MODELS as readonly string[]).includes(cur.model) && models[path] !== cur.model) {
+      models = { ...models, [path]: cur.model as Model };
+      changed = true;
+    }
+    const m = cur?.model ?? models[path];
+    if (m) out[`lead:${r.id}`] = m;
+  }
+  if (changed) saveModels();
+  return out;
 }
 
 let lastManagerTidy = 0;
@@ -612,10 +649,15 @@ const server = createDaemon({
   // The page opens the manager's terminal on this folder.
   floor: async (refresh) => {
     const f = await floors.get(refresh);
-    return { ...f, managerPath: MANAGER_DIR, rooms: f.rooms.map((r) => (r.kind === 'project' && r.project && models[r.project.path] ? { ...r, model: models[r.project.path] } : r)) };
+    const now: Record<string, string> = await roomModels().catch(() => ({}));
+    return { ...f, managerPath: MANAGER_DIR, rooms: f.rooms.map((r) => {
+      const m = now[`lead:${r.id}`] ?? (r.project ? models[r.project.path] : undefined);
+      return r.kind === 'project' && r.project && m ? { ...r, model: m } : r;
+    }) };
   },
   setModel,
   sessions,
+  models: roomModels,
   said,
   waiting,
   // The timetable on the manager's wall: every task, when it runs next, and on/off.
@@ -943,7 +985,13 @@ async function tellManager(line: string, onTry: () => void = () => undefined): P
 // `owner`: the owner asked for it (their click), so go ahead even while they're watching,
 // and wait a few seconds for a fresh screen to come up.
 const typing = new Map<string, Promise<unknown>>(); // session id -> the line being typed into it now
-async function typeInto(s: { id: string; sessionId?: string; cwd: string }, line: string, keep: boolean, onTry: () => void = () => undefined, owner = false): Promise<boolean | 'later'> {
+// `job`: the nudge for a job the owner gave this room (on-call rooms take only that, and the owner's own lines).
+async function typeInto(s: { id: string; sessionId?: string; cwd: string }, line: string, keep: boolean, onTry: () => void = () => undefined, owner = false, job = false): Promise<boolean | 'later'> {
+  // An on-call room works only when asked: nothing the office sends by itself reaches it (src/office/on-call.ts).
+  if (!mayReach(s.cwd, owner ? 'owner' : job ? 'job' : 'office', config.onCallProjects)) {
+    console.log(`on call: not typed into ${s.cwd} (${s.id}): ${line.slice(0, 80)}`);
+    return false;
+  }
   // One line at a time per session: each is typed, then Enter half a second later, and a second
   // line arriving in between (The owner's mic while a nudge is mid-way) would merge the two.
   const before = typing.get(s.id) ?? Promise.resolve();
@@ -1109,7 +1157,7 @@ function startRoomWith(path: string, name: string, task: string): Promise<void> 
 async function startRoomNow(path: string, name: string, task: string): Promise<void> {
   const env = { ...(await userEnv()), CM_CLAUDE_BIN: CLAUDE_BIN, CM_DATA_DIR: DATA_DIR };
   const err = await new Promise<string | undefined>((resolve) =>
-    execFile(join(MANAGER_DIR, 'delegate'), [path, name, task], { env, timeout: 60_000 }, (e, _o, stderr) => resolve(e ? String(stderr || e.message).trim().slice(0, 200) : undefined)),
+    execFile(join(MANAGER_DIR, 'delegate'), [path, name, task], { env: { ...env, CM_FROM_OWNER: '1' }, timeout: 60_000 }, (e, _o, stderr) => resolve(e ? String(stderr || e.message).trim().slice(0, 200) : undefined)),
   );
   liveCache = undefined;
   const started = (await liveSessions()).some((x) => worksIn(x.realCwd, path));
@@ -1120,7 +1168,7 @@ async function trustAndStart(folder: string, name: string, task: string): Promis
   trustFolder(folder);
   const env = { ...(await userEnv()), CM_CLAUDE_BIN: CLAUDE_BIN, CM_DATA_DIR: DATA_DIR };
   await new Promise<void>((resolve, reject) =>
-    execFile(join(MANAGER_DIR, 'delegate'), [folder, name, task], { env, timeout: 60_000 }, (err, _out, stderr) =>
+    execFile(join(MANAGER_DIR, 'delegate'), [folder, name, task], { env: { ...env, CM_FROM_OWNER: '1' }, timeout: 60_000 }, (err, _out, stderr) =>
       err ? reject(Object.assign(new Error(`Trusted, but the session didn't start: ${String(stderr || err.message).trim().slice(0, 200)}`), { status: 503 })) : resolve(),
     ),
   );
@@ -1138,6 +1186,12 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
     // clone kept outside the room): one pass, used up wherever it's used.
     grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '', ask.from ?? '');
     console.log(`posts: the owner approved a post's exact text for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
+  }
+  // Camera and microphone: the owner's Approve on a --why camera button lets one capture run from
+  // that room, once, within 2 hours (hooks/camera-guard.mjs).
+  if (yes && ask.why === 'camera' && !ask.options && !ask.trust) {
+    grantPass(approvalsPath(DATA_DIR), ask.question, ask.folder, Date.now(), 'device:camera', ask.from ?? '');
+    console.log(`camera: the owner approved one camera/microphone capture for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
   }
   const id = ask.id;
   const who = personFor(ask.folder);
@@ -1332,7 +1386,7 @@ async function runGoals(): Promise<void> {
   lastPlan = plan(allowance.latest(), now, working.size, undefined, config.usageCommand ? undefined : config.goalRooms);
   if (lastPlan.free < 1) return;
   const cands: Candidate[] = rooms
-    .filter((r) => goals[r.project!.path])
+    .filter((r) => goals[r.project!.path] && !isOnCall(r.project!.path, config.onCallProjects))
     .map((r) => ({
       room: r.project!.path,
       goal: goals[r.project!.path]!.goal,
@@ -1512,6 +1566,9 @@ async function runJobs(): Promise<void> {
     if (!room && trustPending(job.room)) continue;
     const d = decide(job, room, now, riding.has(job.id));
     if (d === 'none') continue;
+    // An on-call room with nobody in: the hourly check isn't relayed through the manager to start it;
+    // it waits until the room is in. The nudge and hand-off for the owner's job still go.
+    if (d === 'check' && !s && isOnCall(job.room, config.onCallProjects)) continue;
     const name = roomName(job.room);
     const ok =
       d === 'check'
@@ -1519,7 +1576,7 @@ async function runJobs(): Promise<void> {
           ? await typeInto(s, checkLine(job, JOB_CLI, briefPath(MANAGER_NOTES_DIR, job.id)), false)
           : await tellManager(checkLine(job, JOB_CLI, briefPath(MANAGER_NOTES_DIR, job.id)).replace('tell the manager in one line', 'tell the room'))
         : d === 'nudge'
-        ? await typeInto(s!, nudgeLine(job, JOB_CLI, briefPath(MANAGER_NOTES_DIR, job.id)), false)
+        ? await typeInto(s!, nudgeLine(job, JOB_CLI, briefPath(MANAGER_NOTES_DIR, job.id)), false, () => undefined, false, true)
         : d === 'no-session'
           ? await tellManager(`[Office: job "${job.title}" (${job.id}) has no session running in ${name}] Hand it to the room now (delegate, or SendMessage if a session appears), with the done line: ${job.done}`)
           : await tellManager(`[Office: job "${job.title}" (${job.id}) is stuck in ${name}] Nudged ${job.nudgesToday} times today and still not done. Read the room's last action on your status page and send the room its next step. Only if it truly needs the owner, tell them the one thing in one line.`);
@@ -1622,7 +1679,7 @@ function coffeeBreak(): void {
   // With no usage meter, the gentle default pace (as if a quarter of the week were used).
   const gap = config.usageCommand ? nextGap(u?.weekly?.usedPercent, u?.session?.usedPercent) : nextGap(25, 0);
   if (gap === undefined) return; // allowance tight or not read yet: look again next tick
-  const all = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project && r.lead);
+  const all = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project && r.lead && !isOnCall(r.project.path, config.onCallProjects));
   const rooms = all
     .map((r) => ({ id: `lead:${r.id}`, name: r.name, activity: r.project!.activity, notes: recentNotes(r.project!.path) }))
     .filter((r) => r.notes.length);

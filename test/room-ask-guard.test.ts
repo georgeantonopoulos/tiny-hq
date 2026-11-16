@@ -58,7 +58,7 @@ test("one check for everyone: the manager's own settings run it with --manager a
   assert.equal(run(data, manager, t), '', 'the global run leaves the manager to its own settings: never twice');
   const out = run(data, manager, t, ['--manager']);
   assert.equal(JSON.parse(out).reason, MANAGER_REASON);
-  assert.match(MANAGER_REASON, /--why <send\|post\|pay\|choice\|/, 'the manager may put a choice on a button');
-  assert.doesNotMatch(REASON, /\|choice\|/, 'a room may not');
+  assert.match(MANAGER_REASON, /--why <post\|pay\|irreversible\|choice\|/, 'the manager may put a choice on a button');
+  assert.match(REASON, /\|choice\|/, 'a room may too, with --choices');
   assert.equal(run(data, '/Users/owner/Dev/garden-planner', t, ['--manager']), '', '--manager only checks the manager');
 });

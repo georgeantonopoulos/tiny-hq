@@ -4,7 +4,7 @@ import { addAsk, answerLine, isPassword, jobAnswered, roomLine, typedSince, want
 
 // a room took Approve on "Sign in to App Store Connect" as leave to type the owner's password.
 const pw = addAsk([], '/g/Dev/Pip', 'Sign in to App Store Connect', 1, 'aaaaaaaa', undefined, 'asc', undefined, false, undefined, { why: 'password', tried: 'Chrome had no session' })[0]!;
-const plain = addAsk([], '/g/Dev/Pip', 'Ship it?', 1, 'bbbbbbbb', undefined, 'asc', undefined, false, undefined, { why: 'send', tried: 'x' })[0]!;
+const plain = addAsk([], '/g/Dev/Pip', 'Ship it?', 1, 'bbbbbbbb', undefined, 'asc', undefined, false, undefined, { why: 'pay', tried: 'x' })[0]!;
 
 test('a password button: Done means they did it, never "go ahead"', () => {
   assert.ok(isPassword(pw));

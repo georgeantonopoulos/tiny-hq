@@ -842,6 +842,17 @@ export class Office {
     return pts;
   }
 
+  // The model each room's Claude is on now (from the office's poll): the badge, and the
+  // room's card next time it opens, follow a /model typed in the chat.
+  showModels(models: Record<string, string>): void {
+    for (const room of this.floor?.rooms ?? []) {
+      const m = models[`lead:${room.id}`];
+      if (room.kind !== 'project' || !m || m === (room.model ?? 'opus')) continue;
+      room.model = m;
+      this.setModel(`lead:${room.id}`, m);
+    }
+  }
+
   // The owner picked a model for someone: their badge changes at once.
   setModel(id: string, model: string): void {
     const old = this.pills.get(id);
@@ -1166,4 +1177,4 @@ export class Office {
     );
   }
 }// Model pill colours.
-const MODEL_COLOURS: Record<string, number> = { opus: 0xe08a5b, sonnet: 0x7fb8a4, haiku: 0xf2b544 };
+const MODEL_COLOURS: Record<string, number> = { opus: 0xe08a5b, sonnet: 0x7fb8a4, haiku: 0xf2b544, fable: 0xc9b8f0 };

@@ -6,13 +6,13 @@
 // (Without it, most of what reaches the owner isn't theirs to do.)
 
 export const REASONS = {
-  send: 'send an email they must approve (a room drafts it first)',
   post: 'put exact text on a public site (posts, comments, replies, reviews, DMs, uploads)',
   pay: 'pay or commit money',
   irreversible: 'a step that cannot be undone (deleting data or an account, a release that cannot be pulled back): say what would be lost',
-  choice: "the manager only: an office-wide decision that is the owner's (give your recommendation). A room decides every other choice itself and writes it in the evening note",
+  choice: 'a choice that changes what the owner gets (which data source, design or approach they will live with): put the options on --choices, your recommendation first. Small, reversible mechanics you decide yourself and write in the evening note',
   permission: 'approve one exact command or tool their settings refuse (name it)',
   hands: 'a step only their hands can do, such as a switch in macOS System Settings (list the exact steps; their button reads Done, I did it / Stuck)',
+  camera: 'turn on the camera or microphone of their Mac (say what for and the exact command; their Approve lets that one capture run once, within 2 hours)',
   password: 'type a password or a 2-factor code that no session has (their Chrome is not already signed in)',
 } as const;
 
@@ -42,19 +42,24 @@ export function takeOnlyOwner(args: string[]): { rest: string[]; why?: string; t
   return { rest, ...(why !== undefined ? { why } : {}), ...(tried !== undefined ? { tried } : {}) };
 }
 
-// Fewer questions for the owner: a room raises a button only when it is blocked on money, public
-// text or something that can't be undone (plus what only their hands, password or settings can do).
-// Every other choice the room makes itself and tells them in the evening note (src/team/evening.ts).
-// `choice` stays for the manager's few office-wide questions.
-export const ROOM_DECIDES =
-  'No button: a room makes this choice itself (buttons are only for money, public text or something that can\'t be undone). Pick what you would recommend, carry on, and tell the owner in tonight\'s evening note: ~/.tiny-hq/app/manager/evening add "<what you decided, and why>".';
+// Rooms may put a choice on a button (--why choice --choices "<pick>" "<other>") when it changes what
+// the owner gets; small, reversible mechanics they still decide themselves and put in the evening note.
+// (Refusing every room choice left the owner unable to steer the choices that were theirs.)
+
+// The --why list as rooms are told it ("post|pay|..."), so every message names the same reasons.
+export const WHY_LIST = Object.keys(REASONS).join('|');
+
+// An email is never a button: the owner sends their own emails, when they like. A room leaves it as a
+// draft in their mail; a job about an email is done once the draft is saved.
+// (A "send this email" button asks for a yes the owner can give more simply by pressing Send.)
+export const NO_SEND_BUTTON =
+  'An email is never a button: the owner sends their own emails, when they like. Leave it as a draft in their mail, tell the manager it is ready, and finish (a job about an email is done once the draft is saved). No --why send.';
 
 // undefined: fine. Otherwise the message to print, and the button is refused.
-// `manager`: the asker is the manager's own session (the only one that may still ask a plain choice).
-export function checkOnlyOwner(why: string | undefined, tried: string | undefined, manager = false): string | undefined {
+export function checkOnlyOwner(why: string | undefined, tried: string | undefined): string | undefined {
   const w = (why ?? '').trim().toLowerCase();
+  if (w === 'send' || w === 'email') return NO_SEND_BUTTON;
   if (!(w in REASONS)) return `${why ? `"${why}" is not something only the owner can do.` : 'Missing --why.'}\n${ONLY_OWNER_HELP}`;
-  if (w === 'choice' && !manager) return ROOM_DECIDES;
   if (cleanLine(tried ?? '', 400).length < MIN_TRIED) return `Missing --tried: say what you already did or tried yourself before asking the owner.\n${ONLY_OWNER_HELP}`;
   return undefined;
 }

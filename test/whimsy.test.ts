@@ -30,7 +30,7 @@ test('a question to the owner in chat sends the manager back to make it a button
   // Asked with a button this turn: fine.
   assert.equal(runHook([user('The owner: more whimsy please'), ran('~/.tiny-hq/app/manager/ask "Add whimsy?" --why choice --tried "x"'), result(), said('Question is over my head, the owner. Want me to wait?')]), '');
   // job wait also puts up a button.
-  assert.equal(runHook([user('x'), ran('/Users/g/Dev/tiny-hq/manager/job wait j1 "do it" --why send --tried "y"'), result(), said('Do you want it?')]), '');
+  assert.equal(runHook([user('x'), ran('/Users/g/Dev/tiny-hq/manager/job wait j1 "do it" --why pay --tried "y"'), result(), said('Do you want it?')]), '');
   // Only the turn that just ended counts: an ask in an earlier turn doesn't excuse this one.
   assert.match(runHook([user('a'), ran('~/.tiny-hq/app/manager/ask "q" --why choice --tried "x"'), result(), said('Up.'), user('b'), said('Should I start Rex on it?')]), /block/);
   // Once per turn: sent back, they answer again with the same question: let it through (never loops).

@@ -38,6 +38,7 @@ const HELPER_WORDS: Record<string, string> = {
   'public-posts': 'Before Claude posts anything public (a GitHub comment, a social post), it stops and asks you, showing exactly what it would say.',
   'room-questions': "When a room's Claude asks you something in its chat, it's sent back to put the question on a button, so a question mark shows over that room.",
   'screen-clicks': "When a room tests a desktop app, its clicks and typing wait until you've stopped using the keyboard and mouse for 30 seconds.",
+  camera: "Before Claude turns on your Mac's camera or microphone, it stops and asks you on a button; your yes lets that one capture run.",
 };
 const HELPERS = [
   ...HOOKS.map((h) => ({ id: h.id, title: h.what.split(':')[0]!, what: HELPER_WORDS[h.id] ?? h.what })),

@@ -8,6 +8,7 @@ import { isRemote, type Api } from './api.ts';
 import { phoneTyping } from './phone-typing.ts';
 import { tabColours } from './tab-colours.ts';
 import { linksOnRow } from './term-links.ts';
+import { dropMouseModeSet, mouseHeld, watchMouseHeld, type MouseMode } from './mouse-hold.ts';
 
 interface XTerm {
   cols: number;
@@ -19,6 +20,8 @@ interface XTerm {
   loadAddon(a: unknown): void;
   registerLinkProvider(p: { provideLinks(y: number, cb: (links: { range: { start: { x: number; y: number }; end: { x: number; y: number } }; text: string; activate(e: MouseEvent, text: string): void }[] | undefined) => void): void }): { dispose(): void };
   buffer: { active: { length: number; getLine(y: number): { isWrapped: boolean; length: number; translateToString(trim?: boolean): string; getCell(x: number): { getChars(): string; getWidth(): number } | undefined } | undefined } };
+  parser: { registerCsiHandler(id: { prefix?: string; final: string }, cb: (params: (number | number[])[]) => boolean): { dispose(): void } };
+  modes: { mouseTrackingMode: MouseMode };
   focus(): void;
   scrollToBottom(): void;
   dispose(): void;
@@ -101,6 +104,9 @@ export class TerminalPanel {
     xterm.loadAddon(fit);
     xterm.open(this.body);
     fit.fit();
+    // Dragging to select keeps reaching Claude Code while the button is held (mouse-hold.ts).
+    watchMouseHeld();
+    xterm.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => dropMouseModeSet(params, xterm.modes.mouseTrackingMode, mouseHeld()));
     // Web addresses in the chat open in a new tab when tapped or clicked (copying one out of the chat
     // is hard on a phone), including ones that wrap onto the next line.
     xterm.registerLinkProvider({

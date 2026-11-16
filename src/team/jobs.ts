@@ -11,6 +11,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { localDay } from './schedule.ts';
+import { WHY_LIST } from './only-owner.ts';
 
 export type JobStatus = 'active' | 'waiting' | 'done';
 
@@ -127,7 +128,7 @@ export function briefTemplate(job: Pick<Job, 'id' | 'title' | 'done' | 'room'>):
     "- Nothing goes on a public site (post, comment, reply, review, DM, upload) without the owner's yes for that exact text: put the text to them with manager/ask \"<what and where>\" --why post --tried \"<...>\" --text \"<the exact text>\" --target <owner/repo#N, owner/repo for a new issue, or the page URL> (posts are button-only, each pass for that one place: only their Approve on that exact text lets it through, once).",
     "- \"Works\" means seen or heard: report fixed, working or ready only after you saw or heard the real output the person gets, on the device they use (phone, the Mac's browser, the live link); say which device and how. Checking what the code asked for is not proof. A desktop app counts as tested only after a screenshot of it running (peekaboo image --app <App>) shows the change. If the owner reports a problem without saying where, ask which device first.",
     "- Nothing you build is reachable without a login unless the owner said yes for that project (a deploy is a post): manager/ask \"<...>\" --why post --text \"deploy <project> at <commit> publicly\" --target deploy:<project> --changes \"<...>\" --proven \"<...>\" (one Approve per exact commit, nothing uncommitted); check every deploy's address logged out.",
-    "- Every other step of this job is the room's to do, Chrome consoles and sign-ins their Chrome already has included. A broken office tool goes to the manager as an office fault. Need a yes from the owner (only money, public text or something that can't be undone): manager/ask --why <reason> --tried \"<what you tried>\". Any other choice is yours: decide it and add it to their evening note with manager/evening add \"<what you decided, and why>\".",
+    "- Every other step of this job is the room's to do, Chrome consoles and sign-ins their Chrome already has included. A broken office tool goes to the manager as an office fault. Need a yes from the owner (money, public text, something that can't be undone, or a choice that changes what they get): manager/ask --why <reason> --tried \"<what you tried>\" (a choice: --why choice --choices \"<your pick>\" \"<other>\"). Small, reversible choices are yours: decide them and add them to their evening note with manager/evening add \"<what you decided, and why>\".",
     '',
     '## Open questions',
     '',
@@ -237,11 +238,11 @@ export function nudgeLine(job: Job, cli: string, brief = `~/.tiny-hq/manager/job
     `[Office: job "${job.title}" is not done yet] Done means: ${job.done}. ` +
       `First read the job brief, ${brief}, and add a line to its Progress as you go (${cli} note ${job.id} "<what happened>"). ` +
       `Do the next step yourself now, and keep going until it's done: you have the owner's logged-in Chrome for websites and consoles (store consoles, dashboards), plus the terminal and your tools. ` +
-      `The only things you must never do: send an email (or a message to a person outside the office), or put anything on a public site (post, comment, reply, review, DM): draft it and get the owner's yes for that exact text with manager/ask (--why send, or --why post with --text "<the exact text>" --target <owner/repo#N or page URL>: posts are button-only). ` +
+      `The only things you must never do: send an email (or a message to a person outside the office), or put anything on a public site (post, comment, reply, review, DM). An email stays a draft in their mail: tell the manager it's ready and the owner sends it when they like, never a button (a job about an email is done once the draft is saved). A post needs the owner's yes for that exact text: manager/ask --why post --text "<the exact text>" --target <owner/repo#N or page URL> (posts are button-only). ` +
       `Don't hand the owner a step you can do yourself: a sign-in their Chrome already has, an upload, a form or a console button is yours; a broken tool or connector goes to the manager as an office fault. ` +
-      `Any other choice is yours: make it and add it to the owner's evening note (~/.tiny-hq/app/manager/evening add "<what you decided, and why>"). Only if it's an email to send, a public post, a payment, something that can't be undone, a password or 2-factor code you can't get past, or a step only their hands can do (a macOS System Settings switch: --why hands, with the exact steps), run: ${cli} wait ${job.id} "<the one thing the owner must do>" --why <send|post|pay|irreversible|permission|hands|password> --tried "<what you already tried>" (for a post add --text "<the exact text>" --target <owner/repo#N or page URL>: their Approve then lets exactly that go up there, once). ` +
+      `A choice that changes what the owner gets (data source, design, approach): ${cli.replace(/job$/, 'ask')} "<question>" --why choice --tried "<what you compared>" --choices "<your pick>" "<other>". Small, reversible choices are yours: add them to their evening note (${cli.replace(/job$/, 'evening')} add "<what you decided, and why>"). If it's a public post, a payment, something that can't be undone, a password or 2-factor code you can't get past, or a step only their hands can do (a macOS System Settings switch: --why hands, with the exact steps), run: ${cli} wait ${job.id} "<the one thing the owner must do>" --why <${WHY_LIST}> --tried "<what you already tried>" (for a post add --text "<the exact text>" --target <owner/repo#N or page URL>: their Approve then lets exactly that go up there, once). ` +
       `When it's done, run: ${cli} done ${job.id} and report to the manager.`,
-    2000,
+    4000, // fixed text ~2.2k + title (120) + done (1200): never cut the rules or the closing "done" step
   );
 }
 

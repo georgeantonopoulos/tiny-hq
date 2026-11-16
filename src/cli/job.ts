@@ -85,7 +85,7 @@ switch (cmd) {
     const what = words.slice(1).join(' ').trim();
     if (!what) fail('usage: job wait <id> "<the one thing the owner must do>" --why <reason> --tried "<what was tried>"');
     // Only the owner's things reach the owner (src/team/only-owner.ts).
-    const refused = checkOnlyOwner(proof.why, proof.tried, realpathSync(process.cwd()) === realpathSync(MANAGER_DIR));
+    const refused = checkOnlyOwner(proof.why, proof.tried);
     if (refused) fail(`Not waiting on the owner: ${j.id} stays active.\n${refused}`);
     const isPost = proof.why!.trim().toLowerCase() === 'post';
     if (isPost && (!postText?.trim() || !normTarget(postTarget)))

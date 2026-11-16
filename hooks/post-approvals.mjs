@@ -34,6 +34,8 @@ export function normTarget(t) {
   // A public deploy of one project (deploys are button-only, like posts).
   const d = /^deploy:([A-Za-z0-9._-]{1,100})$/.exec(s);
   if (d) return `deploy:${d[1].toLowerCase()}`;
+  // A device on the owner's Mac: one camera or microphone capture they approved.
+  if (/^device:camera$/i.test(s)) return 'device:camera';
   if (!/^https?:\/\//i.test(s)) return '';
   try {
     const u = new URL(s);
@@ -43,7 +45,7 @@ export function normTarget(t) {
     return '';
   }
 }
-const isRepoTarget = (t) => /^[a-z0-9-]+\/[\w.-]+(#\d+)?$/.test(t) || t.startsWith('deploy:');
+const isRepoTarget = (t) => /^[a-z0-9-]+\/[\w.-]+(#\d+)?$/.test(t) || t.startsWith('deploy:') || t.startsWith('device:');
 // A pass's target against where the post actually goes: a PR, issue or repo exactly; a site page, or
 // a page under it, with the same query (a thread's ?id=1 is not ?id=2). A pass with no target (from before targets existed) goes nowhere.
 export function sameTarget(pass, actual) {
@@ -150,10 +152,11 @@ export function usePass(text, session, now = Date.now(), path = approvalsPath(),
 // <project>"), used up by a host API call the guard can't put in fixed words: the first
 // unused pass for that target from this room, whatever its text. Never used for a deploy itself,
 // which still needs "deploy <project> at <commit> publicly".
-export function useTargetPass(session, now = Date.now(), path = approvalsPath(), cwd, target) {
+// `match`: an extra check on the pass (the camera guard binds a pass to the command the owner approved).
+export function useTargetPass(session, now = Date.now(), path = approvalsPath(), cwd, target, match = () => true) {
   return locked(path, () => {
     const list = loadPasses(path);
-    const i = list.findIndex((p) => !p.usedAt && p.expires > now && passHere(cwd, p) && sameTarget(p.target, target));
+    const i = list.findIndex((p) => !p.usedAt && p.expires > now && passHere(cwd, p) && sameTarget(p.target, target) && match(p));
     if (i < 0) return false;
     list[i] = { ...list[i], usedAt: now, session: String(session ?? '') };
     save(path, list);
