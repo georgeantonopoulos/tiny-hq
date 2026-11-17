@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { allBuilds, keepReason, kindOf, pickToClear, projectsIn, type Candidate } from '../src/team/disk-tidy.ts';
+import { allBuilds, gitAllows, keepReason, kindOf, pickToClear, projectsIn, type Candidate } from '../src/team/disk-tidy.ts';
 
 const GB = 1024 ** 3;
 const DAY = 24 * 60 * 60_000;
@@ -64,4 +64,15 @@ test('disk tidy is off unless the owner switches it on', async () => {
   assert.equal(loadConfig(join(dir, 'c.json')).extras.diskTidy, false);
   writeFileSync(join(dir, 'c.json'), JSON.stringify({ extras: { diskTidy: true } }));
   assert.equal(loadConfig(join(dir, 'c.json')).extras.diskTidy, true);
+});
+
+test('a repo git cannot read keeps its build folders (git errors never let one go)', () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'disk-tidy-')));
+  const proj = join(home, 'Dev', 'broken');
+  mkdirSync(join(proj, 'build'), { recursive: true });
+  writeFileSync(join(proj, '.git'), 'gitdir: /nowhere/at/all\n'); // a worktree whose repo is gone
+  assert.ok(gitAllows(join(proj, 'build')));
+  const plain = join(home, 'Dev', 'plain', 'build');
+  mkdirSync(plain, { recursive: true });
+  assert.equal(gitAllows(plain), undefined); // no repo anywhere above: fine
 });

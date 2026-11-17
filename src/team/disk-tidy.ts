@@ -124,10 +124,20 @@ const git = (cwd: string, args: string[]): string | undefined => {
   }
 };
 
-/** Inside a git repo: only an ignored folder with nothing tracked in it. Outside one: fine. */
+// Inside a repo when any folder above has a .git (folder, or file for a worktree). Found on disk,
+// not asked of git, so a git error (a timeout, "dubious ownership", git missing) can't make a repo
+// look like a plain folder.
+export function inRepo(dir: string): boolean {
+  for (let d = dirname(dir); ; d = dirname(d)) {
+    if (existsSync(join(d, '.git'))) return true;
+    if (d === dirname(d)) return false;
+  }
+}
+
+/** Inside a git repo: only an ignored folder with nothing tracked in it. Outside one: fine. Any git error keeps it. */
 export function gitAllows(dir: string): string | undefined {
   const parent = dirname(dir);
-  if (git(parent, ['rev-parse', '--is-inside-work-tree'])?.trim() !== 'true') return undefined;
+  if (!inRepo(dir)) return undefined;
   if (git(parent, ['check-ignore', '-q', basename(dir)]) === undefined) return 'not git-ignored';
   if ((git(parent, ['ls-files', '--', basename(dir)]) ?? 'x').trim()) return 'has tracked files';
   return undefined;
@@ -161,8 +171,20 @@ export function projectsIn(roots: string[], extra: string[] = []): string[] {
 export function allBuilds(projects: string[], home = homedir()): Candidate[] {
   const out: Candidate[] = [];
   for (const project of projects) findBuilds(project, project, 6, out);
+  return jobBuilds(home, out);
+}
+
+/** Build folders in Claude Code background jobs' temp folders. */
+export function jobBuilds(home = homedir(), out: Candidate[] = []): Candidate[] {
   const jobs = join(home, '.claude', 'jobs');
-  for (const j of list(jobs)) findBuilds(join(jobs, j, 'tmp'), join(jobs, j), 3, out);
+  for (const j of list(jobs)) {
+    const tmp = join(jobs, j, 'tmp');
+    try {
+      if (lstatSync(tmp).isDirectory()) findBuilds(tmp, join(jobs, j), 3, out); // never a link out of the job folder
+    } catch {
+      /* no temp folder */
+    }
+  }
   return out;
 }
 
@@ -252,20 +274,44 @@ export async function busyFolders(): Promise<string[]> {
 }
 
 let lastLook = 0;
+let running = false;
+const breathe = () => new Promise<void>((ok) => setImmediate(ok));
 /** The office tick: nothing at all unless free space is under LOW_GB, then at most once an hour. */
 export async function tidyDiskIfLow(dataDir: string, projects: string[], now = Date.now()): Promise<TidyLog | undefined> {
   const before = freeBytes();
   if (before >= LOW_GB * GB || now - lastLook < EVERY_MS) return undefined;
+  if (running) return undefined; // the last run is still measuring or clearing
   lastLook = now;
-  const busy = await busyFolders();
-  const cands = allBuilds(projects).map((c) => ({ ...c, keep: keepReason(c, busy, now) }));
-  for (const c of cands) if (!c.keep) c.bytes = await sizeOfLater(c.path);
-  const pick = pickToClear(cands, before);
-  if (!pick.length) {
-    console.log(`disk: ${gb(before)} free and nothing idle to clear`);
-    return undefined;
+  running = true;
+  try {
+    // A project at a time, letting the office's other work run in between.
+    const cands: Candidate[] = [];
+    for (const p of projects) {
+      findBuilds(p, p, 6, cands);
+      await breathe();
+    }
+    jobBuilds(homedir(), cands);
+    let busy = await busyFolders();
+    for (const c of cands) {
+      c.keep = keepReason(c, busy, now);
+      await breathe();
+    }
+    for (const c of cands) if (!c.keep) c.bytes = await sizeOfLater(c.path);
+    const pick = pickToClear(cands, before);
+    if (!pick.length) {
+      console.log(`disk: ${gb(before)} free and nothing idle to clear`);
+      return undefined;
+    }
+    // Measuring can take minutes: look again just before removing, in case a session started meanwhile.
+    busy = await busyFolders();
+    const still = pick.filter((c) => !keepReason({ ...c, newest: newestIn(c.path) }, busy, Date.now()));
+    return finish(dataDir, now, before, await clear(still));
+  } finally {
+    running = false;
   }
-  const cleared = await clear(pick);
+}
+
+function finish(dataDir: string, now: number, before: number, cleared: { path: string; bytes: number }[]): TidyLog {
   const entry = { at: now, freeBefore: before, freeAfter: freeBytes(), cleared };
   addTidyLog(tidyLogPath(dataDir), entry);
   console.log(`disk: cleared ${cleared.length} idle build folders, ${gb(before)} → ${gb(entry.freeAfter)} free`);
