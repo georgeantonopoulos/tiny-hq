@@ -1847,8 +1847,8 @@ server.listen(port, '127.0.0.1', () => {
         await runEvening();
         await clearAnsweredInChat();
         await retireExtraRoomSessions();
-        await moveRoomsToNewClaude();
-        await carryOnAfterApiErrors();
+        await moveRoomsToNewClaude().catch((e) => console.error('claude update:', e));
+        await carryOnAfterApiErrors().catch((e) => console.error('carry on:', e));
         await compactLongSessions();
         if (tidyScreen(DATA_DIR)) console.log('screen helper: time up, stopped');
         if (config.extras.diskTidy) void tidyDiskIfLow(DATA_DIR, projectsIn(config.projectRoots, config.extraProjects)).catch((e) => console.log(`disk: ${e}`));
