@@ -17,7 +17,7 @@ export interface Config {
   managerName: string; // the manager's name on the floor and in their own words
   managerStyle: ManagerStyle; // how the manager talks: calm, whimsical or plain
   projectRoots: string[]; // folders searched for git projects (each to three levels deep)
-  extras: { github: boolean; coffee: boolean; happenings: boolean }; // optional features, each off unless switched on
+  extras: { github: boolean; coffee: boolean; happenings: boolean; diskTidy: boolean }; // optional features (diskTidy: clears idle build folders when the disk runs low)
   goalRooms: number; // with no usage meter: how many rooms may work on their goals at once (0 turns it off)
   usageCommand?: string[]; // optional usage meter: a command printing usage JSON ("{provider}" is replaced by claude or codex)
   remote?: RemoteConfig; // {host: "<mac>.<tailnet>.ts.net", login: "<the owner's Tailscale login>"}; absent = local only
@@ -35,7 +35,7 @@ export const DEFAULT_CONFIG: Config = {
   managerName: 'Manager',
   managerStyle: 'calm',
   projectRoots: ['Dev', 'Developer', 'Projects', 'Sites', 'code', 'src'].map((d) => join(homedir(), d)),
-  extras: { github: false, coffee: false, happenings: true },
+  extras: { github: false, coffee: false, happenings: true, diskTidy: false },
   goalRooms: 1,
   extraProjects: [],
   pinnedProjects: [],
@@ -74,7 +74,7 @@ export function loadConfig(path: string): Config {
       managerName: cleanName(raw.managerName, DEFAULT_CONFIG.managerName),
       managerStyle: STYLES.includes(raw.managerStyle as ManagerStyle) ? (raw.managerStyle as ManagerStyle) : DEFAULT_CONFIG.managerStyle,
       projectRoots: Array.isArray(raw.projectRoots) ? roots.slice(0, 10) : DEFAULT_CONFIG.projectRoots,
-      extras: { github: extras.github === true, coffee: extras.coffee === true, happenings: extras.happenings !== false },
+      extras: { github: extras.github === true, coffee: extras.coffee === true, happenings: extras.happenings !== false, diskTidy: extras.diskTidy === true },
       goalRooms: typeof raw.goalRooms === 'number' && Number.isInteger(raw.goalRooms) ? Math.max(0, Math.min(3, raw.goalRooms)) : DEFAULT_CONFIG.goalRooms,
       ...(cmd ? { usageCommand: cmd } : {}),
       ...(remote ? { remote } : {}),
