@@ -9,7 +9,14 @@ export async function diskTidy(args: string[]): Promise<number> {
   const config = loadConfig(CONFIG_PATH);
   const apply = args.includes('--apply');
   const before = freeBytes();
-  const all = survey(projectsIn(config.projectRoots, config.extraProjects), await busyFolders(), Date.now(), undefined, true).sort((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0));
+  let busy: string[];
+  try {
+    busy = await busyFolders();
+  } catch (err) {
+    console.log(`Couldn't tell which projects have a session working in them, so nothing is listed or cleared: ${String(err).slice(0, 200)}`);
+    return 1;
+  }
+  const all = survey(projectsIn(config.projectRoots, config.extraProjects), busy, Date.now(), undefined, true).sort((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0));
   console.log(
     config.extras.diskTidy
       ? `Free now: ${gb(before)}. Disk tidy is on: the office clears idle build folders under ${LOW_GB} GB free, until ${ENOUGH_GB} GB.`

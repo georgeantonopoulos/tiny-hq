@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { allBuilds, gitAllows, keepReason, kindOf, pickToClear, projectsIn, type Candidate } from '../src/team/disk-tidy.ts';
@@ -75,4 +75,15 @@ test('a repo git cannot read keeps its build folders (git errors never let one g
   const plain = join(home, 'Dev', 'plain', 'build');
   mkdirSync(plain, { recursive: true });
   assert.equal(gitAllows(plain), undefined); // no repo anywhere above: fine
+});
+
+test('a folder that became busy or fresh after the survey is not removed', async () => {
+  const { clear } = await import('../src/team/disk-tidy.ts');
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'disk-tidy-')));
+  const next = join(home, 'Dev', 'site', '.next');
+  mkdirSync(next, { recursive: true });
+  writeFileSync(join(next, 'BUILD_ID'), 'x'); // written now: a build just ran
+  const surveyed: Candidate = { path: next, kind: 'next', project: join(home, 'Dev', 'site'), newest: Date.now() - 5 * DAY, bytes: GB };
+  assert.deepEqual(await clear([surveyed], async () => []), []);
+  assert.ok(existsSync(next));
 });

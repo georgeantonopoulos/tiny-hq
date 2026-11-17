@@ -258,19 +258,25 @@ export function survey(projects: string[], busy: string[], now = Date.now(), hom
   });
 }
 
-/** Clears the picked folders; returns what went. */
-export async function clear(pick: Candidate[]): Promise<{ path: string; bytes: number }[]> {
+/** Clears the picked folders, looking again at each one just before it goes (measuring and earlier
+ * removals take time, and a build may have started meanwhile); returns what went. */
+export async function clear(pick: Candidate[], busyNow: () => Promise<string[]> = busyFolders): Promise<{ path: string; bytes: number }[]> {
   const done: { path: string; bytes: number }[] = [];
-  for (const c of pick) if (await remove(c.path)) done.push({ path: c.path, bytes: c.bytes ?? 0 });
+  for (const c of pick) {
+    if (keepReason({ ...c, newest: newestIn(c.path) }, await busyNow(), Date.now())) continue;
+    if (await remove(c.path)) done.push({ path: c.path, bytes: c.bytes ?? 0 });
+  }
   return done;
 }
 
 /** Folders where a session is busy now, plus every open terminal session of the owner's (their own
  * builds aren't reported as busy, so any open one holds its project). */
+// A session that left a dev server running counts too: it may be serving that build. If either
+// list can't be read, this throws, so nothing is cleared without knowing who is working where.
 export async function busyFolders(): Promise<string[]> {
   const { allSessions, interactiveSessions } = await import('../terminal/sessions.ts');
-  const [bg, mine] = await Promise.all([allSessions().catch(() => []), interactiveSessions().catch(() => [])]);
-  return [...bg.filter((s) => s.status === 'busy').map((s) => s.realCwd), ...mine.map((s) => s.realCwd ?? '')].filter(Boolean);
+  const [bg, mine] = await Promise.all([allSessions(), interactiveSessions()]);
+  return [...bg.filter((s) => s.status === 'busy' || s.servers).map((s) => s.realCwd), ...mine.map((s) => s.realCwd ?? '')].filter(Boolean);
 }
 
 let lastLook = 0;
@@ -291,7 +297,7 @@ export async function tidyDiskIfLow(dataDir: string, projects: string[], now = D
       await breathe();
     }
     jobBuilds(homedir(), cands);
-    let busy = await busyFolders();
+    const busy = await busyFolders();
     for (const c of cands) {
       c.keep = keepReason(c, busy, now);
       await breathe();
@@ -302,10 +308,7 @@ export async function tidyDiskIfLow(dataDir: string, projects: string[], now = D
       console.log(`disk: ${gb(before)} free and nothing idle to clear`);
       return undefined;
     }
-    // Measuring can take minutes: look again just before removing, in case a session started meanwhile.
-    busy = await busyFolders();
-    const still = pick.filter((c) => !keepReason({ ...c, newest: newestIn(c.path) }, busy, Date.now()));
-    return finish(dataDir, now, before, await clear(still));
+    return finish(dataDir, now, before, await clear(pick));
   } finally {
     running = false;
   }
