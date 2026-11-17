@@ -249,6 +249,54 @@ export async function startSession(projectPath: string, name: string, prompt?: s
   return { id: m[1]!, sessionId: '', name, cwd: projectPath };
 }
 
+// Claude Code updates itself: each version is its own file under ~/.local/share/claude/versions/,
+// and the `claude` on PATH is a link to the newest. A running session keeps the version it
+// started with, so a long-lived room could run an old version for days.
+const VERSION_FILE = /\/versions\/([^/]+)$/;
+
+// The version a new session would start on: where the `claude` on PATH points.
+export function installedClaudeVersion(bin = CLAUDE_BIN, path = process.env.PATH ?? ''): string | undefined {
+  const candidates = bin.includes('/') ? [bin] : path.split(':').filter(Boolean).map((d) => join(d, bin));
+  for (const c of candidates) {
+    try {
+      return VERSION_FILE.exec(realpathSync(c))?.[1];
+    } catch {}
+  }
+  return undefined;
+}
+
+// The version a running session is on: the Claude file its process runs from.
+export function sessionClaudeVersion(pid: number): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile('/usr/sbin/lsof', ['-p', String(pid), '-a', '-d', 'txt', '-Fn'], { timeout: 10_000 }, (_err, out) => {
+      for (const line of String(out ?? '').split('\n')) {
+        const m = line.startsWith('n') ? VERSION_FILE.exec(line.slice(1)) : null;
+        if (m) return resolve(m[1]);
+      }
+      resolve(undefined);
+    });
+  });
+}
+
+// Room sessions to move onto the installed version: those on another version, idle, and not held
+// (the same never-touch rules as stopping a room's extra session). Unknown versions are left alone.
+export function outdatedSessions<T extends { id: string; status?: string; servers?: boolean }>(all: T[], installed: string | undefined, versionOf: (s: T) => string | undefined, hold: (s: T) => boolean = () => false): string[] {
+  if (!installed) return [];
+  return all
+    .filter((s) => {
+      const v = versionOf(s);
+      return v !== undefined && v !== installed && s.status !== 'busy' && !s.servers && !hold(s);
+    })
+    .map((s) => s.id);
+}
+
+// Restarts a background session on the installed version, same id and same conversation.
+// Nothing is typed into it: it waits for its next message like before.
+export async function respawnSession(id: string): Promise<void> {
+  if (!SHORT_ID.test(id)) throw new Error('bad session id');
+  await run(['respawn', id], process.env.HOME ?? '/');
+}
+
 export async function stopSession(id: string): Promise<void> {
   if (!SHORT_ID.test(id)) throw new Error('bad session id');
   await run(['stop', id], process.env.HOME ?? '/');
@@ -388,7 +436,7 @@ const plainText = (t: string): string =>
     .trim();
 
 type Block = { type?: string; text?: string; name?: string; id?: string; tool_use_id?: string; input?: Record<string, unknown> };
-type Rec = { type?: string; timestamp?: string; content?: string; message?: { model?: string; content?: Block[] | string } };
+type Rec = { type?: string; timestamp?: string; content?: string; isSidechain?: boolean; isApiErrorMessage?: boolean; message?: { model?: string; content?: Block[] | string } };
 
 // The tail of a session's transcript, newest record first.
 function tailRecords(sessionId: string, cwd: string, home: string): Rec[] {
@@ -464,6 +512,24 @@ export function currentModel(sessionId: string, cwd: string, home = homedir()): 
     }
   }
   return model ? { model } : undefined;
+}
+
+// Errors a person has to sort out (signing in, credit, usage limits, a conversation too long to send):
+// typing "carry on" would only fail again.
+const NEEDS_A_PERSON = /\/login|Login expired|Invalid API key|OAuth|Credit balance|usage limit|hit your .*limit|limit reached|resets \d|rate.?limit|Prompt is too long|too large/i;
+
+// The session's last turn ended on an API error a retry can fix (a dropped connection, an overloaded or
+// failing server) and nothing came after it: the error's text and when it happened.
+export function stoppedOnError(sessionId: string, cwd: string, home = homedir()): { text: string; at: number } | undefined {
+  for (const r of tailRecords(sessionId, cwd, home)) {
+    if (r.isSidechain || (r.type !== 'user' && r.type !== 'assistant')) continue;
+    if (r.type !== 'assistant' || !r.isApiErrorMessage) return undefined;
+    const c = r.message?.content;
+    const text = typeof c === 'string' ? c : (c ?? []).map((b) => (b.type === 'text' ? (b.text ?? '') : '')).join(' ').trim();
+    const at = Date.parse(r.timestamp ?? '');
+    return !text || NEEDS_A_PERSON.test(text) || !Number.isFinite(at) ? undefined : { text, at };
+  }
+  return undefined;
 }
 
 // What a blocked session is waiting for the owner on: a question it asked them

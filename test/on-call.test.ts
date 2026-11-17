@@ -106,3 +106,9 @@ test('delegate refuses an on-call room unless the owner clicked or gave it an op
 test('the hourly check is not relayed through the manager to an on-call room with nobody in', () => {
   assert.match(main, /if \(d === 'check' && !s && isOnCall\(job\.room, config\.onCallProjects\)\) continue;/);
 });
+
+test('moving rooms onto a new Claude version types nothing into them', () => {
+  const body = main.slice(main.indexOf('async function moveRoomsToNewClaude('), main.indexOf('// A room whose last turn was cut off'));
+  assert.ok(body.includes('respawnSession('), 'uses claude respawn');
+  assert.ok(!/typeInto|\.write\(/.test(body), 'a restart must not send a line: on-call rooms would get it');
+});
