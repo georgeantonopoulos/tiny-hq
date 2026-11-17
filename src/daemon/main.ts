@@ -19,6 +19,7 @@ import { isTrusted, trustFolder } from '../terminal/trust.ts';
 import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
 import { tidyScreen } from '../team/screen.ts';
+import { projectsIn, tidyDiskIfLow } from '../team/disk-tidy.ts';
 import { compactPath, contextSize, loadCompacts, saveCompacts, shouldCompact } from '../team/compact.ts';
 import { ackTold, acksPath, addAck, checkAcks } from '../team/acks.ts';
 import { createDaemon, fromWords, type From } from './server.ts';
@@ -1782,6 +1783,7 @@ server.listen(port, '127.0.0.1', () => {
         await retireExtraRoomSessions();
         await compactLongSessions();
         if (tidyScreen(DATA_DIR)) console.log('screen helper: time up, stopped');
+        if (config.extras.diskTidy) void tidyDiskIfLow(DATA_DIR, projectsIn(config.projectRoots, config.extraProjects)).catch((e) => console.log(`disk: ${e}`));
         await tellGithub();
         freshGags();
         coffeeBreak();

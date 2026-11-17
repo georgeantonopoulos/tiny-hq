@@ -28,6 +28,7 @@ const EXTRAS = [
   { id: 'github', title: 'GitHub keeper', what: "Keeps an eye on your GitHub projects and tells you when someone else opens a pull request, an issue or a comment." },
   { id: 'coffee', title: 'Coffee room', what: 'A few times a day, two or three rooms meet for coffee and share what they learned. Each chat is one small, cheap Claude call.' },
   { id: 'happenings', title: 'Office happenings', what: 'Little moments around the office: a plant gets watered, someone loses a stapler. Written about once a day.' },
+  { id: 'diskTidy', title: 'Disk tidy', what: "When your disk gets low (under 30 GB free), the office deletes old build folders you can rebuild (Rust target, Next.js .next, Xcode DerivedData, CMake build) from projects nobody has touched for 2 days, until 80 GB is free. Never node_modules or anything git tracks." },
   { id: 'briefing', title: 'Morning brief', what: 'Each morning your manager sums up what happened and what needs you today.' },
   { id: 'login', title: 'Open when I log in', what: 'The office starts by itself when you log in to your Mac, so it is always there.' },
 ] as const;

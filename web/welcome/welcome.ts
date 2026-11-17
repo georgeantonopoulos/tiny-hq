@@ -8,7 +8,7 @@ interface Choices {
   managerName: string;
   managerStyle: Style;
   projectRoots: string[];
-  extras: { github: boolean; coffee: boolean; happenings: boolean };
+  extras: { github: boolean; coffee: boolean; happenings: boolean; diskTidy: boolean };
   briefing: boolean;
   phone: boolean;
   login: boolean;

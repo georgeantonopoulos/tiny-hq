@@ -135,7 +135,7 @@ export function cleanChoices(raw: unknown, offered: readonly string[]): SetupCho
     managerName: cleanName(r.managerName, def.managerName),
     managerStyle: STYLES.includes(r.managerStyle as ManagerStyle) ? (r.managerStyle as ManagerStyle) : def.managerStyle,
     projectRoots: roots,
-    extras: { github: bool(x.github, def.extras.github), coffee: bool(x.coffee, def.extras.coffee), happenings: bool(x.happenings, def.extras.happenings) },
+    extras: { github: bool(x.github, def.extras.github), coffee: bool(x.coffee, def.extras.coffee), happenings: bool(x.happenings, def.extras.happenings), diskTidy: bool(x.diskTidy, def.extras.diskTidy) },
     briefing: bool(r.briefing, def.briefing),
     phone: bool(r.phone, def.phone),
     login: bool(r.login, def.login),

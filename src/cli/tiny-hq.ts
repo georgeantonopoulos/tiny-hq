@@ -128,6 +128,7 @@ async function typedSetup(args: string[], defaults: boolean): Promise<number> {
   const github = await yes(`   GitHub keeper: watches your repos for other people's pull requests, issues and comments (uses your gh sign-in${ghOk ? '' : '; gh is not installed yet'})`, before.extras.github);
   const coffee = await yes('   Coffee room: a few times a day, 2-3 rooms share what they learned (one small Sonnet call each)', before.extras.coffee);
   const happenings = await yes('   Office happenings: little gags around the office, written by Haiku about once a day', before.extras.happenings);
+  const diskTidy = await yes('   Disk tidy: when the disk is under 30 GB free, delete idle rebuildable build folders (Rust target, .next, DerivedData, CMake build) until 80 GB is free', before.extras.diskTidy);
   const phone = await yes('   Phone access over Tailscale (you set it up yourself; I print the steps)', before.phone);
 
   const login = await yes('5. Start the office when you log in?', loadInstalled(DATA_DIR)?.loginItems ?? !defaults);
@@ -144,7 +145,7 @@ async function typedSetup(args: string[], defaults: boolean): Promise<number> {
   rl?.close();
 
   const r = applySetup(
-    { officeName, ownerName, managerName, managerStyle, projectRoots: roots, extras: { github, coffee, happenings }, briefing: before.briefing, phone, login, hooks: chosen, skill },
+    { officeName, ownerName, managerName, managerStyle, projectRoots: roots, extras: { github, coffee, happenings, diskTidy }, briefing: before.briefing, phone, login, hooks: chosen, skill },
     { outside: !defaults },
   );
   if (!r.ok) {
@@ -327,6 +328,7 @@ const HELP = `Tiny HQ: a little office for your Claude Code projects.
   tiny-hq pair         a one-time link for your phone (after phone access is set up)
   tiny-hq doctor       check the set-up and say what's missing
   tiny-hq screen setup let rooms screenshot and click desktop apps while they test (needs Peekaboo; remove: tiny-hq screen remove)
+  tiny-hq disk-tidy    list the build folders disk tidy could clear, and why each stays or could go (--apply: clear the idle ones now)
   tiny-hq uninstall    take out the hooks, skill link and login items (--all: delete ~/.tiny-hq too)
   tiny-hq daemon       run the office in this terminal (for debugging)`;
 
@@ -349,6 +351,8 @@ const code = await (async (): Promise<number> => {
       return uninstall(rest);
     case 'screen':
       return screen(rest);
+    case 'disk-tidy':
+      return (await import('./disk-tidy.ts')).diskTidy(rest);
     case 'daemon':
       return new Promise<number>((res) => spawn(process.execPath, [...NODE_FLAGS, join(REPO_ROOT, 'src', 'daemon', 'main.ts')], { stdio: 'inherit' }).on('exit', (c) => res(c ?? 0)));
     default:
