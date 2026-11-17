@@ -31,7 +31,7 @@ import { floorPath, loadSeats, saveSeats, seatFloor, type Seats } from '../offic
 import { applyScene, loadScene } from '../office/scene.ts';
 import { loadLeads, saveLeads, staffRooms, writeNameTag, type Leads } from '../team/leads.ts';
 import { isOnCall, mayReach } from '../office/on-call.ts';
-import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, interactiveSessions, lastAction, lastActiveAt, lastSaid, liveSessions, MODELS, currentModel, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
+import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, installedClaudeVersion, interactiveSessions, outdatedSessions, respawnSession, sessionClaudeVersion, lastAction, lastActiveAt, lastSaid, liveSessions, stoppedOnError, MODELS, currentModel, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
 import { Allowance, meters, plan, usageReader, type Plan } from '../team/budget.ts';
@@ -1621,17 +1621,24 @@ async function retireExtraManagers(keepId: string): Promise<void> {
 // from project memory and the latest office skill. Never stops a session
 // that's working, waiting on the owner, being watched, holding an open question,
 // or that finished a reply in the last few minutes.
+// The never-touch rule for stopping or restarting a quiet room session by itself: someone watching,
+// an open ask, active in the last 3 minutes, or waiting on the owner for a question or permission.
+function leaveAlone(s: Awaited<ReturnType<typeof allSessions>>[number], asking: Set<string | undefined>, now: number): boolean {
+  return (
+    (terminals.forSession(s.id)?.viewers() ?? 0) > 0 ||
+    asking.has(s.sessionId) ||
+    now - lastActiveAt(s) < 3 * 60_000 ||
+    (s.state === 'blocked' && waitingOn(s.sessionId, s.cwd).kind !== 'unknown')
+  );
+}
+
 async function retireExtraRoomSessions(): Promise<void> {
   const now = Date.now();
   const all = (await allSessions()).filter((s) => worksAlive(s.pid ?? 0));
   const asking = new Set(loadAsks(ASKS).map((a) => a.sessionId).filter(Boolean));
   for (const r of floors.latest()?.rooms ?? []) {
     if (r.kind !== 'project' || !r.project) continue;
-    const hold = (s: (typeof all)[number]) =>
-      (terminals.forSession(s.id)?.viewers() ?? 0) > 0 ||
-      asking.has(s.sessionId) ||
-      now - lastActiveAt(s) < 3 * 60_000 ||
-      (s.state === 'blocked' && waitingOn(s.sessionId, s.cwd).kind !== 'unknown');
+    const hold = (s: (typeof all)[number]) => leaveAlone(s, asking, now);
     for (const id of extraRoomSessions(all, r.project.path, hold, lastActiveAt)) {
       try {
         await stopSession(id);
@@ -1642,6 +1649,65 @@ async function retireExtraRoomSessions(): Promise<void> {
         console.error(`could not stop an older session in ${r.name}:`, err);
       }
     }
+  }
+}
+
+// After a Claude Code update, move quiet room sessions onto the new version, one a tick, with
+// `claude respawn`: same session id and conversation, nothing typed into it, so on-call rooms are
+// fine. Same never-touch rule as above. The manager isn't a room here: its session follows the
+// office's own restart (theManager()).
+const respawnTried = new Map<string, number>(); // session id -> when we last tried, so a failure isn't retried every minute
+async function moveRoomsToNewClaude(): Promise<void> {
+  const installed = installedClaudeVersion();
+  if (!installed) return;
+  const now = Date.now();
+  const all = (await allSessions()).filter((s) => worksAlive(s.pid ?? 0) && s.sessionId);
+  const asking = new Set(loadAsks(ASKS).map((a) => a.sessionId).filter(Boolean));
+  const rooms = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project).map((r) => r.project!.path);
+  // Same rule as retiring a spare session, plus a permission prompt on screen and one try an hour.
+  const hold = (s: (typeof all)[number]) =>
+    leaveAlone(s, asking, now) || !!promptPending(s.sessionId!, s.cwd, DATA_DIR) || now - (respawnTried.get(s.id) ?? 0) < 60 * 60_000;
+  const candidates = all.filter((s) => rooms.some((p) => worksIn(s.realCwd, p)) && s.status !== 'busy' && !hold(s));
+  const versions = new Map<string, string | undefined>();
+  for (const s of candidates) versions.set(s.id, await sessionClaudeVersion(s.pid!));
+  const id = outdatedSessions(candidates, installed, (s) => versions.get(s.id), hold)[0];
+  if (!id) return;
+  const s = candidates.find((x) => x.id === id)!;
+  respawnTried.set(id, now);
+  try {
+    await respawnSession(id);
+    terminals.forSession(id)?.close(); // its old screen is gone; the next viewer attaches to the new one
+    liveCache = undefined;
+    console.log(`claude update: moved ${s.name ?? id} from ${versions.get(id)} to ${installed}`);
+  } catch (err) {
+    console.error(`claude update: could not move ${s.name ?? id} to ${installed}:`, err);
+  }
+}
+
+// A room whose last turn was cut off by a dropped connection or a failing server ("API Error:
+// Connection lost mid-response") sits idle until someone notices. Type one "carry on" into it, under
+// the same leave-alone rule as retiring a spare session; on-call rooms are skipped (and refused by
+// typeInto). Errors only a person can fix (sign-in, credit, limits) are left alone, and a session gets
+// at most 3 tries in 6 hours, so a server that stays down isn't hammered.
+const CARRY_ON_TRIES = 3;
+const CARRY_ON_WINDOW = 6 * 60 * 60_000;
+const carriedOn = new Map<string, number[]>(); // session id -> when "carry on" was typed
+async function carryOnAfterApiErrors(): Promise<void> {
+  const now = Date.now();
+  const all = (await allSessions()).filter((s) => worksAlive(s.pid ?? 0) && s.sessionId && s.status !== 'busy');
+  const asking = new Set(loadAsks(ASKS).map((a) => a.sessionId).filter(Boolean));
+  const rooms = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project).map((r) => r.project!.path);
+  for (const s of all) {
+    if (!rooms.some((p) => worksIn(s.realCwd, p)) || isOnCall(s.realCwd, config.onCallProjects)) continue;
+    if (leaveAlone(s, asking, now) || promptPending(s.sessionId!, s.cwd, DATA_DIR)) continue;
+    const err = stoppedOnError(s.sessionId!, s.cwd);
+    if (!err || now - err.at > 24 * 60 * 60_000) continue; // a stall from days ago was left that way on purpose
+    const tries = (carriedOn.get(s.sessionId!) ?? []).filter((t) => now - t < CARRY_ON_WINDOW);
+    if (tries.length >= CARRY_ON_TRIES || now - (tries.at(-1) ?? 0) < 10 * 60_000) continue;
+    carriedOn.set(s.sessionId!, [...tries, now]);
+    const ok = await typeInto(s, `Your last reply was cut off by "${err.text.slice(0, 80)}". Please carry on where you left off.`, true);
+    if (ok === 'later') carriedOn.set(s.sessionId!, tries); // someone was looking or typing: not a try
+    console.log(`carry on: ${s.name ?? s.id} stopped on an API error, typed carry on (try ${tries.length + 1}): ${ok}`);
   }
 }
 
@@ -1781,6 +1847,8 @@ server.listen(port, '127.0.0.1', () => {
         await runEvening();
         await clearAnsweredInChat();
         await retireExtraRoomSessions();
+        await moveRoomsToNewClaude();
+        await carryOnAfterApiErrors();
         await compactLongSessions();
         if (tidyScreen(DATA_DIR)) console.log('screen helper: time up, stopped');
         if (config.extras.diskTidy) void tidyDiskIfLow(DATA_DIR, projectsIn(config.projectRoots, config.extraProjects)).catch((e) => console.log(`disk: ${e}`));

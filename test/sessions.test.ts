@@ -154,6 +154,27 @@ test('one session per room: the working or most recently active one stays, idle 
   assert.deepEqual(extraRoomSessions([s('used', 1), s('unused', 2)], room, () => false, (x) => active[x.id]!), ['unused'], 'the most recently active one stays');
 });
 
+test('after a Claude update, only quiet room sessions on another version are moved onto it', async () => {
+  const { outdatedSessions } = await import('../src/terminal/sessions.ts');
+  const v: Record<string, string | undefined> = { old: '2.1.325', cur: '2.1.326', busy: '2.1.325', unknown: undefined, held: '2.1.325', srv: '2.1.325' };
+  const s = (id: string, status = 'idle', servers = false) => ({ id, status, servers });
+  const all = [s('old'), s('cur'), s('busy', 'busy'), s('unknown'), s('held'), s('srv', 'idle', true)];
+  assert.deepEqual(outdatedSessions(all, '2.1.326', (x) => v[x.id], (x) => x.id === 'held'), ['old']);
+  assert.deepEqual(outdatedSessions(all, undefined, (x) => v[x.id]), [], 'no installed version known: touch nothing');
+});
+
+test('the installed Claude version is read from where `claude` on PATH points', async () => {
+  const { installedClaudeVersion } = await import('../src/terminal/sessions.ts');
+  const { mkdirSync, symlinkSync } = await import('node:fs');
+  const root = mkdtempSync(join(tmpdir(), 'cm-ver-'));
+  mkdirSync(join(root, 'versions'));
+  mkdirSync(join(root, 'bin'));
+  writeFileSync(join(root, 'versions', '9.9.9'), '');
+  symlinkSync(join(root, 'versions', '9.9.9'), join(root, 'bin', 'claude'));
+  assert.equal(installedClaudeVersion('claude', `/nonexistent:${join(root, 'bin')}`), '9.9.9');
+  assert.equal(installedClaudeVersion('claude', '/nonexistent'), undefined);
+});
+
 test("a long-attached screen stays ready after its switch to full screen scrolls out of the backlog", async () => {
   const { trackScreen } = await import('../src/terminal/sessions.ts');
   const st = { up: false, tail: '' };
