@@ -192,7 +192,7 @@ export class Api {
   }
 
   // The owner answers a question over someone's head: yes / no, or the option they picked.
-  async answer(id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }): Promise<{ ok: true } | { error: string }> {
+  async answer(id: string, answer: { yes: boolean } | { choice: number } | { signIn: true } | { ignore: true }): Promise<{ ok: true } | { error: string }> {
     const r = await fetch(`/api/asks/${encodeURIComponent(id)}`, { method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify(answer) }).catch(() => null);
     if (!r) return { error: "Couldn't reach the Mac." };
     const body = (await r.json().catch(() => ({}))) as { error?: string };

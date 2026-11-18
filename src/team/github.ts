@@ -197,7 +197,12 @@ interface Actor {
   user?: { login: string; type?: string } | null;
   created_at?: string;
   submitted_at?: string;
+  body?: string | null;
 }
+
+// An app saying it did nothing: CodeRabbit posts a "Review skipped" note on every PR while its
+// auto-review is off. That is no news; the app's real comments and reviews still are.
+export const reviewSkipped = (body: string | null | undefined): boolean => /^\s*(#+\s*)?Review skipped\b/im.test(body ?? '') || /\bAuto reviews are disabled\b/i.test(body ?? '');
 
 const KIND: Record<string, GhItem['kind']> = { PullRequest: 'PR', Issue: 'issue', CheckSuite: 'CI', WorkflowRun: 'CI', RepositoryVulnerabilityAlert: 'alert', RepositoryDependabotAlertsThread: 'alert', Release: 'release', Discussion: 'discussion', RepositoryInvitation: 'invite' };
 // Reasons that are news whoever caused them (no one else's comment to check).
@@ -241,6 +246,7 @@ export async function lookAtInbox(gh: Gh, owner: string, since: number): Promise
     }
     const login = a.user?.login;
     if (!login || login === owner) continue;
+    if (isBot(a.user) && reviewSkipped(a.body)) continue;
     const thread = latest === n.subject.url;
     const what: GhItem['what'] = thread ? 'opened' : latest.includes('/reviews/') ? 'reviewed' : 'commented';
     // Same keys as the search look, so one comment is never told twice.

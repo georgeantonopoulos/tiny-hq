@@ -719,7 +719,7 @@ const server = createDaemon({
     }
   },
   terminal: { open: openTerminal, get: (id) => terminals.get(id) },
-  asks: { list: async () => openAsks(), answer: answerAsk },
+  asks: { list: async () => openAsks(), answer: answerAsk, ignore: ignoreAsk },
   // The usage board at the top of the office: the usage meter's last reading, if there is a meter (no tokens).
   gags: () => ({ gags: loadGags(GAGS).gags }),
   usage: async () => {
@@ -1103,6 +1103,15 @@ async function runAcks(): Promise<void> {
   } finally {
     ackBusy = false;
   }
+}
+
+// The owner's Ignore: the question comes down and nothing is typed anywhere (no room, no manager).
+// A job waiting on it stays waiting.
+function ignoreAsk(id: string): void {
+  const ask = loadAsks(ASKS).find((a) => a.id === id);
+  if (!ask) throw Object.assign(new Error('That question was already answered or withdrawn.'), { status: 404 });
+  saveAsks(ASKS, loadAsks(ASKS).filter((a) => a.id !== id));
+  console.log(`asks: the owner ignored "${ask.question.slice(0, 80)}" from ${roomName(ask.folder)} (nobody told)`);
 }
 
 async function answerAsk(id: string, answer: Answer, from?: From): Promise<void> {

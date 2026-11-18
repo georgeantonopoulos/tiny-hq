@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { eveningGithubLine, foldIn, lookAtInbox, ottoPrompt, prReposIn, roomFor, roomGithubLine, webUrl, type Gh, type GhState } from '../src/team/github.ts';
+import { eveningGithubLine, foldIn, lookAtInbox, reviewSkipped, ottoPrompt, prReposIn, roomFor, roomGithubLine, webUrl, type Gh, type GhState } from '../src/team/github.ts';
 import { STAFF, layoutFloor } from '../src/office/layout.ts';
 
 const api = 'https://api.github.com/repos';
@@ -91,4 +91,19 @@ test('Otto has their own room and desk on the floor, declared once', () => {
   const office = readFileSync(new URL('../web/app/office.ts', import.meta.url), 'utf8');
   assert.match(office, /r\.staff\?\.id === id/);
   assert.match(office, /room\.kind === 'staff'\) this\.furnishStaff/);
+});
+
+test("CodeRabbit's 'Review skipped' note is no news; its real comments still are", async () => {
+  const n = (id: string, c: number) => ({ id, reason: 'author', updated_at: '2026-11-18T10:07:00Z', subject: { title: 'Fix', type: 'PullRequest', url: `${api}/owner/app/pulls/47`, latest_comment_url: `${api}/owner/app/issues/comments/${c}` }, repository: { full_name: 'owner/app', html_url: 'https://github.com/owner/app' } });
+  const rabbit = { login: 'coderabbitai[bot]', type: 'Bot' };
+  const skipped = '<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n<!-- other_code_reviewer_warning_start -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Auto reviews are disabled on this repository.';
+  const ask: Gh = async (args) => {
+    if (args.includes('notifications')) return JSON.stringify([n('1', 201), n('2', 202)]);
+    if (args[1]!.endsWith('/201')) return JSON.stringify({ id: 201, html_url: 'c201', user: rabbit, created_at: '2026-11-18T10:07:00Z', body: skipped });
+    if (args[1]!.endsWith('/202')) return JSON.stringify({ id: 202, html_url: 'c202', user: rabbit, created_at: '2026-11-18T10:08:00Z', body: 'Actionable comments posted: 2' });
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const { inbox } = await lookAtInbox(ask, 'owner', 0);
+  assert.deepEqual(inbox.map((i) => i.key), ['comment:202']);
+  assert.ok(!reviewSkipped('I skipped the review step in my PR'), "a person's words aren't matched");
 });

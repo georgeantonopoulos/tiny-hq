@@ -277,6 +277,10 @@ body.resizing { user-select: none; }
 .ask-row .pick:hover:not(:disabled) { background: #e0a800; color: #221d28; }
 .ask-row .yes:hover:not(:disabled) { filter: brightness(1.1); }
 .ask-row button:disabled { opacity: 0.5; cursor: default; }
+/* Ignore: quiet, smaller, at the end (takes the question down, tells nobody). */
+.ask-row .ignore { flex: 0 0 auto; background: transparent; color: #221d28a0; font-weight: 500; text-decoration: underline; }
+.ask-row.choices .ignore { align-self: flex-end; }
+.ask-row .ignore:hover:not(:disabled) { color: #221d28; }
 .bubble .note { display: block; margin-top: 5px; color: #7a6a58; font-size: 11px; }
 .bubble .note:empty { display: none; }
 @keyframes bubble-in { from { opacity: 0; transform-origin: bottom; scale: 0.85; } to { opacity: 1; scale: 1; } }
