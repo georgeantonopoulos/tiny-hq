@@ -4,7 +4,7 @@
 // rescanned when the page asks, and sessions run only when started.
 
 import { execFile, execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { CLAUDE_BIN, CONFIG_PATH, DATA_DIR, REPO_ROOT, DEFAULT_PORT, DEVICES_PATH, LEADS_PATH, MANAGER_NOTES_DIR, MANAGER_DIR, MODELS_PATH, OFFICE_SKILL, WORKER_BRIEF, REMOTE_AUDIT_PATH, SCENE_PATH, TOKEN_PATH } from '../paths.ts';
@@ -18,7 +18,7 @@ import { goalsPath, loadGoals, setGoal } from '../team/goals.ts';
 import { isTrusted, trustFolder } from '../terminal/trust.ts';
 import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
-import { tidyScreen } from '../team/screen.ts';
+import { idleMs, tidyScreen } from '../team/screen.ts';
 import { projectsIn, tidyDiskIfLow } from '../team/disk-tidy.ts';
 import { compactPath, contextSize, loadCompacts, saveCompacts, shouldCompact } from '../team/compact.ts';
 import { ackTold, acksPath, addAck, checkAcks } from '../team/acks.ts';
@@ -30,7 +30,7 @@ import { MAX_ROOMS, layoutFloor } from '../office/layout.ts';
 import { floorPath, loadSeats, saveSeats, seatFloor, type Seats } from '../office/seats.ts';
 import { applyScene, loadScene } from '../office/scene.ts';
 import { loadLeads, saveLeads, staffRooms, writeNameTag, type Leads } from '../team/leads.ts';
-import { isOnCall, mayReach } from '../office/on-call.ts';
+import { isOnCall, mayReach, outOfCoffee } from '../office/on-call.ts';
 import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, extraManagers, extraRoomSessions, installedClaudeVersion, interactiveSessions, outdatedSessions, respawnSession, sessionClaudeVersion, lastAction, lastActiveAt, lastSaid, liveSessions, stoppedOnError, MODELS, currentModel, real, startSession, stopSession, Terminals, waitingOn, worksIn, type BackgroundSession, type Model } from '../terminal/sessions.ts';
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
@@ -39,10 +39,11 @@ import { logStep, loadSteps, pickRoom, stepLine, stepsPath, type Candidate } fro
 import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.ts';
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
-import { fileReport, listReports, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
+import { copyFlatReports, fileReport, listDesk, shortRoot, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
 import { addEntry, eveningPath, expiredAsks, expiredLine, fileEvening, restJobs } from '../team/evening.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
-import { applyBreak, applyTidy, boardPath, minRooms, onBoard, breakDue, brewChat, coffeePrompt, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, removeTip, saveCoffee, tidyDue, tidyPrompt } from '../team/coffee.ts';
+import { bootedSims, EVERY_MS as RUNAWAY_EVERY, OWNER_APPS, findHogs, frontApp, OWNER_USING_MS, hogLine, loadState as loadRunaway, processes, saveState as saveRunaway, simsToStop, stopSim, type Sample } from '../team/runaway.ts';
+import { applyPosts, boardPath, minRooms, onBoard, loadCoffee, removeTip, saveCoffee, startupPath, takePosts, withoutRooms } from '../team/coffee.ts';
 import { eveningGithubLine, foldIn, loadGhState, lookAtGithub, lookAtInbox, prReposIn, renderGithub, roomFor, roomGithubLine, saveGhState, writeOttoReport, type Gh, type GhItem, type GhState } from '../team/github.ts';
 
 const token = loadOrCreateToken(TOKEN_PATH);
@@ -662,7 +663,16 @@ const server = createDaemon({
   said,
   waiting,
   // The timetable on the manager's wall: every task, when it runs next, and on/off.
-  desk: { list: () => listReports(DATA_DIR), open: (id) => openReport(DATA_DIR, id), unread: () => unreadCount(DATA_DIR) },
+  desk: {
+    // The folder tree as it is on disk; any report still only in the office is copied over first.
+    list: () => {
+      copyFlatReports(DATA_DIR);
+      const d = listDesk(DATA_DIR);
+      return { ...d, root: shortRoot(d.root, homedir()) };
+    },
+    open: (id) => openReport(DATA_DIR, id),
+    unread: () => unreadCount(DATA_DIR),
+  },
   coffee: {
     last: () => loadCoffee(DATA_DIR).last,
     board: () => {
@@ -674,7 +684,7 @@ const server = createDaemon({
         /* none yet */
       }
       const shown = s.tips.filter((t) => onBoard(t, minRooms(s.rooms)));
-      return { html: renderMarkdown(md || '# Coffee room board\n\nNothing yet: the first coffee break is still to come.'), tips: shown.length, waiting: s.tips.length - shown.length, ...(minRooms(s.rooms) > 1 ? { twoRooms: true } : {}), list: shown.map((t) => ({ id: t.id, kind: t.kind, text: t.text, from: t.from, seen: t.seen, last: t.last })), ...(s.last ? { lastAt: s.last.at } : {}), ...(s.next ? { next: s.next } : {}) };
+      return { html: renderMarkdown(md || '# Coffee room board\n\nNothing yet: no room has posted a tip.'), tips: shown.length, waiting: s.tips.length - shown.length, ...(minRooms(s.rooms) > 1 ? { twoRooms: true } : {}), list: shown.map((t) => ({ id: t.id, kind: t.kind, text: t.text, from: t.from, seen: t.seen, last: t.last })), ...(s.last ? { lastAt: s.last.at } : {}) };
     },
     remove: (id) => {
       const next = removeTip(loadCoffee(DATA_DIR), id);
@@ -719,7 +729,7 @@ const server = createDaemon({
     }
   },
   terminal: { open: openTerminal, get: (id) => terminals.get(id) },
-  asks: { list: async () => openAsks(), answer: answerAsk },
+  asks: { list: async () => openAsks(), answer: answerAsk, ignore: ignoreAsk },
   // The usage board at the top of the office: the usage meter's last reading, if there is a meter (no tokens).
   gags: () => ({ gags: loadGags(GAGS).gags }),
   usage: async () => {
@@ -1103,6 +1113,15 @@ async function runAcks(): Promise<void> {
   } finally {
     ackBusy = false;
   }
+}
+
+// The owner's Ignore: the question comes down and nothing is typed anywhere (no room, no manager).
+// A job waiting on it stays waiting.
+function ignoreAsk(id: string): void {
+  const ask = loadAsks(ASKS).find((a) => a.id === id);
+  if (!ask) throw Object.assign(new Error('That question was already answered or withdrawn.'), { status: 404 });
+  saveAsks(ASKS, loadAsks(ASKS).filter((a) => a.id !== id));
+  console.log(`asks: the owner ignored "${ask.question.slice(0, 80)}" from ${roomName(ask.folder)} (nobody told)`);
 }
 
 async function answerAsk(id: string, answer: Answer, from?: From): Promise<void> {
@@ -1735,64 +1754,78 @@ async function compactLongSessions(): Promise<void> {
 
 // New office happenings from Haiku, about once a day; alongside the tick, never blocking it.
 const GAGS = join(DATA_DIR, 'happenings.json');
-// The coffee room (src/team/coffee.ts): a few times a day, 2-3 rooms share what they learned.
-
-let coffeeBusy = false;
-function coffeeBreak(): void {
-  if (coffeeBusy || !config.extras.coffee) return;
-  const s = loadCoffee(DATA_DIR);
-  if (!breakDue(s, new Date())) return;
-  const u = allowance.latest();
-  // With no usage meter, the gentle default pace (as if a quarter of the week were used).
-  const gap = config.usageCommand ? nextGap(u?.weekly?.usedPercent, u?.session?.usedPercent) : nextGap(25, 0);
-  if (gap === undefined) return; // allowance tight or not read yet: look again next tick
-  const all = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project && r.lead && !isOnCall(r.project.path, config.onCallProjects));
-  const rooms = all
-    .map((r) => ({ id: `lead:${r.id}`, name: r.name, activity: r.project!.activity, notes: recentNotes(r.project!.path) }))
-    .filter((r) => r.notes.length);
-  // The next break is set before brewing, so a failure waits its turn instead of retrying every tick.
-  saveCoffee(DATA_DIR, { ...s, next: Date.now() + gap, rooms: all.length });
-  if (rooms.length < 2) return;
-  const chosen = pickRooms(rooms);
-  coffeeBusy = true;
-  void userEnv()
-    .then((env) => brewChat(coffeePrompt(chosen, s.tips, s.removed, minRooms(all.length)), { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'coffee', 'brew'), env }))
-    .then((out) => {
-      const cur = loadCoffee(DATA_DIR);
-      const r = parseCoffee(out, chosen.map((c) => c.name), (room) => chosen.find((c) => c.name === room)?.notes ?? [], cur.tips.map((t) => t.id));
-      if (!r) throw new Error(`no usable chat: ${out.slice(0, 160)}`);
-      const now = Date.now();
-      const who = r.chat.map((c) => ({ id: chosen.find((x) => x.name === c.room)!.id, name: c.room, line: c.line }));
-      saveCoffee(DATA_DIR, { ...applyBreak(cur, r, now), last: { at: now, who } });
-      console.log(`coffee: ${who.map((w) => w.name).join(', ')} had a break; ${r.tips.length} new tips, ${r.same.length} confirmed`);
-    })
-    .catch((err) => console.error('coffee:', String(err).slice(0, 200)))
-    .finally(() => (coffeeBusy = false));
+// The coffee room (src/team/coffee.ts): rooms post tips themselves with manager/coffee; each tick the
+// office files the queued posts onto the board (no model, no tokens), and the poster walks to the
+// coffee room on the floor. Private and on-call rooms are kept out, and anything they shared comes off.
+const realOr = (p: string) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+// Runaway programs (src/team/runaway.ts): simulators left booted are shut down after 3 hours, and
+// any other program burning most of a core for an hour is reported to the manager once.
+let runawayAt = 0;
+const cpuSamples = new Map<number, Sample[]>();
+async function runaways(): Promise<void> {
+  if (process.platform !== 'darwin') return; // simctl, lsappinfo and the system folders are macOS's
+  const now = Date.now();
+  if (now - runawayAt < RUNAWAY_EVERY) return;
+  runawayAt = now;
+  const state = loadRunaway(DATA_DIR);
+  const booted = await bootedSims();
+  const using = booted.length > 0 && OWNER_APPS.includes(await frontApp()) && (idleMs() ?? Infinity) < OWNER_USING_MS;
+  for (const id of simsToStop(booted.map((b) => b.udid), state.sims, using, now)) {
+    const name = booted.find((b) => b.udid === id)?.name ?? id;
+    if (await stopSim(id)) {
+      delete state.sims[id];
+      console.log(`runaway: shut down the ${name} simulator, booted over 3 hours`);
+      addEntry(EVENING, { kind: 'note', folder: MANAGER_DIR, text: `The office shut down the ${name} simulator: it had been booted over 3 hours (simulators left running heat the Mac).` });
+    }
+  }
+  const told = new Set(state.told);
+  const procs = await processes();
+  if (!procs.length) return saveRunaway(DATA_DIR, state); // ps failed: keep the samples and who was told
+  for (const h of findHogs(procs, cpuSamples, told, now)) {
+    const ok = await tellManager(`[Office: a program is running the Mac hot] ${hogLine(h)}. Find which room or app it belongs to and put "Stop it?" to the owner on a button; the office doesn't stop it itself.`);
+    if (ok !== 'later') told.add(h.proc.pid); // typed (even unconfirmed): don't type it again every 5 minutes
+  }
+  const alive = new Set(procs.map((p) => p.pid));
+  state.told = [...told].filter((pid) => alive.has(pid)); // forget pids that are gone (kept across office restarts)
+  saveRunaway(DATA_DIR, state);
 }
 
-// The weekly tidy of the coffee board: merges rewordings, drops what newer notes contradict.
-function coffeeTidy(): void {
-  if (coffeeBusy || !config.extras.coffee) return;
-  const s = loadCoffee(DATA_DIR);
-  if (!tidyDue(s, Date.now())) return;
-  const u = allowance.latest();
-  if (config.usageCommand && nextGap(u?.weekly?.usedPercent, u?.session?.usedPercent) === undefined) return;
-  const rooms = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project);
-  const named = [...new Set(s.tips.flatMap((t) => t.from.split(', ')))];
-  const notes = named.map((room) => ({ room, notes: recentNotes(rooms.find((r) => r.name === room)?.project!.path ?? '', 3, 900) }));
-  coffeeBusy = true;
-  saveCoffee(DATA_DIR, { ...s, tidiedAt: Date.now() }); // one try a week, even if it fails
-  void userEnv()
-    .then((env) => brewChat(tidyPrompt(s.tips, notes), { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'coffee', 'brew'), env }))
-    .then((out) => {
-      const cur = loadCoffee(DATA_DIR);
-      const r = applyTidy(cur, out, Date.now());
-      if (!r) throw new Error(`tidy unusable or too drastic: ${out.slice(0, 160)}`);
-      saveCoffee(DATA_DIR, r.state);
-      console.log(`coffee: weekly tidy, ${cur.tips.length} tips -> ${r.state.tips.length}${r.dropped.length ? `; dropped: ${r.dropped.map((d) => d.why).join('; ')}` : ''}`);
-    })
-    .catch((err) => console.error('coffee:', String(err).slice(0, 200)))
-    .finally(() => (coffeeBusy = false));
+let coffeeNoteFresh = false;
+function coffeeRoom(): void {
+  if (!config.extras.coffee) {
+    // Switched off: no start-up note in room sessions, and posts aren't kept for later.
+    rmSync(startupPath(DATA_DIR), { force: true });
+    takePosts(DATA_DIR);
+    coffeeNoteFresh = false;
+    return;
+  }
+  if (!floors.latest()) return; // rooms not known yet: posts wait in the queue for the next tick
+  const projectRooms = floors.latest()!.rooms.filter((r) => r.kind === 'project' && r.project);
+  const was = loadCoffee(DATA_DIR);
+  let s = withoutRooms(was, projectRooms.filter((r) => outOfCoffee(r.project!.path, config)).map((r) => r.name));
+  if (s !== was) console.log('coffee: took tips and posts from private rooms off the board');
+  const rooms = projectRooms.filter((r) => !outOfCoffee(r.project!.path, config));
+  if (s.rooms !== rooms.length) s = { ...s, rooms: rooms.length }; // sets the two-room rule
+  const posts = takePosts(DATA_DIR);
+  if (posts.length) {
+    const room = (folder: string) => {
+      const r = rooms.find((x) => realOr(x.project!.path) === realOr(folder));
+      return r && { id: `lead:${r.id}`, name: r.name };
+    };
+    const r = applyPosts(s, posts, room, Date.now());
+    s = r.state;
+    console.log(`coffee: ${posts.length} post(s) filed${r.said.length ? `: ${r.said.map((w) => w.name).join(', ')}` : ' (none usable)'}`);
+  }
+  // Written every time it changes, and on the first tick after each start, so a new version's
+  // wording reaches the start-up note without waiting for a post.
+  if (s !== was || !coffeeNoteFresh) saveCoffee(DATA_DIR, s);
+  coffeeNoteFresh = true;
 }
 
 let gagsBusy = false;
@@ -1854,8 +1887,8 @@ server.listen(port, '127.0.0.1', () => {
         if (config.extras.diskTidy) void tidyDiskIfLow(DATA_DIR, projectsIn(config.projectRoots, config.extraProjects)).catch((e) => console.log(`disk: ${e}`));
         await tellGithub();
         freshGags();
-        coffeeBreak();
-        coffeeTidy();
+        coffeeRoom();
+        await runaways().catch((e) => console.error('runaway:', e));
         if (!ghBusy && config.extras.github) {
           ghBusy = true;
           void lookGithub()

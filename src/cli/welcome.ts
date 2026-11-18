@@ -26,7 +26,7 @@ const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.c
 // What each extra and helper is, in the words the page shows.
 const EXTRAS = [
   { id: 'github', title: 'GitHub keeper', what: "Keeps an eye on your GitHub projects and tells you when someone else opens a pull request, an issue or a comment." },
-  { id: 'coffee', title: 'Coffee room', what: 'A few times a day, two or three rooms meet for coffee and share what they learned. Each chat is one small, cheap Claude call.' },
+  { id: 'coffee', title: 'Coffee room', what: 'Rooms post what they ran into (a Mac quirk, a trap, how you like things) to a board every room reads when it starts. Costs no tokens.' },
   { id: 'happenings', title: 'Office happenings', what: 'Little moments around the office: a plant gets watered, someone loses a stapler. Written about once a day.' },
   { id: 'diskTidy', title: 'Disk tidy', what: "When your disk gets low (under 30 GB free), the office deletes old build folders you can rebuild (Rust target, Next.js .next, Xcode DerivedData, CMake build) from projects nobody has touched for 2 days, until 80 GB is free. Never node_modules or anything git tracks." },
   { id: 'briefing', title: 'Morning brief', what: 'Each morning your manager sums up what happened and what needs you today.' },

@@ -39,7 +39,8 @@ export interface AskInfo {
   password?: boolean; // a sign-in only the owner can do: Done, I did it / You sign in (saved passkey or password manager) / No
 }
 
-export type Answer = { yes: boolean } | { choice: number } | { signIn: true };
+// ignore: the owner's "Ignore" takes the question down and tells nobody.
+export type Answer = { yes: boolean } | { choice: number } | { signIn: true } | { ignore: true };
 
 interface Person {
   speaker: Speaker;
@@ -435,6 +436,10 @@ export class Bubbles {
       q.prepend(how, document.createElement('br'));
       row.append(btn('Done, I did it', 'yes', { yes: true }), btn('Stuck', 'no', { yes: false }));
     } else row.append(btn('Approve', 'yes', { yes: true }), btn('No', 'no', { yes: false }));
+    // Every question can be put aside without answering: it goes, and the room hears nothing.
+    const ignore = btn('Ignore', 'ignore', { ignore: true });
+    ignore.title = 'Take this question down without telling them anything';
+    row.append(ignore);
     el.append(q, row, note);
     this.show({ id, mode: 'ask', el, key: ask.id });
   }

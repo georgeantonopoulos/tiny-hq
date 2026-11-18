@@ -1,0 +1,6 @@
+#!/bin/sh
+# The coffee room board: rooms post what they found themselves (no model, no tokens).
+#   ./coffee add <owner|tip|bug|mac> "<one line>" | ./coffee same <id> | ./coffee list
+here=$(cd "$(dirname "$0")" && pwd -P)
+node=$(command -v node 2>/dev/null || cat "${CM_DATA_DIR:-$HOME/.tiny-hq}/node" 2>/dev/null || echo node)
+exec "$node" --experimental-strip-types --disable-warning=ExperimentalWarning "$here/../src/cli/coffee.ts" "$@"

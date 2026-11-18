@@ -5,11 +5,15 @@
 # never in the project: a repo could ship its own .claude/office.md and steer
 # every session started in it. A session inside a
 # worktree (<project>/.claude/worktrees/<name>) gets the project's tag. Prints
-# nothing anywhere else.
+# nothing anywhere else. After the tag, the coffee room note (if the coffee room
+# is on): tips other rooms posted and how to post one (written by the office,
+# src/team/coffee.ts).
 dir="${CLAUDE_PROJECT_DIR:-$PWD}"
 case "$dir" in */.claude/worktrees/*) dir="${dir%%/.claude/worktrees/*}" ;; esac
 key=$(printf '%s' "$dir" | LC_ALL=C sed 's/[^a-zA-Z0-9]/-/g')
 tag="${CM_DATA_DIR:-$HOME/.tiny-hq}/tags/$key.md"
 [ -f "$tag" ] || exit 0
 head -c 2000 "$tag"
+coffee="${CM_DATA_DIR:-$HOME/.tiny-hq}/coffee/startup.md"
+[ -f "$coffee" ] && { printf '\n\n'; head -c 2600 "$coffee"; }
 exit 0

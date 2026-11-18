@@ -25,6 +25,7 @@ export interface Config {
   pinnedProjects: string[]; // folders that always get a room on the floor, never the archive cupboard (up to 12)
   hiddenProjects: string[]; // retired folders: no room and no archive entry, even if they still log sessions
   onCallProjects: string[]; // rooms that work only when asked: the office never reaches them by itself (src/office/on-call.ts)
+  privateProjects: string[]; // rooms whose notes are private: they never post to the coffee room and their tips stay off the board (src/office/on-call.ts)
   archivedProjects: string[]; // folders kept in the archive cupboard, however busy, until the owner brings them back
   briefingTime?: string; // "HH:MM": when the manager does the daily brief; absent or malformed: no brief
 }
@@ -42,6 +43,7 @@ export const DEFAULT_CONFIG: Config = {
   hiddenProjects: [],
   archivedProjects: [],
   onCallProjects: [],
+  privateProjects: [],
   briefingTime: '08:30',
 };
 
@@ -83,6 +85,7 @@ export function loadConfig(path: string): Config {
       hiddenProjects: paths(raw.hiddenProjects, 1000),
       archivedProjects: paths(raw.archivedProjects, 1000),
       onCallProjects: paths(raw.onCallProjects),
+      privateProjects: paths(raw.privateProjects),
       ...(parseTime(raw.briefingTime) ? { briefingTime: parseTime(raw.briefingTime) } : {}),
     };
   } catch {

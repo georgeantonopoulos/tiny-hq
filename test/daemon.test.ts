@@ -400,3 +400,33 @@ test('the device the owner answered from: the Mac, their phone, or another devic
   assert.equal(fromWords('phone'), 'on their phone');
   assert.equal(fromWords(undefined), '');
 });
+
+// Ignore takes the question down and never reaches the answer path: nothing is typed into the room.
+test('questions: Ignore takes one down without answering it', async () => {
+  const port = await freePort();
+  const answered: unknown[] = [];
+  const ignored: string[] = [];
+  const d = createDaemon({
+    token: 't',
+    port,
+    asks: {
+      list: async () => ({}),
+      answer: async (id, a) => void answered.push([id, a]),
+      ignore: (id) => {
+        if (id !== 'abc123') throw Object.assign(new Error('gone'), { status: 404 });
+        ignored.push(id);
+      },
+    },
+  });
+  await new Promise<void>((r) => d.listen(port, '127.0.0.1', r));
+  const post = (id: string, body: unknown) => call(port, `/api/asks/${id}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer t' }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await post('abc123', { ignore: true })).status, 200);
+    assert.deepEqual(ignored, ['abc123']);
+    assert.deepEqual(answered, [], 'nothing is typed into the room');
+    assert.equal((await post('zzz999', { ignore: true })).status, 404);
+    assert.equal((await post('abc123', { ignore: 'yes' })).status, 400, 'only ignore: true counts');
+  } finally {
+    d.close();
+  }
+});

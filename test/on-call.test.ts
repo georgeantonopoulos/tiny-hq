@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isOnCall, mayReach } from '../src/office/on-call.ts';
+import { isOnCall, mayReach, outOfCoffee } from '../src/office/on-call.ts';
 import { loadConfig } from '../src/config.ts';
 
 const office = realpathSync(new URL('..', import.meta.url).pathname);
@@ -69,11 +69,31 @@ test('only the nudge for a job the owner gave may reach an on-call room on its o
   assert.doesNotMatch(jobCalls[0]!, /checkLine\(/, 'the hourly "has it happened" check is not a nudge');
 });
 
-test('rooms the office picks by itself (goal steps, coffee breaks) leave on-call rooms out', () => {
+test('rooms the office picks by itself (goal steps, the coffee room) leave on-call rooms out', () => {
   const goals = main.slice(main.indexOf('async function runGoals('), main.indexOf('pickRoom(cands'));
   assert.match(goals, /!isOnCall\(r\.project!\.path, config\.onCallProjects\)/);
-  const coffee = main.slice(main.indexOf('function coffeeBreak('), main.indexOf('pickRooms(rooms)'));
-  assert.match(coffee, /!isOnCall\(r\.project\.path, config\.onCallProjects\)/);
+  const coffee = main.slice(main.indexOf('function coffeeRoom('), main.indexOf('applyPosts(s, posts'));
+  assert.match(coffee, /const rooms = projectRooms\.filter\(\(r\) => !outOfCoffee\(r\.project!\.path, config\)\)/, 'a post from a private or on-call room is never filed');
+  assert.match(coffee, /withoutRooms\(was, projectRooms\.filter\(\(r\) => outOfCoffee\(/, 'what they already shared comes off');
+  const cli = readFileSync(new URL('../src/cli/coffee.ts', import.meta.url), 'utf8');
+  assert.match(cli, /outOfCoffee\(room, config\)/, 'manager/coffee refuses them too');
+});
+
+// Private rooms (taxes, health, family): kept out of the coffee room like on-call ones.
+test('outOfCoffee: on-call and private rooms (and their worktrees) are left out; others are not', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'oncall-private-')));
+  const admin = join(root, 'life-admin');
+  const tax = join(root, 'tax');
+  const app = join(root, 'garden-app');
+  for (const d of [admin, tax, app]) mkdirSync(d);
+  const c = { onCallProjects: [admin], privateProjects: [tax] };
+  assert.equal(outOfCoffee(admin, c), true);
+  assert.equal(outOfCoffee(tax, c), true);
+  assert.equal(outOfCoffee(join(tax, '.claude', 'worktrees', 'w'), c), true);
+  assert.equal(outOfCoffee(app, c), false);
+  const cfg = join(root, 'config.json');
+  writeFileSync(cfg, JSON.stringify({ privateProjects: [tax, 'not absolute'] }));
+  assert.deepEqual(loadConfig(cfg).privateProjects, [tax]);
 });
 
 test('delegate refuses an on-call room unless the owner clicked or gave it an open job', () => {

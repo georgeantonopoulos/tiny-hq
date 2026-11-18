@@ -1,12 +1,12 @@
 // On-call rooms: a room that works only when someone asks it something (a life-admin room, say,
 // that shouldn't run tasks by itself and spend credits). The office never reaches it on its own:
-// no goal steps, hourly checks, GitHub news, expired-button notices, /compact, and it is never
-// picked for a coffee break (its notes may be the owner's mail and diary).
+// no goal steps, hourly checks, GitHub news, expired-button notices, /compact, and it is kept out
+// of the coffee room (its notes may be the owner's mail and diary).
 // What still gets through: the owner's own clicks and typing, and the nudge for a job the owner gave it.
 //
 // The list is "onCallProjects" in ~/.tiny-hq/config.json. One declaration, checked in two
 // places only: typeInto in src/daemon/main.ts (every line the office types into a session) and the
-// room lists the office picks from by itself (goals, coffee). test/on-call.test.ts fails if a new
+// room lists the office picks from by itself (goals) and the coffee room (outOfCoffee below). test/on-call.test.ts fails if a new
 // automatic sender skips it. manager/delegate also refuses to start one (src/cli/on-call.ts).
 
 import { realpathSync } from 'node:fs';
@@ -37,3 +37,10 @@ export type Sender = 'owner' | 'job' | 'office';
 
 /** May the office type this line into a session working in `folder`? */
 export const mayReach = (folder: string | undefined, from: Sender, onCall: readonly string[]): boolean => from !== 'office' || !isOnCall(folder, onCall);
+
+// Private rooms: a room whose notes hold money or personal matters (taxes, health, family) and
+// shouldn't share them with the other rooms. "privateProjects" in the config; on-call rooms count too.
+// Such a room can't post to the coffee room, and anything it shared comes off the board.
+/** Is this room kept out of the coffee room (on call, or private)? */
+export const outOfCoffee = (folder: string | undefined, c: { onCallProjects: readonly string[]; privateProjects: readonly string[] }): boolean =>
+  isOnCall(folder, c.onCallProjects) || isOnCall(folder, c.privateProjects);

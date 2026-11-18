@@ -58,12 +58,12 @@ export interface DaemonDeps {
   // The office's written happenings (the Haiku writer's pool; see src/office/gags.ts).
   gags?: () => unknown;
   // The owner's desk: reports they asked for (src/team/desk.ts). `open` marks one read.
-  desk?: { list: () => unknown[]; open: (id: string) => unknown | undefined; unread: () => number };
+  desk?: { list: () => unknown; open: (id: string) => unknown | undefined; unread: () => number };
   // The coffee room (src/team/coffee.ts): the last break (who said what) and the board.
   coffee?: { last: () => unknown; board: () => unknown; remove: (id: string) => boolean };
   // The office's microphone: what the owner said (the page's speech recognition), typed into the manager's chat.
   say?: (text: string, from?: From) => Promise<void>;
-  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; target?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void> };
+  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; target?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void>; ignore?: (id: string) => void };
   // the owner joins (or starts) the Claude Code session in a project's folder, or the manager's.
   terminal?: {
     open: (projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number, trust?: boolean) => Promise<{ termId: string; session: string; fresh: boolean }>;
@@ -285,7 +285,7 @@ export function createDaemon(deps: DaemonDeps): Server {
       return deps.coffee.remove(coffeeM[1]!) ? send(res, 200, { ok: true }) : send(res, 404, { error: 'that tip is already gone' });
     }
     if (req.method === 'GET' && url.pathname === '/api/desk' && deps.desk) {
-      return send(res, 200, { reports: deps.desk.list() });
+      return send(res, 200, deps.desk.list());
     }
     const deskM = /^\/api\/desk\/([a-z0-9]{8,16})$/.exec(url.pathname);
     if (deskM && req.method === 'GET' && deps.desk) {
@@ -397,11 +397,22 @@ export function createDaemon(deps: DaemonDeps): Server {
     }
     const am = /^\/api\/asks\/([a-z0-9]{6,16})$/.exec(url.pathname);
     if (deps.asks && am && req.method === 'POST') {
-      let b: { yes?: unknown; choice?: unknown; signIn?: unknown };
+      let b: { yes?: unknown; choice?: unknown; signIn?: unknown; ignore?: unknown };
       try {
         b = ((await readJson(req)) ?? {}) as typeof b;
       } catch {
         return send(res, 400, { error: 'bad request' });
+      }
+      // Ignore: the question goes and nobody is told, so the owner can put a question aside
+      // without answering the room.
+      if (b.ignore === true && deps.asks.ignore) {
+        try {
+          deps.asks.ignore(am[1]!);
+          if (remote) audit(rc!.auditPath, { event: 'ignore', ask: am[1]!, device: device!.id });
+          return send(res, 200, { ok: true });
+        } catch (err) {
+          return send(res, (err as { status?: number }).status ?? 500, { error: String((err as Error).message ?? err).slice(0, 300) });
+        }
       }
       // Yes / No, or the number of the option the owner picked on a multiple-choice question.
       const answer = b.signIn === true ? ({ signIn: true } as const) : typeof b.yes === 'boolean' ? { yes: b.yes } : Number.isInteger(b.choice) && (b.choice as number) >= 0 && (b.choice as number) < 6 ? { choice: b.choice as number } : undefined;

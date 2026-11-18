@@ -136,22 +136,22 @@ export class Api {
     if (!r) return "couldn't reach the Mac";
     return r.ok ? null : ((await r.json().catch(() => ({}))) as { error?: string }).error ?? `refused (${r.status})`;
   }
-  async coffee(): Promise<{ html: string; tips: number; waiting?: number; twoRooms?: boolean; list?: { id: string; kind: string; text: string; from: string; seen: number }[]; lastAt?: number; next?: number } | { error: string }> {
+  async coffee(): Promise<{ html: string; tips: number; waiting?: number; twoRooms?: boolean; list?: { id: string; kind: string; text: string; from: string; seen: number }[]; lastAt?: number } | { error: string }> {
     try {
       const r = await fetch('/api/coffee', { headers: this.headers() });
       if (!r.ok) return { error: `refused (${r.status})` };
-      return (await r.json()) as { html: string; tips: number; waiting?: number; twoRooms?: boolean; list?: { id: string; kind: string; text: string; from: string; seen: number }[]; lastAt?: number; next?: number };
+      return (await r.json()) as { html: string; tips: number; waiting?: number; twoRooms?: boolean; list?: { id: string; kind: string; text: string; from: string; seen: number }[]; lastAt?: number };
     } catch {
       return { error: "couldn't reach the Mac" };
     }
   }
 
   // The owner's desk: the list of reports, and one report as a page (opening it marks it read).
-  async desk(): Promise<{ reports: import('./desk.ts').DeskReport[] } | { error: string }> {
+  async desk(): Promise<import('./desk.ts').DeskTree | { error: string }> {
     try {
       const r = await fetch('/api/desk', { headers: this.headers() });
       if (!r.ok) return { error: `refused (${r.status})` };
-      return (await r.json()) as { reports: import('./desk.ts').DeskReport[] };
+      return (await r.json()) as import('./desk.ts').DeskTree;
     } catch {
       return { error: "couldn't reach the Mac" };
     }
@@ -192,7 +192,7 @@ export class Api {
   }
 
   // The owner answers a question over someone's head: yes / no, or the option they picked.
-  async answer(id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }): Promise<{ ok: true } | { error: string }> {
+  async answer(id: string, answer: { yes: boolean } | { choice: number } | { signIn: true } | { ignore: true }): Promise<{ ok: true } | { error: string }> {
     const r = await fetch(`/api/asks/${encodeURIComponent(id)}`, { method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify(answer) }).catch(() => null);
     if (!r) return { error: "Couldn't reach the Mac." };
     const body = (await r.json().catch(() => ({}))) as { error?: string };

@@ -1,5 +1,6 @@
-// The owner's desk: the reports they asked for, newest first, unread ones marked; one tap opens a
-// report as a readable page. The office turns each report's Markdown into safe HTML
+// The owner's desk: the reports they asked for as a folder tree, like Finder: one folder for each
+// kind of report, the same folders as on disk (src/team/desk.ts). Newest first in each, unread
+// ones marked; one tap opens a report as a readable page. The office turns each report's Markdown into safe HTML
 // (src/team/desk.ts escapes everything first), so it's shown as given.
 
 import type { Api } from './api.ts';
@@ -10,7 +11,53 @@ export interface DeskReport {
   from: string;
   at: number;
   read?: number;
+  folder: string; // '' for the top of the desk folder, else 'Security' or 'Security/Atlas'
 }
+
+export interface DeskTree {
+  root: string; // where the folders are, e.g. "iCloud Drive/Office Desk"
+  folders: string[];
+  reports: DeskReport[];
+}
+
+interface Folder {
+  name: string;
+  path: string;
+  folders: Folder[];
+  reports: DeskReport[];
+}
+
+// The flat list from the office as nested folders, alphabetical, reports newest first.
+export function deskTree(t: DeskTree): Folder {
+  const top: Folder = { name: '', path: '', folders: [], reports: [] };
+  const find = (path: string): Folder => {
+    if (!path) return top;
+    let f = top;
+    let at = '';
+    for (const part of path.split('/')) {
+      at = at ? `${at}/${part}` : part;
+      let next = f.folders.find((x) => x.name === part);
+      if (!next) {
+        next = { name: part, path: at, folders: [], reports: [] };
+        f.folders.push(next);
+      }
+      f = next;
+    }
+    return f;
+  };
+  for (const p of t.folders) find(p);
+  for (const r of t.reports) find(r.folder).reports.push(r);
+  const sort = (f: Folder) => {
+    f.folders.sort((a, b) => a.name.localeCompare(b.name));
+    f.reports.sort((a, b) => b.at - a.at);
+    f.folders.forEach(sort);
+  };
+  sort(top);
+  return top;
+}
+
+const count = (f: Folder): { all: number; unread: number } =>
+  f.folders.map(count).reduce((a, b) => ({ all: a.all + b.all, unread: a.unread + b.unread }), { all: f.reports.length, unread: f.reports.filter((r) => !r.read).length });
 
 const when = (t: number) => new Date(t).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -49,12 +96,42 @@ export class Desk {
       this.body.replaceChildren(line(`Couldn't read the desk: ${r.error}`));
       return;
     }
-    if (!r.reports.length) {
+    this.meta.textContent = r.root;
+    this.meta.title = 'These are real folders on your disk';
+    if (!r.reports.length && !r.folders.length) {
       this.body.replaceChildren(line('Nothing on your desk yet. Reports you ask the manager or a room for land here.'));
       return;
     }
-    this.body.replaceChildren(...r.reports.map((rep) => this.row(rep)));
+    const top = deskTree(r);
+    const tree = document.createElement('div');
+    tree.className = 'desk-tree';
+    tree.append(...top.folders.map((f) => this.folder(f)), ...top.reports.map((rep) => this.row(rep)));
+    this.body.replaceChildren(tree);
   }
+
+  // One folder: a row you open and close like Finder's, its subfolders and reports inside.
+  private folder(f: Folder): HTMLElement {
+    const d = document.createElement('details');
+    d.className = 'desk-folder';
+    const { all, unread } = count(f);
+    d.open = unread > 0 || this.opened.has(f.path);
+    d.ontoggle = () => (d.open ? this.opened.add(f.path) : this.opened.delete(f.path));
+    const s = document.createElement('summary');
+    const name = document.createElement('span');
+    name.className = 'desk-folder-name';
+    name.textContent = f.name;
+    const n = document.createElement('span');
+    n.className = 'desk-folder-count';
+    n.textContent = unread ? `${unread} new · ${all}` : String(all);
+    s.append(name, n);
+    const inside = document.createElement('div');
+    inside.className = 'desk-folder-body';
+    inside.append(...f.folders.map((x) => this.folder(x)), ...f.reports.map((rep) => this.row(rep)));
+    if (!all) inside.append(line('Empty'));
+    d.append(s, inside);
+    return d;
+  }
+  private readonly opened = new Set<string>(); // folders the owner opened, kept open when they come back
 
   private row(rep: DeskReport): HTMLElement {
     const b = document.createElement('button');
@@ -63,14 +140,14 @@ export class Desk {
     const h = document.createElement('h3');
     h.textContent = rep.title;
     const m = document.createElement('p');
-    m.textContent = `${rep.read ? '' : 'New · '}from ${rep.from} · ${when(rep.at)}`;
+    m.textContent = `${rep.read ? '' : 'New · '}${rep.from ? `from ${rep.from} · ` : ''}${when(rep.at)}`;
     b.append(h, m);
     b.onclick = () => void this.open(rep.id);
     return b;
   }
 
   // The coffee room's board: each tip with an × for the owner (it goes, and never comes back).
-  showBoard(meta: string, tips: { id: string; kind: string; text: string; from: string; seen: number }[], remove: (id: string) => Promise<string | null>, empty = 'Nothing yet: the first coffee break is still to come.'): void {
+  showBoard(meta: string, tips: { id: string; kind: string; text: string; from: string; seen: number }[], remove: (id: string) => Promise<string | null>, empty = 'Nothing yet: no room has posted a tip.'): void {
     this.el.classList.remove('hidden');
     this.back.hidden = true;
     this.title.textContent = 'Coffee room board';
@@ -140,7 +217,7 @@ export class Desk {
     }
     this.back.hidden = false;
     this.title.textContent = r.title;
-    this.meta.textContent = `from ${r.from} · ${when(r.at)}`;
+    this.meta.textContent = `${r.folder ? `${r.folder} · ` : ''}${r.from ? `from ${r.from} · ` : ''}${when(r.at)}`;
     const page = document.createElement('article');
     page.className = 'report';
     page.innerHTML = r.html; // made by the office from Markdown, everything escaped (src/team/desk.ts)
