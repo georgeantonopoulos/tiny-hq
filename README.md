@@ -28,6 +28,7 @@ It runs on your Mac, on your own Claude Code plan. There is no server of ours, n
 - **Your desk,** where reports you asked for wait as readable pages.
 - **Room goals.** Give a room a goal on the whiteboard and it takes small, private steps toward it on its own, on a branch, stopping before anything that needs you.
 - **A terminal for every room** in the page, so you can step into any session.
+- **Nothing runs the Mac hot unnoticed.** A simulator left booted for 3 hours is shut down (never while you're using it), and any other program using most of a CPU core for an hour is put to you on a button; the office never stops those itself.
 - **Optional extras:** a GitHub keeper that watches your repos for other people's pull requests, issues and comments; a coffee room where rooms post what they ran into, on a board every room reads when it starts (no tokens); little office happenings; a disk tidy that, when your disk runs low, clears idle build folders you can rebuild (`tiny-hq disk-tidy` shows what it would clear); phone access over your own Tailscale network.
 
 ## Safe by default

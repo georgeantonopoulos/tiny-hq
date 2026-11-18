@@ -18,7 +18,7 @@ import { goalsPath, loadGoals, setGoal } from '../team/goals.ts';
 import { isTrusted, trustFolder } from '../terminal/trust.ts';
 import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
-import { tidyScreen } from '../team/screen.ts';
+import { idleMs, tidyScreen } from '../team/screen.ts';
 import { projectsIn, tidyDiskIfLow } from '../team/disk-tidy.ts';
 import { compactPath, contextSize, loadCompacts, saveCompacts, shouldCompact } from '../team/compact.ts';
 import { ackTold, acksPath, addAck, checkAcks } from '../team/acks.ts';
@@ -42,6 +42,7 @@ import { describeScore, jsonl, score } from '../team/scorecard.ts';
 import { copyFlatReports, fileReport, listDesk, shortRoot, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
 import { addEntry, eveningPath, expiredAsks, expiredLine, fileEvening, restJobs } from '../team/evening.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
+import { bootedSims, EVERY_MS as RUNAWAY_EVERY, OWNER_APPS, findHogs, frontApp, OWNER_USING_MS, hogLine, loadState as loadRunaway, processes, saveState as saveRunaway, simsToStop, stopSim, type Sample } from '../team/runaway.ts';
 import { applyPosts, boardPath, minRooms, onBoard, loadCoffee, removeTip, saveCoffee, startupPath, takePosts, withoutRooms } from '../team/coffee.ts';
 import { eveningGithubLine, foldIn, loadGhState, lookAtGithub, lookAtInbox, prReposIn, renderGithub, roomFor, roomGithubLine, saveGhState, writeOttoReport, type Gh, type GhItem, type GhState } from '../team/github.ts';
 
@@ -1763,6 +1764,37 @@ const realOr = (p: string) => {
     return p;
   }
 };
+// Runaway programs (src/team/runaway.ts): simulators left booted are shut down after 3 hours, and
+// any other program burning most of a core for an hour is reported to the manager once.
+let runawayAt = 0;
+const cpuSamples = new Map<number, Sample[]>();
+async function runaways(): Promise<void> {
+  const now = Date.now();
+  if (now - runawayAt < RUNAWAY_EVERY) return;
+  runawayAt = now;
+  const state = loadRunaway(DATA_DIR);
+  const booted = await bootedSims();
+  const using = booted.length > 0 && OWNER_APPS.includes(await frontApp()) && (idleMs() ?? Infinity) < OWNER_USING_MS;
+  for (const id of simsToStop(booted.map((b) => b.udid), state.sims, using, now)) {
+    const name = booted.find((b) => b.udid === id)?.name ?? id;
+    if (await stopSim(id)) {
+      delete state.sims[id];
+      console.log(`runaway: shut down the ${name} simulator, booted over 3 hours`);
+      addEntry(EVENING, { kind: 'note', folder: MANAGER_DIR, text: `The office shut down the ${name} simulator: it had been booted over 3 hours (simulators left running heat the Mac).` });
+    }
+  }
+  const told = new Set(state.told);
+  const procs = await processes();
+  if (!procs.length) return saveRunaway(DATA_DIR, state); // ps failed: keep the samples and who was told
+  for (const h of findHogs(procs, cpuSamples, told, now)) {
+    const ok = await tellManager(`[Office: a program is running the Mac hot] ${hogLine(h)}. Find which room or app it belongs to and put "Stop it?" to the owner on a button; the office doesn't stop it itself.`);
+    if (ok !== 'later') told.add(h.proc.pid); // typed (even unconfirmed): don't type it again every 5 minutes
+  }
+  const alive = new Set(procs.map((p) => p.pid));
+  state.told = [...told].filter((pid) => alive.has(pid)); // forget pids that are gone (kept across office restarts)
+  saveRunaway(DATA_DIR, state);
+}
+
 let coffeeNoteFresh = false;
 function coffeeRoom(): void {
   if (!config.extras.coffee) {
@@ -1854,6 +1886,7 @@ server.listen(port, '127.0.0.1', () => {
         await tellGithub();
         freshGags();
         coffeeRoom();
+        await runaways().catch((e) => console.error('runaway:', e));
         if (!ghBusy && config.extras.github) {
           ghBusy = true;
           void lookGithub()
