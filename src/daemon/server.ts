@@ -58,7 +58,7 @@ export interface DaemonDeps {
   // The office's written happenings (the Haiku writer's pool; see src/office/gags.ts).
   gags?: () => unknown;
   // The owner's desk: reports they asked for (src/team/desk.ts). `open` marks one read.
-  desk?: { list: () => unknown[]; open: (id: string) => unknown | undefined; unread: () => number };
+  desk?: { list: () => unknown; open: (id: string) => unknown | undefined; unread: () => number };
   // The coffee room (src/team/coffee.ts): the last break (who said what) and the board.
   coffee?: { last: () => unknown; board: () => unknown; remove: (id: string) => boolean };
   // The office's microphone: what the owner said (the page's speech recognition), typed into the manager's chat.
@@ -285,7 +285,7 @@ export function createDaemon(deps: DaemonDeps): Server {
       return deps.coffee.remove(coffeeM[1]!) ? send(res, 200, { ok: true }) : send(res, 404, { error: 'that tip is already gone' });
     }
     if (req.method === 'GET' && url.pathname === '/api/desk' && deps.desk) {
-      return send(res, 200, { reports: deps.desk.list() });
+      return send(res, 200, deps.desk.list());
     }
     const deskM = /^\/api\/desk\/([a-z0-9]{8,16})$/.exec(url.pathname);
     if (deskM && req.method === 'GET' && deps.desk) {

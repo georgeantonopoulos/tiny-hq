@@ -360,6 +360,17 @@ body.resizing { user-select: none; }
 .desk-row.unread h3 { font-weight: 800; }
 .desk-row.unread::before { content: ''; position: absolute; left: 0; top: 18px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .desk-row:hover h3 { text-decoration: underline; }
+/* The desk as folders, like Finder: a folder row opens to its reports, indented. */
+.desk-folder { border-bottom: 1px solid var(--line); }
+.desk-folder > summary { display: flex; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; list-style: none; font-weight: 700; font-size: 15px; }
+.desk-folder > summary::-webkit-details-marker { display: none; }
+.desk-folder > summary::before { content: '▸'; width: 12px; color: var(--muted); transition: transform .15s; }
+.desk-folder[open] > summary::before { transform: rotate(90deg); }
+.desk-folder-name::before { content: '📁'; margin-right: 6px; }
+.desk-folder[open] > summary .desk-folder-name::before { content: '📂'; }
+.desk-folder-count { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--muted); }
+.desk-folder-body { padding-left: 20px; }
+.desk-folder-body .desk-row:last-child, .desk-folder-body .desk-folder:last-child { border-bottom: 0; }
 .report { padding: 8px 0 16px; font-size: 15px; line-height: 1.55; overflow-wrap: anywhere; }
 .report h1, .report h2, .report h3, .report h4 { margin: 1.2em 0 0.4em; line-height: 1.25; }
 .report h1 { font-size: 22px; } .report h2 { font-size: 18px; } .report h3 { font-size: 16px; } .report h4 { font-size: 14px; }

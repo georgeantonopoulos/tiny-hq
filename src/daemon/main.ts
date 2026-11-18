@@ -39,7 +39,7 @@ import { logStep, loadSteps, pickRoom, stepLine, stepsPath, type Candidate } fro
 import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.ts';
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
-import { fileReport, listReports, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
+import { copyFlatReports, fileReport, listDesk, shortRoot, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
 import { addEntry, eveningPath, expiredAsks, expiredLine, fileEvening, restJobs } from '../team/evening.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
 import { applyBreak, applyTidy, boardPath, minRooms, onBoard, breakDue, brewChat, coffeePrompt, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, removeTip, saveCoffee, tidyDue, tidyPrompt } from '../team/coffee.ts';
@@ -662,7 +662,16 @@ const server = createDaemon({
   said,
   waiting,
   // The timetable on the manager's wall: every task, when it runs next, and on/off.
-  desk: { list: () => listReports(DATA_DIR), open: (id) => openReport(DATA_DIR, id), unread: () => unreadCount(DATA_DIR) },
+  desk: {
+    // The folder tree as it is on disk; any report still only in the office is copied over first.
+    list: () => {
+      copyFlatReports(DATA_DIR);
+      const d = listDesk(DATA_DIR);
+      return { ...d, root: shortRoot(d.root, homedir()) };
+    },
+    open: (id) => openReport(DATA_DIR, id),
+    unread: () => unreadCount(DATA_DIR),
+  },
   coffee: {
     last: () => loadCoffee(DATA_DIR).last,
     board: () => {

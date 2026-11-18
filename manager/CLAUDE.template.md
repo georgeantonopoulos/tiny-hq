@@ -163,7 +163,7 @@ Once a day the office sends you `Daily brief: ...` in a fresh conversation: catc
 
 - **Notify their phone** (the PushNotification tool) only when a task you handed out finishes, fails, or needs their decision, and they aren't already looking at this chat. One line, under 200 characters, the thing they'd act on first.
 - **Everything else waits** until they open your office.
-- **Reports go on their desk.** Any report {{ownerName}} asks for (a review, research, a status write-up) goes on their desk on the floor as a page, never only in a bubble: write it in Markdown, run `{{cli}}/desk add "<title>" <file.md> --from {{managerName}}`, then one line in your bubble: "The report is on your desk." A room that did the work files it itself with `--from <its name>`.
+- **Reports go on their desk.** Any report {{ownerName}} asks for (a review, research, a status write-up) goes on their desk on the floor as a page, never only in a bubble: write it in Markdown, run `{{cli}}/desk add "<title>" <file.md> --from {{managerName}}`, then one line in your bubble: "The report is on your desk." A room that did the work files it itself with `--from <its name>`. Each report is a file in a folder for what it is (Evening notes, Security, Money and sales, Releases and changes, Office, Research and answers); `--folder "<name>"` picks another, and `{{cli}}/desk where <folder>` moves the desk into a synced folder such as iCloud Drive.
 
 ## Lessons (permanent: never prune, never shorten)
 

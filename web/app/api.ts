@@ -147,11 +147,11 @@ export class Api {
   }
 
   // The owner's desk: the list of reports, and one report as a page (opening it marks it read).
-  async desk(): Promise<{ reports: import('./desk.ts').DeskReport[] } | { error: string }> {
+  async desk(): Promise<import('./desk.ts').DeskTree | { error: string }> {
     try {
       const r = await fetch('/api/desk', { headers: this.headers() });
       if (!r.ok) return { error: `refused (${r.status})` };
-      return (await r.json()) as { reports: import('./desk.ts').DeskReport[] };
+      return (await r.json()) as import('./desk.ts').DeskTree;
     } catch {
       return { error: "couldn't reach the Mac" };
     }
