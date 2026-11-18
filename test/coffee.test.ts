@@ -1,107 +1,154 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyBreak, applyTidy, breakDue, FADE_MS, minRooms, prune, removeTip, tidyDue, type Tip, chatsDir, coffeePrompt, grounded, loadCoffee, nextGap, parseCoffee, pickRooms, recentNotes, renderBoard, saveCoffee } from '../src/team/coffee.ts';
+import { applyPosts, FADE_MS, loadCoffee, minRooms, prune, queuePost, removeTip, renderBoard, saveCoffee, POSTS_PER_DAY, startupNote, STARTUP_MAX, takePosts, type Post, type Tip, withoutRooms } from '../src/team/coffee.ts';
 
-// The coffee room is where rooms meet and share what they learned; how often and who follows
-// usage, with some chance. One cheap Sonnet writer, from each room's recent chats.
-test('how often: by allowance, with chance in it, waking hours only', () => {
-  assert.equal(nextGap(92, 10), undefined, 'week nearly used: no breaks');
-  assert.equal(nextGap(30, 85), undefined, '5-hour window nearly used: no breaks');
-  assert.equal(nextGap(undefined, undefined), undefined, "allowance not read: wait");
-  const spare = nextGap(20, 10, () => 0.5)!;
-  const tight = nextGap(80, 10, () => 0.5)!;
-  assert.ok(spare < tight, 'more often when there is plenty to spare');
-  assert.notEqual(nextGap(20, 10, () => 0), nextGap(20, 10, () => 1), 'chance moves it');
-  const at = (h: number) => new Date(2026, 10, 11, h, 0);
-  assert.equal(breakDue({ tips: [], removed: [] }, at(7)), false);
-  assert.equal(breakDue({ tips: [], removed: [] }, at(11)), true);
-  assert.equal(breakDue({ tips: [], removed: [], next: at(12).getTime() }, at(11)), false);
-});
-
-test('who: 2 or 3 rooms, busier ones likelier, everyone has a chance', () => {
-  const rooms = [{ name: 'Lumen', activity: 1 }, { name: 'Juniper', activity: 0 }, { name: 'Lamp', activity: 0.4 }, { name: 'Obsidian', activity: 0.7 }];
-  let seq = 0;
-  const r = () => [0.1, 0.0, 0.99, 0.5][seq++ % 4]!;
-  const two = pickRooms(rooms, r);
-  assert.equal(two.length, 2);
-  assert.equal(new Set(two.map((x) => x.name)).size, 2, 'never the same room twice');
-  const counts: Record<string, number> = {};
-  let s = 1;
-  const lcg = () => ((s = (s * 48271) % 2147483647) / 2147483647);
-  for (let i = 0; i < 2000; i++) for (const x of pickRooms(rooms, lcg)) counts[x.name] = (counts[x.name] ?? 0) + 1;
-  assert.ok(counts.Lumen! > counts.Juniper!, 'busier rooms go more often');
-  assert.ok(counts.Juniper! > 0, 'a quiet room still gets a coffee');
-});
-
-test("the writer reads each room's newest chats and the board lists what it shared", () => {
-  const home = mkdtempSync(join(tmpdir(), 'home-'));
-  const chats = chatsDir('/Users/g/Dev/Watch Face', home);
-  assert.equal(chats, join(home, '.claude', 'projects', '-Users-g-Dev-Watch-Face'));
-  mkdirSync(chats, { recursive: true });
-  const said = (text: string) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
-  writeFileSync(join(chats, 'a.jsonl'), [JSON.stringify({ type: 'user', message: { content: 'go' } }), said('Owner wants every release note in plain words.'), said('(quiet)')].join('\n') + '\n');
-  assert.match(recentNotes('/Users/g/Dev/Watch Face', 6, 1200, home)[0]!, /plain words/);
-  assert.deepEqual(recentNotes('/Users/g/Dev/Nothing', 6, 1200, home), []);
-  assert.match(coffeePrompt([{ name: 'Watch Face', notes: ['x'] }], []), /JSON only/);
-
-  const out = JSON.stringify({ result: JSON.stringify({ chat: [{ room: 'Watch Face', line: 'Plain words win.' }, { room: 'Nobody', line: 'x' }], tips: [{ room: 'Watch Face', kind: 'owner', text: 'The owner wants release notes in plain words.' }, { room: 'Watch Face', kind: 'tip', text: 'Use token abc' }, { room: 'Watch Face', kind: 'nonsense', text: 'x' }] }) });
-  // A tip must quote the words it rests on, found in that room's notes.
-  const notes = ['The owner wants every release note in plain words, they said last week.'];
-  const quoted = JSON.stringify({ chat: [{ room: 'Watch Face', line: 'Hi.' }], tips: [
-    { room: 'Watch Face', kind: 'owner', text: 'Release notes in plain words.', evidence: 'The owner wants every release note in plain words' },
-    { room: 'Watch Face', kind: 'owner', text: 'The owner always squashes merges.', evidence: 'The owner always squashes every merge' },
-    { room: 'Watch Face', kind: 'tip', text: 'No quote.' },
-  ] });
-  assert.deepEqual(parseCoffee(quoted, ['Watch Face'], () => notes)!.tips.map((t) => t.text), ['Release notes in plain words.'], 'unsupported or unquoted tips are dropped');
-  assert.equal(grounded('plain words', notes), false, 'a quote of a few words proves nothing');
-  const r = parseCoffee(out, ['Watch Face'])!;
-  assert.deepEqual(r.chat.map((c) => c.room), ['Watch Face'], 'only rooms that were there');
-  assert.deepEqual(r.tips.map((t) => t.text), ['The owner wants release notes in plain words.'], 'no secrets, no unknown kinds');
-  assert.equal(parseCoffee('not json', ['Watch Face']), undefined);
-
-  const one = applyBreak({ tips: [], removed: [] }, { chat: [], tips: [{ room: 'Watch Face', kind: 'owner', text: r.tips[0]!.text }], same: [] }, 1);
-  const tips = one.tips;
-  assert.match(renderBoard(tips), /## How the owner likes to work\n\n- The owner wants release notes in plain words\. \(Watch Face/);
-
-  const data = mkdtempSync(join(tmpdir(), 'cm-'));
-  saveCoffee(data, { tips, next: 5, removed: [] });
-  assert.equal(loadCoffee(data).next, 5);
-  assert.match(readFileSync(join(data, 'coffee', 'board.md'), 'utf8'), /plain words/);
-});
-
-test('every room is told to read the board', () => {
-  assert.match(readFileSync(new URL('../skills/theoffice/SKILL.md', import.meta.url), 'utf8'), /coffee\/board\.md/);
-});
-
-// The board's upkeep: confirm instead of copy, weekly tidy, 30-day fade, their ×.
 const tip = (id: string, kind: Tip['kind'], text: string, extra: Partial<Tip> = {}): Tip => ({ id, kind, text, from: 'Lamp', at: 1, seen: 1, last: 1, ...extra });
+const ROOMS: Record<string, { id: string; name: string }> = { '/d/lamp': { id: 'lead:l', name: 'Lamp' }, '/d/lumen': { id: 'lead:m', name: 'Lumen' } };
+const room = (f: string) => ROOMS[f];
+const add = (folder: string, kind: Tip['kind'], text: string, at = 1): Post => ({ folder, at, kind, text });
+const BIG = { tips: [] as Tip[], removed: [] as string[], rooms: 4 }; // an office of 3+ rooms: tips need a second room
 
-test('a repeat confirms the tip instead of copying it; a removed tip never comes back', () => {
-  const s0 = { tips: [tip('a1', 'mac', 'The Claude app shell has no local network access.')], removed: ['Old wrong tip.'] };
-  const s1 = applyBreak(s0, { chat: [], tips: [{ room: 'Lumen', kind: 'mac', text: 'the claude app shell has NO local network access' }, { room: 'Lumen', kind: 'bug', text: 'Old wrong tip' }], same: [{ room: 'Juniper', id: 'a1' }] }, 100);
-  assert.equal(s1.tips.length, 1, 'no copy, and the removed tip stays out');
-  assert.equal(s1.tips[0]!.seen, 3, 'confirmed by Juniper (same id) and Lumen (same words)');
-  assert.equal(s1.tips[0]!.last, 100);
-  assert.equal(s1.tips[0]!.from, 'Lamp, Juniper, Lumen');
-  const prompt = coffeePrompt([{ name: 'Lumen', notes: ['x'] }], s0.tips, s0.removed);
-  assert.match(prompt, /a1: The Claude app shell/);
-  assert.match(prompt, /The owner removed these: \["Old wrong tip\."\]/);
-  const same = JSON.stringify({ chat: [{ room: 'Lumen', line: 'Hi.' }], tips: [{ room: 'Lumen', same: 'a1', evidence: 'the shell has no local network access at all' }, { room: 'Lumen', same: 'zz', evidence: 'the shell has no local network access at all' }] });
-  assert.deepEqual(parseCoffee(same, ['Lumen'], () => ['so the shell has no local network access at all here'], ['a1'])!.same, [{ room: 'Lumen', id: 'a1' }], 'only real board ids, with a quote');
-  const gone = removeTip(s1, 'a1')!;
-  assert.equal(gone.tips.length, 0);
-  assert.deepEqual(gone.removed.slice(-1), ['The Claude app shell has no local network access.']);
-  assert.equal(removeTip(gone, 'a1'), undefined);
+// No model, no tokens: rooms post tips themselves, the office files them with plain code.
+test('a post goes on as a waiting tip; a second room confirming it puts it on the board', () => {
+  const r1 = applyPosts(BIG, [add('/d/lamp', 'mac', 'The Claude app shell has no local network access.')], room, 10);
+  assert.equal(r1.state.tips.length, 1);
+  assert.deepEqual(r1.said, [{ id: 'lead:l', name: 'Lamp', line: 'The Claude app shell has no local network access.' }]);
+  assert.equal(r1.state.last!.at, 10, 'the poster walks to the coffee room on the floor');
+  assert.doesNotMatch(renderBoard(r1.state.tips, 2), /local network/, 'one room only: it waits off the board');
+  assert.match(renderBoard(r1.state.tips, 2), /no tip has come up in two rooms/);
+
+  const id = r1.state.tips[0]!.id;
+  const r2 = applyPosts(r1.state, [{ folder: '/d/lumen', at: 20, same: id }], room, 20);
+  assert.equal(r2.state.tips[0]!.from, 'Lamp, Lumen');
+  assert.equal(r2.state.tips[0]!.seen, 2);
+  assert.match(renderBoard(r2.state.tips, 2), /## The Mac and its tools\n\n- The Claude app shell has no local network access\. \(Lamp, Lumen; confirmed 2 times/);
+  assert.match(r2.said[0]!.line, /^Same here: /);
 });
 
-test('the board stays short: 30-day fade (not tips about the owner), 10 per section, 40 in all', () => {
+test('in an office of one or two rooms every tip shows at once', () => {
+  assert.equal(minRooms(2), 1);
+  assert.equal(minRooms(3), 2);
+  const r = applyPosts({ tips: [], removed: [], rooms: 2 }, [add('/d/lamp', 'owner', 'The owner wants screenshots before any merge.')], room, 10);
+  assert.match(renderBoard(r.state.tips, minRooms(2)), /screenshots before any merge/);
+  assert.match(startupNote(r.state.tips, minRooms(2)), /On the board:\n- \[\w+\] The owner wants screenshots/);
+});
+
+test('the same words from another room confirm instead of copying; a room never confirms its own tip', () => {
+  const s0 = { tips: [tip('a1', 'mac', 'The Claude app shell has no local network access.')], removed: ['Old wrong tip.'] };
+  const r = applyPosts(s0, [
+    add('/d/lamp', 'mac', 'the claude app shell has NO local network access'),
+    { folder: '/d/lamp', at: 1, same: 'a1' },
+    add('/d/lumen', 'bug', 'Old wrong tip'),
+    add('/d/lumen', 'tip', 'Use token abc to sign in'),
+    add('/d/lumen', 'tip', 'See https://example.com for the fix'),
+    add('/d/nowhere', 'tip', 'A folder that is no room on the floor'),
+    { folder: '/d/lumen', at: 1, kind: 'nonsense' as Tip['kind'], text: 'Unknown kind of tip here' },
+  ], room, 100);
+  assert.equal(r.state.tips.length, 1, 'no copy, no removed tip, no secrets, no strangers, no unknown kinds');
+  assert.equal(r.state.tips[0]!.seen, 1, "Lamp's own repeats don't count");
+  assert.deepEqual(r.said, []);
+  assert.equal(r.state.last, undefined, 'nobody said anything: nobody walks to coffee');
+  const r2 = applyPosts(s0, [add('/d/lumen', 'mac', 'The Claude app shell has no local network access!')], room, 100);
+  assert.equal(r2.state.tips[0]!.from, 'Lamp, Lumen');
+});
+
+test("posts queue in a file the office empties; a post written while it's taking is kept", () => {
+  const data = mkdtempSync(join(tmpdir(), 'th-'));
+  assert.deepEqual(takePosts(data), []);
+  queuePost(data, add('/d/lamp', 'tip', 'One.'));
+  queuePost(data, { folder: '/d/lumen', at: 2, same: 'x' });
+  assert.equal(takePosts(data).length, 2);
+  assert.deepEqual(takePosts(data), [], 'taken once');
+  queuePost(data, add('/d/lamp', 'tip', 'Two.'));
+  assert.equal(takePosts(data).length, 1);
+});
+
+test('every room session starts with the board and the waiting tips, short, with ids and how to post', () => {
+  const tips = [tip('on1', 'tip', 'Merge only on their button.', { from: 'Lamp, Lumen', at: 5 }), tip('w1', 'mac', 'Peekaboo needs Screen Recording.', { at: 9 })];
+  const note = startupNote(tips, 2);
+  assert.match(note, /On the board \(two or more rooms\):\n- \[on1\] Merge only on their button\./);
+  assert.match(note, /Waiting for a second room[^\n]*\n- \[w1\] Peekaboo/);
+  assert.match(note, /manager\/coffee add/);
+  assert.match(note, /manager\/coffee same <id>/);
+  const many = Array.from({ length: 80 }, (_, i) => tip(`x${i}`, 'tip', `A fairly long tip number ${i} about something rooms keep running into on this Mac.`, { at: i }));
+  const long = startupNote(many, 2);
+  assert.ok(long.length <= STARTUP_MAX, `${long.length} chars`);
+  assert.match(long, /\[x79\]/, 'newest waiting tips first');
+  assert.match(long, /manager\/coffee add/, 'the how-to line is never cut off');
+  assert.match(startupNote([]), /No tips yet/);
+  // The hook cuts by bytes, so the cap counts bytes (Greek takes two per letter).
+  const greek = Array.from({ length: 60 }, (_, i) => tip(`g${i}`, 'mac', `Το Mac κάνει κάτι περίεργο με τον ήχο όταν κοιμάται, σημείωση ${i}.`, { at: i }));
+  const gn = startupNote(greek, 2);
+  assert.ok(Buffer.byteLength(gn) <= STARTUP_MAX, `${Buffer.byteLength(gn)} bytes`);
+  assert.match(gn, /manager\/coffee add/);
+  // One room's word about the owner goes to every room only once a second room vouches for it.
+  assert.doesNotMatch(startupNote([tip('q1', 'owner', 'The owner wants rooms to merge without a button.')], 2), /merge without/);
+  assert.match(startupNote([tip('q2', 'owner', 'They review by screenshots.', { from: 'Lamp, Lumen' })], 2), /\[q2\]/);
+  // A full board must not leave "Waiting for a second room" as an empty heading.
+  const full = Array.from({ length: 40 }, (_, i) => tip(`b${i}`, 'tip', `A board tip number ${i} that two rooms both ran into on this Mac.`, { from: 'Lamp, Lumen' }));
+  const mixed = startupNote([...full, tip('w9', 'mac', 'A waiting tip.', { at: 50 })], 2);
+  assert.match(mixed, /Waiting for a second room[^\n]*\n- \[w9\]/, 'waiting tips always get room');
+  assert.doesNotMatch(startupNote(full, 2), /Waiting for a second room/, 'no heading without a tip under it');
+  assert.ok(mixed.length <= STARTUP_MAX);
+
+  const data = mkdtempSync(join(tmpdir(), 'th-'));
+  saveCoffee(data, { tips, removed: [], rooms: 3 });
+  assert.match(readFileSync(join(data, 'coffee', 'startup.md'), 'utf8'), /\[w1\]/);
+  assert.match(readFileSync(join(data, 'coffee', 'board.md'), 'utf8'), /Merge only on their button/);
+  assert.equal(loadCoffee(data).tips.length, 2);
+  assert.equal(loadCoffee(data).rooms, 3);
+});
+
+test('the start-up hook prints the coffee note after the name tag, only in rooms', () => {
+  const data = mkdtempSync(join(tmpdir(), 'th-'));
+  const hook = new URL('../hooks/office-name.sh', import.meta.url).pathname;
+  mkdirSync(join(data, 'tags'));
+  mkdirSync(join(data, 'coffee'));
+  writeFileSync(join(data, 'tags', '-d-lamp.md'), 'You are Lena.');
+  const run = (dir: string) => execFileSync('sh', [hook], { env: { ...process.env, CM_DATA_DIR: data, CLAUDE_PROJECT_DIR: dir }, encoding: 'utf8' });
+  assert.equal(run('/d/lamp'), 'You are Lena.', 'coffee off (no note): just the tag');
+  writeFileSync(join(data, 'coffee', 'startup.md'), '# Coffee room\n- [w1] tip');
+  assert.match(run('/d/lamp'), /You are Lena\.\n\n# Coffee room\n- \[w1\] tip/);
+  assert.equal(run('/d/elsewhere'), '', 'not a room: nothing');
+});
+
+test('every room is told about the board and manager/coffee', () => {
+  const skill = readFileSync(new URL('../skills/theoffice/SKILL.md', import.meta.url), 'utf8');
+  assert.match(skill, /coffee\/board\.md/);
+  assert.match(skill, /manager\/coffee add/);
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { files: string[] };
+  assert.ok(pkg.files.includes('manager/coffee'), 'the command ships in the package');
+});
+
+test('no credentials, and at most three new tips per room a day', () => {
+  for (const bad of ['Set GH_PAT=ghp_abcdefghijklmnop to push', 'Use ghp_abcdefghijklmnopqrstu', 'The key AKIAABCDEFGHIJKLMNOP works', 'Bearer header fixes it', 'Paste sk-abc into the box', 'Store the secret in keychain', 'Value aGVsbG8gd29ybGQgdGhpcyBpcyBsb25n is right'])
+    assert.equal(applyPosts(BIG, [add('/d/lamp', 'tip', bad)], room, 1).state.tips.length, 0, bad);
+  assert.equal(applyPosts(BIG, [add('/d/lamp', 'mac', 'Peekaboo needs Screen Recording in System Settings.')], room, 1).state.tips.length, 1);
+  const five = Array.from({ length: 5 }, (_, i) => add('/d/lamp', 'tip', `Lamp found useful thing number ${i}.`));
+  const r = applyPosts(BIG, [...five, add('/d/lumen', 'tip', 'Lumen found a useful thing too.')], room, 1);
+  assert.equal(r.state.tips.filter((t) => t.from === 'Lamp').length, POSTS_PER_DAY);
+  assert.equal(r.state.tips.filter((t) => t.from === 'Lumen').length, 1);
+  assert.equal(applyPosts(r.state, [add('/d/lamp', 'tip', 'A day later, another one.', 2 * 86_400_000)], room, 2 * 86_400_000).state.tips.length, 5, 'a new day, a new allowance');
+});
+
+test('the owner removes a tip with its x, and it never comes back', () => {
+  const s = { tips: [tip('a1', 'mac', 'The Claude app shell has no local network access.')], removed: [] };
+  const gone = removeTip(s, 'a1')!;
+  assert.equal(gone.tips.length, 0);
+  assert.deepEqual(gone.removed, ['The Claude app shell has no local network access.']);
+  assert.equal(removeTip(gone, 'a1'), undefined);
+  assert.equal(applyPosts(gone, [add('/d/lumen', 'mac', 'The Claude app shell has no local network access')], room, 5).state.tips.length, 0);
+});
+
+test('the board stays short: 30-day fade (not tips about the owner on the board), 10 per section, 40 in all', () => {
   const now = 100 * FADE_MS;
   const old = now - FADE_MS - 1;
-  const kept = prune([tip('g', 'owner', 'They review by screenshots.', { last: old }), tip('t', 'tip', 'Old tip.', { last: old }), tip('n', 'tip', 'New tip.', { last: now })], now);
-  assert.deepEqual(kept.map((t) => t.id), ['g', 'n'], 'an unconfirmed tip fades; one about the owner stays');
+  const kept = prune([tip('g', 'owner', 'They review by screenshots.', { from: 'Lamp, Lumen', last: old }), tip('g1', 'owner', 'They like blue.', { last: old }), tip('t', 'tip', 'Old tip.', { last: old }), tip('n', 'tip', 'New tip.', { last: now })], now, 2);
+  assert.deepEqual(kept.map((t) => t.id), ['g', 'n'], 'an unconfirmed tip fades; one about the owner stays once it is on the board');
   const many = Array.from({ length: 15 }, (_, i) => tip(`b${i}`, 'bug', `Bug ${i}.`, { seen: i, last: now }));
   const bugs = prune(many, now);
   assert.equal(bugs.length, 10);
@@ -110,46 +157,22 @@ test('the board stays short: 30-day fade (not tips about the owner), 10 per sect
   assert.equal(prune(all, now).length, 40);
 });
 
-test('the weekly tidy merges rewordings and drops stale tips, but never throws most of the board away', () => {
-  const s = { tips: [tip('a', 'mac', 'No LAN from the Claude app shell.', { seen: 2 }), tip('b', 'mac', 'The Claude app shell cannot reach the local network.', { from: 'Lumen', seen: 1, last: 9 }), tip('c', 'bug', 'The office loses the manager buttons on chat.'), tip('d', 'tip', 'Use launchd for LAN sends.')], removed: [] };
-  assert.equal(tidyDue(s, 10), false, 'too few tips to bother');
-  const out = JSON.stringify({ result: JSON.stringify({ tips: [{ ids: ['a', 'b'], kind: 'mac', text: 'The Claude app shell has no local network access.' }], dropped: [{ id: 'c', why: 'fixed on 11 Nov' }] }) });
-  const r = applyTidy(s, out, 50)!;
-  const merged = r.state.tips.find((t) => t.id === 'a')!;
-  assert.equal(merged.seen, 3);
-  assert.equal(merged.from, 'Lamp, Lumen');
-  assert.equal(merged.last, 9);
-  assert.ok(!r.state.tips.some((t) => t.id === 'b' || t.id === 'c'), 'merged and dropped tips are gone');
-  assert.ok(r.state.tips.some((t) => t.id === 'd'), 'a tip the tidy forgot is kept, never silently lost');
-  assert.equal(r.state.tidiedAt, 50);
-  const big = { tips: Array.from({ length: 12 }, (_, i) => tip(`x${i}`, 'tip', `Tip ${i}.`)), removed: [] };
-  assert.equal(applyTidy(big, JSON.stringify({ tips: [{ ids: ['x0'], kind: 'tip', text: 'Tip 0.' }], dropped: big.tips.slice(1).map((t) => ({ id: t.id, why: 'x' })) }), 50), undefined, 'a tidy keeping under a third is not trusted');
-  assert.equal(applyTidy(s, 'nonsense', 50), undefined);
-});
-
-// With 3+ rooms, the board keeps to tips that help several rooms; with fewer, every tip shows.
-test('in an office of 3+ rooms only tips two rooms brought up are on the board; with fewer rooms every tip shows', () => {
+test('in a big office only tips two rooms brought up are on the board; the rest wait and rank last', () => {
   const now = 10;
-  const tips = [tip('one', 'tip', 'Run the tests headless.', { seen: 7, last: now }), tip('two', 'tip', 'Merge only on the owner\'s button.', { from: 'Atlas, Garden', seen: 2, last: now })];
-  assert.equal(minRooms(2), 1);
-  assert.equal(minRooms(undefined), 1);
-  assert.equal(minRooms(3), 2);
-  const small = renderBoard(tips, minRooms(2));
-  assert.match(small, /Run the tests headless/, 'two rooms: a one-room tip still shows');
-  assert.doesNotMatch(small, /at least two rooms/);
-  const big = renderBoard(tips, minRooms(3));
-  assert.match(big, /Merge only on the owner's button/);
-  assert.doesNotMatch(big, /Run the tests headless/, 'confirmed 7 times, but by one room: not shown');
-  assert.match(renderBoard([tips[0]!], 2), /no tip has come up in two rooms/);
+  const tips = [tip('one', 'tip', 'The render tool runs headless with -t.', { seen: 7, last: now }), tip('two', 'tip', 'Merge only on their button.', { from: 'Lamp, Lumen', seen: 2, last: now })];
+  const md = renderBoard(tips, 2);
+  assert.match(md, /Merge only on their button/);
+  assert.doesNotMatch(md, /runs headless/, 'confirmed 7 times, but by one room: not shown');
   const crowd = Array.from({ length: 12 }, (_, i) => tip(`s${i}`, 'tip', `Solo ${i}.`, { seen: 9, last: now }));
   assert.ok(prune([...crowd, tips[1]!], now, 2).some((t) => t.id === 'two'), 'a tip from two rooms beats any number of one-room confirmations');
-  const old = now + FADE_MS + 1;
-  assert.deepEqual(prune([tip('o', 'owner', 'They like short replies.', { last: now })], old, 2), [], 'an owner tip off the board fades');
-  assert.equal(prune([tip('o', 'owner', 'They like short replies.', { last: now })], old, 1).length, 1, 'with the rule off it stays as before');
-  assert.match(coffeePrompt([{ name: 'Atlas', notes: ['x'] }], tips, [], 2), /shown only once a second room brings it up/);
-  assert.doesNotMatch(coffeePrompt([{ name: 'Atlas', notes: ['x'] }], tips, [], 1), /second room/);
-  const data = mkdtempSync(join(tmpdir(), 'cm-'));
-  saveCoffee(data, { tips, removed: [], rooms: 4 });
-  assert.equal(loadCoffee(data).rooms, 4);
-  assert.doesNotMatch(readFileSync(join(data, 'coffee', 'board.md'), 'utf8'), /headless/);
+});
+
+test('withoutRooms: a private room leaves every tip and the last post; tips only it brought go', () => {
+  const t = (id: string, from: string): Tip => ({ id, kind: 'mac', text: `tip ${id}`, from, at: 1, seen: 1, last: 1 });
+  const s = { tips: [t('a', 'Ledger'), t('b', 'Lumen, Clinic'), t('c', 'Lumen')], removed: [], last: { at: 1, who: [{ id: 'lead:x', name: 'Ledger', line: 'private' }, { id: 'lead:m', name: 'Lumen', line: 'hi' }] } };
+  const out = withoutRooms(s, ['Ledger', 'Clinic']);
+  assert.deepEqual(out.tips.map((x) => [x.id, x.from]), [['b', 'Lumen'], ['c', 'Lumen']]);
+  assert.deepEqual(out.last!.who.map((w) => w.name), ['Lumen']);
+  assert.equal(withoutRooms(out, ['Ledger', 'Clinic']), out, 'nothing to take off: the same state, so nothing is saved');
+  assert.equal(withoutRooms(s, []), s);
 });

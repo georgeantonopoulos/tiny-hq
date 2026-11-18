@@ -21,6 +21,7 @@
     "web",
     "hooks",
     "manager/ask",
+    "manager/coffee",
     "manager/delegate",
     "manager/desk",
     "manager/evening",

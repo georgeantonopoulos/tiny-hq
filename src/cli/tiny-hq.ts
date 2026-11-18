@@ -126,7 +126,7 @@ async function typedSetup(args: string[], defaults: boolean): Promise<number> {
   console.log('4. Extras (each can be switched on or off later):');
   const ghOk = has('gh');
   const github = await yes(`   GitHub keeper: watches your repos for other people's pull requests, issues and comments (uses your gh sign-in${ghOk ? '' : '; gh is not installed yet'})`, before.extras.github);
-  const coffee = await yes('   Coffee room: a few times a day, 2-3 rooms share what they learned (one small Sonnet call each)', before.extras.coffee);
+  const coffee = await yes('   Coffee room: rooms post what they ran into to a board every room reads (no tokens)', before.extras.coffee);
   const happenings = await yes('   Office happenings: little gags around the office, written by Haiku about once a day', before.extras.happenings);
   const diskTidy = await yes('   Disk tidy: when the disk is under 30 GB free, delete idle rebuildable build folders (Rust target, .next, DerivedData, CMake build) until 80 GB is free', before.extras.diskTidy);
   const phone = await yes('   Phone access over Tailscale (you set it up yourself; I print the steps)', before.phone);

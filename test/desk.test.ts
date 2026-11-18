@@ -103,7 +103,7 @@ test('the page draws the desk as a folder tree, under the synced drive\'s own na
   const page = readFileSync(new URL('../web/app/desk.ts', import.meta.url), 'utf8');
   assert.match(page, /export function deskTree/);
   assert.match(page, /'details'/);
-  assert.equal(shortRoot('/Users/a/Library/Mobile Documents/com~apple~CloudDocs/Office Desk', '/Users/a'), 'iCloud Drive/Office Desk');
-  assert.equal(shortRoot('/Users/a/Library/CloudStorage/GoogleDrive-x@y.z/My Drive/Desk', '/Users/a'), 'Google Drive/My Drive/Desk');
-  assert.equal(shortRoot('/Users/a/.tiny-hq/desk/folders', '/Users/a'), '~/.tiny-hq/desk/folders');
+  assert.equal(shortRoot('/Users/sam/Library/Mobile Documents/com~apple~CloudDocs/Office Desk', '/Users/sam'), 'iCloud Drive/Office Desk');
+  assert.equal(shortRoot('/Users/sam/Library/CloudStorage/GoogleDrive-x@y.z/My Drive/Desk', '/Users/sam'), 'Google Drive/My Drive/Desk');
+  assert.equal(shortRoot('/Users/sam/.tiny-hq/desk/folders', '/Users/sam'), '~/.tiny-hq/desk/folders');
 });

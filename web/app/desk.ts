@@ -147,7 +147,7 @@ export class Desk {
   }
 
   // The coffee room's board: each tip with an × for the owner (it goes, and never comes back).
-  showBoard(meta: string, tips: { id: string; kind: string; text: string; from: string; seen: number }[], remove: (id: string) => Promise<string | null>, empty = 'Nothing yet: the first coffee break is still to come.'): void {
+  showBoard(meta: string, tips: { id: string; kind: string; text: string; from: string; seen: number }[], remove: (id: string) => Promise<string | null>, empty = 'Nothing yet: no room has posted a tip.'): void {
     this.el.classList.remove('hidden');
     this.back.hidden = true;
     this.title.textContent = 'Coffee room board';

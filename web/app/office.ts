@@ -797,8 +797,8 @@ export class Office {
     });
   }
 
-  // A coffee break (src/team/coffee.ts): the rooms picked walk to the coffee room one after
-  // another, each saying their line there, stay a while, then walk back.
+  // A coffee post (src/team/coffee.ts): the rooms that posted walk to the coffee room one after
+  // another, each saying their tip there, stay a while, then walk back.
   coffeeBreak(who: { id: string; line: string }[], at: string): void {
     const lounge = this.floor?.rooms.find((r) => r.kind === 'lounge');
     if (!lounge || !this.hallway) return;

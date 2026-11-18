@@ -187,7 +187,7 @@ async function start(): Promise<void> {
       card.classList.add('hidden');
       void api.coffee().then((b) => {
         if ('error' in b) return desk.showPage('Coffee room board', b.error, '');
-        const when = b.lastAt ? `last break ${ago(b.lastAt)}` : 'no break yet';
+        const when = b.lastAt ? `last post ${ago(b.lastAt)}` : 'no post yet';
         desk.showBoard(`${b.tips} tips${b.twoRooms ? ' from two or more rooms' : ''}${b.waiting ? ` (${b.waiting} more wait for a second room)` : ''} · ${when} · × removes one for good`, b.list ?? [], (id) => api.coffeeRemove(id), b.waiting ? 'Nothing yet: no tip has come up in two rooms.' : undefined);
       });
     },
@@ -271,7 +271,7 @@ async function start(): Promise<void> {
     office.showSessions(sessions);
     office.showModels(r.models); // a /model typed in a room's chat shows on its badge and card
     office.showDesk(r.deskUnread);
-    // A coffee break that started in the last 10 minutes and hasn't been shown yet: they walk over.
+    // A coffee post in the last 10 minutes that hasn't been shown yet: the room that posted walks over.
     if (r.coffee && r.coffee.at !== coffeeSeen) {
       if (Date.now() - r.coffee.at < 10 * 60_000) office.coffeeBreak(r.coffee.who, new Date(r.coffee.at).toISOString());
       coffeeSeen = r.coffee.at;
