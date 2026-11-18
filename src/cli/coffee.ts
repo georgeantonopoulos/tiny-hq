@@ -5,13 +5,13 @@
 //   manager/coffee list                                    the board and the tips waiting for a second room
 // Posts only queue; the office files them on its next tick (src/team/coffee.ts applyPosts).
 
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { loadConfig } from '../config.ts';
 import { CONFIG_PATH, DATA_DIR } from '../paths.ts';
 import { floorPath, loadSeats } from '../office/seats.ts';
 import { roomOfFolder } from '../office/room-of-folder.ts';
 import { outOfCoffee } from '../office/on-call.ts';
-import { clean, KINDS, loadCoffee, minRooms, queuePost, secret, startupNote, startupPath, type TipKind } from '../team/coffee.ts';
+import { clean, KINDS, loadCoffee, minRooms, onBoard, queuePost, secret, type TipKind } from '../team/coffee.ts';
 
 const real = (p: string) => {
   try {
@@ -40,11 +40,15 @@ function myRoom(): string {
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === 'list') {
-  try {
-    process.stdout.write(readFileSync(startupPath(DATA_DIR), 'utf8'));
-  } catch {
-    const s = loadCoffee(DATA_DIR);
-    process.stdout.write(startupNote(s.tips, minRooms(s.rooms)));
+  // Every tip with its id, not the start-up note: that one is cut to fit and leaves out what
+  // a single room said about the owner, so `same` would have nothing to confirm it by.
+  const s = loadCoffee(DATA_DIR);
+  const min = minRooms(s.rooms);
+  if (!s.tips.length) console.log('No tips yet.');
+  for (const [title, tips] of [['On the board', s.tips.filter((t) => onBoard(t, min))], ['Waiting for another room', s.tips.filter((t) => !onBoard(t, min))]] as const) {
+    if (!tips.length) continue;
+    console.log(`${title}:`);
+    for (const t of tips) console.log(`- [${t.id}] (${t.kind}) ${t.text} (${t.from})`);
   }
 } else if (cmd === 'add') {
   const [kind, ...words] = rest;

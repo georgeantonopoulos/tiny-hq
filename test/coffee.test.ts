@@ -182,3 +182,13 @@ test('posts wait in the queue until the office knows its rooms', () => {
   const body = src.slice(src.indexOf('function coffeeRoom('));
   assert.ok(body.indexOf('if (!floors.latest()) return;') < body.indexOf('takePosts(DATA_DIR);\n  if (posts.length)'), 'no posts taken before the floor is known');
 });
+
+test("coffee list shows every tip with its id, a single room's note about the owner included", () => {
+  const data = mkdtempSync(join(tmpdir(), 'th-'));
+  const t = (id: string, kind: 'owner' | 'tip', from: string) => ({ id, kind, text: `A tip called ${id} for the list.`, from, at: 1, seen: 1, last: 1 });
+  saveCoffee(data, { tips: [t('b1', 'tip', 'Lamp, Lumen'), t('o1', 'owner', 'Lamp')], removed: [], rooms: 3 });
+  const cli = new URL('../manager/coffee', import.meta.url).pathname;
+  const out = execFileSync('sh', [cli, 'list'], { env: { ...process.env, CM_DATA_DIR: data }, encoding: 'utf8' });
+  assert.match(out, /On the board:\n- \[b1\]/);
+  assert.match(out, /Waiting for another room:\n- \[o1\] \(owner\)/);
+});
