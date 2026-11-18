@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { copyFlatReports, fileReport, folderFor, listDesk, listReports, openReport, renderMarkdown, shortRoot, unreadCount } from '../src/team/desk.ts';
+import { copyFlatReports, fileReport, moveDesk, folderFor, listDesk, listReports, openReport, renderMarkdown, shortRoot, unreadCount } from '../src/team/desk.ts';
 import { layoutFloor } from '../src/office/layout.ts';
 
 // A report the owner asks for waits on their desk as a readable page.
@@ -106,4 +106,18 @@ test('the page draws the desk as a folder tree, under the synced drive\'s own na
   assert.equal(shortRoot('/Users/sam/Library/Mobile Documents/com~apple~CloudDocs/Office Desk', '/Users/sam'), 'iCloud Drive/Office Desk');
   assert.equal(shortRoot('/Users/sam/Library/CloudStorage/GoogleDrive-x@y.z/My Drive/Desk', '/Users/sam'), 'Google Drive/My Drive/Desk');
   assert.equal(shortRoot('/Users/sam/.tiny-hq/desk/folders', '/Users/sam'), '~/.tiny-hq/desk/folders');
+});
+
+test('moving the desk to another folder takes the reports already filed with it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'desk-'));
+  fileReport(dir, 'Atlas sales', '# Sales', 'Cora', 1, 'aaaaaaaa');
+  fileReport(dir, 'Lumen review', 'All good', 'Manager', 2, 'bbbbbbbb');
+  const to = join(dir, 'synced', 'Desk');
+  mkdirSync(join(dir, 'synced'));
+  assert.equal(moveDesk(dir, to), 2);
+  assert.deepEqual(listReports(dir).map((r) => r.title).sort(), ['Atlas sales', 'Lumen review'], 'nothing drops off the page');
+  assert.equal(unreadCount(dir), 2);
+  assert.match(openReport(dir, 'aaaaaaaa', 5)!.html, /Sales/);
+  assert.equal(moveDesk(dir, to), 0, 'moving again copies nothing twice');
+  assert.throws(() => moveDesk(dir, join(dir, 'not-mounted', 'Desk')), /isn't there/);
 });

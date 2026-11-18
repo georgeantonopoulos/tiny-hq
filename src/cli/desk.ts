@@ -4,10 +4,10 @@
 //   desk list
 //   desk where [<absolute folder>]   (show, or set, the synced folder; reports filed so far are copied in)
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { DATA_DIR } from '../paths.ts';
-import { copyFlatReports, deskDir, deskRoot, fileReport, folderFor, listDesk } from '../team/desk.ts';
+import { deskRoot, moveDesk, fileReport, folderFor, listDesk } from '../team/desk.ts';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const fail = (m: string): never => {
@@ -29,9 +29,11 @@ if (cmd === 'list') {
   const to = rest[0];
   if (to) {
     if (!isAbsolute(to)) fail('give the full path of the folder');
-    mkdirSync(deskDir(DATA_DIR), { recursive: true, mode: 0o700 });
-    writeFileSync(join(deskDir(DATA_DIR), 'where.json'), JSON.stringify({ root: to }, null, 2) + '\n', { mode: 0o600 });
-    console.log(`Copied ${copyFlatReports(DATA_DIR)} report(s) into ${to}.`);
+    try {
+      console.log(`Copied ${moveDesk(DATA_DIR, to)} report(s) into ${to}.`);
+    } catch (err) {
+      fail(`can't move the desk there: ${err instanceof Error ? err.message : err}`);
+    }
   } else console.log(deskRoot(DATA_DIR));
 } else if (cmd === 'add') {
   const from = opt('--from') ?? process.env.CM_DESK_FROM ?? 'Manager';

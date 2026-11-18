@@ -234,6 +234,31 @@ export function copyFlatReports(dataDir: string): number {
   return n;
 }
 
+// Points the desk at a new folder and copies the reports already filed in the old one across,
+// at the same place in the tree, so none drop off the page. The old files stay where they were.
+// Refuses a folder whose parent isn't there (a synced drive that isn't mounted, a typo).
+export function moveDesk(dataDir: string, to: string): number {
+  if (!existsSync(dirname(to))) throw new Error(`${dirname(to)} isn't there`);
+  const from = deskRoot(dataDir);
+  mkdirSync(deskDir(dataDir), { recursive: true, mode: 0o700 });
+  writeFileSync(join(deskDir(dataDir), 'where.json'), JSON.stringify({ root: to }, null, 2) + '\n', { mode: 0o600 });
+  let n = 0;
+  if (from !== to) {
+    for (const r of loadIndex(dataDir)) {
+      if (!r.path) continue;
+      const src = join(from, r.path);
+      const dst = join(to, r.path);
+      try {
+        if (!lstatSync(src).isFile() || existsSync(dst)) continue;
+        mkdirSync(dirname(dst), { recursive: true, mode: 0o700 });
+        copyFileSync(src, dst);
+        n++;
+      } catch {}
+    }
+  }
+  return n + copyFlatReports(dataDir);
+}
+
 // The file behind a report, only if it really is inside the desk folder (no symlinks out of it).
 function fileOf(dataDir: string, r: Report): string | undefined {
   try {

@@ -1769,6 +1769,7 @@ const realOr = (p: string) => {
 let runawayAt = 0;
 const cpuSamples = new Map<number, Sample[]>();
 async function runaways(): Promise<void> {
+  if (process.platform !== 'darwin') return; // simctl, lsappinfo and the system folders are macOS's
   const now = Date.now();
   if (now - runawayAt < RUNAWAY_EVERY) return;
   runawayAt = now;
@@ -1804,12 +1805,13 @@ function coffeeRoom(): void {
     coffeeNoteFresh = false;
     return;
   }
-  const projectRooms = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project);
+  if (!floors.latest()) return; // rooms not known yet: posts wait in the queue for the next tick
+  const projectRooms = floors.latest()!.rooms.filter((r) => r.kind === 'project' && r.project);
   const was = loadCoffee(DATA_DIR);
   let s = withoutRooms(was, projectRooms.filter((r) => outOfCoffee(r.project!.path, config)).map((r) => r.name));
   if (s !== was) console.log('coffee: took tips and posts from private rooms off the board');
   const rooms = projectRooms.filter((r) => !outOfCoffee(r.project!.path, config));
-  if (floors.latest() && s.rooms !== rooms.length) s = { ...s, rooms: rooms.length }; // sets the two-room rule
+  if (s.rooms !== rooms.length) s = { ...s, rooms: rooms.length }; // sets the two-room rule
   const posts = takePosts(DATA_DIR);
   if (posts.length) {
     const room = (folder: string) => {

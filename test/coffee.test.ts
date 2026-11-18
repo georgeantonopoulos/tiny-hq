@@ -176,3 +176,9 @@ test('withoutRooms: a private room leaves every tip and the last post; tips only
   assert.equal(withoutRooms(out, ['Ledger', 'Clinic']), out, 'nothing to take off: the same state, so nothing is saved');
   assert.equal(withoutRooms(s, []), s);
 });
+
+test('posts wait in the queue until the office knows its rooms', () => {
+  const src = readFileSync(new URL('../src/daemon/main.ts', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('function coffeeRoom('));
+  assert.ok(body.indexOf('if (!floors.latest()) return;') < body.indexOf('takePosts(DATA_DIR);\n  if (posts.length)'), 'no posts taken before the floor is known');
+});
