@@ -24,3 +24,14 @@ test('a permission button stays Approve: it is for one exact command their setti
   const [p] = addAsk([], '/x', 'Run rm -rf build', 1, 'abcdef14', undefined, undefined, undefined, false, undefined, { why: 'permission', tried: 'their settings refuse it' });
   assert.equal(isHands(p!), false);
 });
+
+test('a hands button never hands the owner steps: the room opens the window first and asks for the one click', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { REASONS } = await import('../src/team/only-owner.ts');
+  const skill = readFileSync(new URL('../skills/theoffice/SKILL.md', import.meta.url), 'utf8');
+  assert.match(skill, /never hand the owner a list of steps/);
+  assert.match(skill, /open the exact pane or window yourself/);
+  assert.doesNotMatch(skill, /exact steps in the question/);
+  assert.match(REASONS.hands, /open the exact pane or window yourself first/);
+  assert.doesNotMatch(REASONS.hands, /list the exact steps/);
+});

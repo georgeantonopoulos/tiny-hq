@@ -116,9 +116,22 @@ export function deviceUse(command, cwd) {
 }
 
 // A pass covers only the command the owner approved: the button's text must hold this exact command
-// (spaces aside), so a yes for one photo can't be spent on a different capture.
+// (spaces aside), whole, so a yes for one photo can't be spent on a different capture, nor on a
+// shorter piece of the approved one (the same capture without its frame limit is a live feed).
+// The command must end where the button's command ends: at the end of the text, a closing quote
+// or backtick, or punctuation (. , ; : ? !) before a space, since the button's text is a question.
 const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-export const approves = (passText, command) => !!squash(command) && squash(passText).includes(squash(command));
+const ENDS = /^($|[`'")]|[.,;:?!](\s|$))/;
+const STARTS = /(^|[\s`'"(])$/;
+export function approves(passText, command) {
+  const cmd = squash(command);
+  const text = squash(passText);
+  if (!cmd) return false;
+  for (let i = text.indexOf(cmd); i >= 0; i = text.indexOf(cmd, i + 1)) {
+    if (STARTS.test(text.slice(0, i)) && ENDS.test(text.slice(i + cmd.length))) return true;
+  }
+  return false;
+}
 
 export function denyReason(what) {
   return `This would turn on the owner's ${what}. Nothing switches on their camera or microphone without their yes for that one capture. Put it on a button and stop: \`${ASK} "<what you want to capture and why, with the exact command>" --why camera --tried "<what you tried without it>"\`. When they approve, that exact command runs once (within 2 hours); a different capture needs its own button. Listing devices (ffmpeg -list_devices true, imagesnap -l) is fine without asking.`;

@@ -71,6 +71,14 @@ export function lastReply(turn) {
   return '';
 }
 
+// The reply this turn ends on. Claude Code hands it to the hook as last_assistant_message; the
+// chat file often doesn't hold it yet when the hook runs (most room questions slipped through
+// when the hook read the file first), so the file is only the fallback.
+export function replyOf(hook, turn) {
+  const given = typeof hook?.last_assistant_message === 'string' ? hook.last_assistant_message.trim() : '';
+  return given && given !== '(quiet)' ? given : lastReply(turn);
+}
+
 // A question put to the owner: a sentence ending in "?" that asks them something ("Shall I…?",
 // "Want me to…?", "OK to…?"), or any question the reply ends on ("Sound good?").
 // An aside to camera in italics with no "you" in it doesn't count, nor code.
@@ -160,7 +168,7 @@ if (isMain) {
       if (!hook.transcript_path || !(manager ? isManager(dir) : isRoom(dir))) return;
       const lines = readTail(hook.transcript_path);
       const turn = thisTurn(lines);
-      const reply = lastReply(turn);
+      const reply = replyOf(hook, turn);
       if (!reply || !questionsOwner(reply) || askedWithButton(thisTurn(lines, true))) return;
       if (sentBack(hook.transcript_path, JSON.stringify(turn[0] ?? null).slice(0, 300))) return;
       process.stdout.write(JSON.stringify({ decision: 'block', reason: manager ? MANAGER_REASON : REASON }));

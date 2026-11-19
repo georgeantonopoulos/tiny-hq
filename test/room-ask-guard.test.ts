@@ -10,8 +10,8 @@ import { isManager, isRoom, MANAGER_REASON, REASON, tagFile } from '../hooks/roo
 
 const HOOK = new URL('../hooks/room-ask-guard.mjs', import.meta.url).pathname;
 const line = (o: object) => JSON.stringify(o);
-const run = (data: string, cwd: string, transcript: string, args: string[] = []) =>
-  spawnSync(process.execPath, [HOOK, ...args], { input: JSON.stringify({ transcript_path: transcript, cwd }), env: { ...process.env, CM_DATA_DIR: data, CLAUDE_PROJECT_DIR: cwd }, encoding: 'utf8' }).stdout;
+const run = (data: string, cwd: string, transcript: string, args: string[] = [], last?: string) =>
+  spawnSync(process.execPath, [HOOK, ...args], { input: JSON.stringify({ transcript_path: transcript, cwd, last_assistant_message: last }), env: { ...process.env, CM_DATA_DIR: data, CLAUDE_PROJECT_DIR: cwd }, encoding: 'utf8' }).stdout;
 
 test('rooms are sessions with an office name tag, worktrees included, never the manager', () => {
   const data = mkdtempSync(join(tmpdir(), 'rag-'));
@@ -61,4 +61,25 @@ test("one check for everyone: the manager's own settings run it with --manager a
   assert.match(MANAGER_REASON, /--why <post\|pay\|irreversible\|choice\|/, 'the manager may put a choice on a button');
   assert.match(REASON, /\|choice\|/, 'a room may too, with --choices');
   assert.equal(run(data, '/Users/owner/Dev/garden-planner', t, ['--manager']), '', '--manager only checks the manager');
+});
+
+// The hook can run before Claude Code writes the final reply to the chat file, so it read an older
+// reply and let room questions through. The reply handed to the hook comes first.
+test('the reply Claude Code hands the hook counts even when the chat file does not hold it yet', () => {
+  const data = mkdtempSync(join(tmpdir(), 'rag-'));
+  mkdirSync(join(data, 'tags'));
+  const room = '/Users/owner/Dev/desk-lamp';
+  writeFileSync(tagFile(room, data), 'tag');
+  const user = line({ type: 'user', message: { content: 'is the lamp fixed' } });
+  const earlier = line({ type: 'assistant', message: { content: [{ type: 'text', text: 'Checking the lamp now.' }] } });
+  const t = join(data, 't.jsonl');
+  writeFileSync(t, [user, earlier].join('\n'));
+  assert.match(run(data, room, t, [], 'Did the table lamp flicker like a fire, or stay steady?'), /"decision":"block"/);
+  const t2 = join(data, 't2.jsonl');
+  writeFileSync(t2, [user, earlier].join('\n'));
+  assert.equal(run(data, room, t2, [], 'Done. The lamp is fixed.'), '', 'a plain statement is left alone');
+  const button = line({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: '~/.tiny-hq/app/manager/ask "Flicker?" --why choice' } }] } });
+  const t3 = join(data, 't3.jsonl');
+  writeFileSync(t3, [user, button].join('\n'));
+  assert.equal(run(data, room, t3, [], 'Did it flicker? (also on the button)'), '', 'a button this turn still counts');
 });
