@@ -5,7 +5,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseUsage, plan, STALE_MS, type Usage } from '../src/team/budget.ts';
-import { pickRoom, ROOM_GAP_MS, START_GAP_MS, stepLine, type Candidate } from '../src/team/autonomy.ts';
+import { FIRST_STEP_LATE_MS, lateFirstSteps, pickRoom, ROOM_GAP_MS, START_GAP_MS, stepLine, whyNoStep, type Candidate } from '../src/team/autonomy.ts';
 import { managerLine, KEEP_ON_MANAGER, parseResult } from '../src/team/checks.ts';
 import { describeScore, managerScore, jobsScore } from '../src/team/scorecard.ts';
 import { holdWatchId } from '../src/team/schedule.ts';
@@ -138,4 +138,24 @@ test('job hold adds its own watch to the timetable, and go takes it away', () =>
   assert.ok(w.until);
   cli('go', 'seq-review');
   assert.equal(tasks().some((t) => t.id === holdWatchId('seq-review')), false);
+});
+
+// Goals set in the morning for two rooms could sit all day: the allowance allowed one room at
+// once and some room was always busy, so no place was ever free.
+test("a new goal gets its first step even when busy rooms hold every place, and the manager hears when it can't", () => {
+  const c = (room: string, more: Partial<Candidate> = {}): Candidate => ({ room, goal: 'Sell more copies', hasJob: false, hasAsk: false, busy: false, ...more });
+  const steps = [{ room: '/old', at: now - 4 * H, how: 'typed' as const }];
+  const fresh = c('/new', { since: now - H });
+  const older = c('/old', { since: now - 48 * H });
+  assert.equal(pickRoom([older, fresh], steps, now, 0)?.room, '/new');
+  assert.equal(pickRoom([older], steps, now, 0), undefined);
+  assert.equal(pickRoom([older, c('/new', { since: now - H })], [{ room: '/new', at: now - 30 * H, how: 'typed' }, ...steps], now, 1)?.room, '/new');
+  const done = [...steps, { room: '/new', at: now - 20 * 60_000, how: 'typed' as const }];
+  assert.equal(pickRoom([fresh], done, now, 0), undefined);
+  const late = c('/new', { since: now - FIRST_STEP_LATE_MS - 1, busy: true });
+  assert.deepEqual(lateFirstSteps([late, fresh, older], steps, now).map((x) => x.room), ['/new']);
+  assert.deepEqual(lateFirstSteps([late], done, now), []);
+  assert.match(whyNoStep(late, 'week 15% used', false), /busy/);
+  assert.match(whyNoStep(c('/x'), 'week 95% used', false), /allowance had no room \(week 95% used\)/);
+  assert.match(whyNoStep(c('/x', { hasJob: true }), '', true), /on-call/);
 });

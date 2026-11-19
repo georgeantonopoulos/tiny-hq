@@ -35,7 +35,7 @@ import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, ex
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
 import { Allowance, meters, plan, usageReader, type Plan } from '../team/budget.ts';
-import { logStep, loadSteps, pickRoom, stepLine, stepsPath, type Candidate } from '../team/autonomy.ts';
+import { lateFirstSteps, logStep, loadSteps, pickRoom, stepLine, stepsPath, whyNoStep, type Candidate } from '../team/autonomy.ts';
 import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.ts';
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
@@ -1404,17 +1404,22 @@ async function runGoals(): Promise<void> {
   // Working now: a busy session anywhere on the floor, or an active job (not held, not waiting on the owner).
   const working = new Set([...rooms.filter((r) => busyIn(r.project!.path)).map((r) => r.project!.path), ...jobs.filter((j) => j.status === 'active' && !isHeld(j, now)).map((j) => j.room)]);
   lastPlan = plan(allowance.latest(), now, working.size, undefined, config.usageCommand ? undefined : config.goalRooms);
-  if (lastPlan.free < 1) return;
-  const cands: Candidate[] = rooms
-    .filter((r) => goals[r.project!.path] && !isOnCall(r.project!.path, config.onCallProjects))
+  const goalRooms: Candidate[] = rooms
+    .filter((r) => goals[r.project!.path])
     .map((r) => ({
       room: r.project!.path,
       goal: goals[r.project!.path]!.goal,
+      since: goals[r.project!.path]!.at || undefined,
       hasJob: jobs.some((j) => worksIn(real(j.room), r.project!.path)),
       hasAsk: asks.some((a) => worksIn(real(a.folder), r.project!.path)),
       busy: busyIn(r.project!.path),
     }));
-  const pick = pickRoom(cands, loadSteps(STEPS, now - 86_400_000), now);
+  const steps = loadSteps(STEPS, Math.min(now - 86_400_000, ...goalRooms.map((c) => c.since ?? now)));
+  void reportLateGoals(goalRooms, steps, now);
+  // The allowance must have room at all; a new goal's first step may take a place a busy room holds.
+  if (lastPlan.rooms < 1) return;
+  const cands = goalRooms.filter((c) => !isOnCall(c.room, config.onCallProjects));
+  const pick = pickRoom(cands, steps, now, lastPlan.free);
   if (!pick) return;
   const room = rooms.find((r) => r.project!.path === pick.room)!;
   const line = stepLine(pick.goal, lastPlan.why, join(MANAGER_DIR, 'ask'));
@@ -1439,6 +1444,35 @@ async function runGoals(): Promise<void> {
     if (!ok) return;
   }
   console.log(`goal step: ${room.name} works on "${pick.goal}" (${lastPlan.why})`);
+}
+// A new goal still without its first step 4 hours on is put to the manager once, with the reason
+// (goal-late.json in the manager's notes remembers which, so a restart doesn't repeat it).
+const GOAL_LATE = join(MANAGER_NOTES_DIR, 'goal-late.json');
+let lateBusy = false;
+async function reportLateGoals(cands: Candidate[], steps: ReturnType<typeof loadSteps>, now: number): Promise<void> {
+  if (lateBusy) return;
+  let told: Record<string, number> = {};
+  try {
+    told = JSON.parse(readFileSync(GOAL_LATE, 'utf8')) as Record<string, number>;
+  } catch {
+    /* none yet */
+  }
+  const late = lateFirstSteps(cands, steps, now).filter((c) => !told[`${c.room}@${c.since}`]);
+  if (!late.length) return;
+  lateBusy = true;
+  try {
+    const lines = late.map((c) => `${roomName(c.room)} ("${c.goal.slice(0, 80)}"): ${whyNoStep(c, lastPlan?.why ?? 'not read yet', isOnCall(c.room, config.onCallProjects))}`);
+    const ok = await tellManager(`[Office: goal not started] The owner set ${late.length === 1 ? 'a goal' : 'goals'} 4+ hours ago with no step yet. ${lines.join('; ')}. Start the room by hand, or tell the owner on a button why it waits.`);
+    if (ok !== true) return; // the manager is busy: try again next minute
+    for (const c of late) told[`${c.room}@${c.since}`] = now;
+    mkdirSync(MANAGER_NOTES_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(GOAL_LATE, JSON.stringify(told), { mode: 0o600 });
+    console.log(`goals: told the manager ${late.length} new goal(s) had no first step`);
+  } catch (e) {
+    console.log(`goals: could not tell the manager about late goals (${(e as Error).message})`);
+  } finally {
+    lateBusy = false;
+  }
 }
 
 // Every question put to the owner, once (for the scorecard): asks.json only holds open ones.
