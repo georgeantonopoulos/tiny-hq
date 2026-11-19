@@ -259,7 +259,15 @@ test('an approved post with a file goes out end to end: open compose, click the 
   // Nor does a bare element reference: the guard can't see what the reference points at.
   denies(B('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }), /names it/);
   // Click the box (twice: a miss, then the box), type, upload, Post.
-  const BOX = { element: 'Post text textbox' };
+  // Chrome clicks the box by its element number, which counts once Chrome's own reading said it's a text box.
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const { recordRefs } = (await import('../hooks/public-post-guard.mjs')) as { recordRefs: (...a: unknown[]) => boolean };
+  const found = [{ type: 'text', text: '2 elements share words with the query:\nref_1 textbox "Post text"\nref_3 button "Post"\nref_4 link "Reply"' }];
+  const read = (tabId: number) => recordRefs('mcp__claude-in-chrome__find', { tabId }, found, tabs);
+  for (const t of [1, 2]) read(t);
+  denies(B('computer', { tabId: 1, action: 'left_click', element: 'Post text textbox' }), /names it/); // Chrome: its own words don't count
+  denies(B('computer', { tabId: 1, action: 'left_click', ref: 'ref_1', coordinate: [400, 200] }), /names it/); // nor a position alongside
+  const BOX = { ref: 'ref_1' };
   assert.equal(B('computer', { tabId: 1, action: 'left_click', ...BOX }), 'pass');
   assert.equal(B('computer', { tabId: 1, action: 'left_click', ...BOX }), 'pass');
   denies(B('computer', { tabId: 2, action: 'left_click', ...BOX }), /button-only/); // focus clicks stay in one tab
@@ -282,6 +290,7 @@ test('an approved post with a file goes out end to end: open compose, click the 
   assert.equal(pa.useFocusClick!('c', '5', 'https://x.com/compose/post', Date.now() + 11 * 60_000, later, room), true);
   grantPass(path, 'Third post', room, Date.now(), 'https://x.com/compose', '', pa.mediaOf!(video) as { name: string; sha256: string; bytes: number });
   B('navigate', { tabId: 4, url: 'https://x.com/compose/post' });
+  read(4);
   assert.equal(B('file_upload', { tabId: 4, ref: 'r1', paths: [video] }), 'pass');
   denies(B('computer', { tabId: 4, action: 'left_click', ...BOX }), /button-only/);
   // A named click on the text box itself is a focus click.
@@ -289,21 +298,36 @@ test('an approved post with a file goes out end to end: open compose, click the 
   assert.equal(PW({ ref: 'e2', element: 'Post text textbox' }), 'pass');
 
   // Chrome clicks by element number: the guard checks it against what Chrome's own page reading said.
-  // @ts-expect-error a plain-JS hook module, no type declarations
-  const { recordRefs } = (await import('../hooks/public-post-guard.mjs')) as { recordRefs: (...a: unknown[]) => boolean };
   grantPass(path, 'Fifth post', room, Date.now(), 'https://x.com/compose');
   B('navigate', { tabId: 6, url: 'https://x.com/compose/post' });
   denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /names it/); // nothing read yet
-  const found = [{ type: 'text', text: '2 elements share words with the query:\nref_1 textbox "Post text"\nref_3 button "Post"\nref_4 link "Reply"' }];
   assert.equal(recordRefs('mcp__claude-in-chrome__find', { tabId: 6 }, found, tabs), true);
-  recordRefs('mcp__claude-in-chrome__read_page', { tabId: 6 }, [{ type: 'text', text: 'textbox "What\'s happening?" [ref_2] placeholder="x"\nbutton "Post" [ref_9]' }], tabs);
   denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_3' }), /names it/); // the Post button
   denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_4' }), /names it/); // a link
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_9' }), /names it/); // a button read by read_page
   denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_77' }), /names it/); // never read
   assert.equal(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), 'pass');
+  recordRefs('mcp__claude-in-chrome__read_page', { tabId: 6 }, [{ type: 'text', text: 'textbox "What\'s happening?" [ref_2] placeholder="x"\nbutton "Post" [ref_9]' }], tabs);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_9' }), /names it/); // a button read by read_page
   assert.equal(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_2' }), 'pass');
+  // Each reading replaces the last, so ref_1 from the find above no longer counts.
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /names it/);
+  // A label holding another ref, or a ref read with two roles, never makes a text box.
+  recordRefs('mcp__claude-in-chrome__read_page', { tabId: 6 }, [{ type: 'text', text: 'textbox "[ref_7]" [ref_2]\nbutton "Post" [ref_7]\nref_8 button "Post"\nref_8 textbox "x"' }], tabs);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_7' }), /names it/);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_8' }), /names it/);
+  recordRefs('mcp__claude-in-chrome__read_page', { tabId: 6 }, [{ type: 'text', text: 'textbox "x" [ref_2] placeholder="[ref_5]"' }], tabs);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_5' }), /names it/); // a ref in a page-written attribute
+  // Anything else that acts in the tab (a link, a route change) spends the readings; a refused action
+  // never ran, so it leaves them.
+  B('navigate', { tabId: 7, url: 'https://example.com/' });
+  recordRefs('mcp__claude-in-chrome__find', { tabId: 7 }, found, tabs);
+  assert.equal(B('computer', { tabId: 7, action: 'left_click', ref: 'ref_4' }), undefined); // not a social site: let through
+  assert.equal(tabs['refs:7'], undefined);
+  recordRefs('mcp__claude-in-chrome__find', { tabId: 6 }, found, tabs);
+  denies(B('computer', { tabId: 6, action: 'type', text: 'something else' }), /button-only/);
+  assert.ok(tabs['refs:6']);
   // Element numbers belong to the page they were read on: after navigating, they count for nothing.
+  recordRefs('mcp__claude-in-chrome__find', { tabId: 6 }, found, tabs);
   B('navigate', { tabId: 6, url: 'https://x.com/compose/post' });
   denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /names it/);
   // Other tools' output is never read as element numbers.
