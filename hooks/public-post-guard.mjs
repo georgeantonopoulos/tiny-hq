@@ -756,13 +756,13 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
     if (/click|key|press/.test(`${tool} ${action}`) && passes.click(session, tab, site)) return 'pass';
     // Deleting one post the owner approved on a --delete button: a few clicks on exactly that page.
     if (/click|key|press/.test(`${tool} ${action}`) && typed === undefined && passes.act?.(session, tab, where, cwd)) return 'pass';
-    // A click into the empty compose box before typing the owner's approved text there. When the click
-    // names what it's on (a browser tool's element description), it must be a text box and never a
-    // button that sends: a saved draft's Post button is not a way into the box.
+    // A click into the empty compose box before typing the owner's approved text there. The click must
+    // name what it's on (a browser tool's element description), and that must be a text box, never a
+    // button that sends: a click by screen position alone could land on a saved draft's Post button.
     const named = [input.element, input.description, input.target].filter((v) => typeof v === 'string').join(' ');
-    const intoBox = !named || (/text ?box|textbox|textarea|compose|editor|input|field|what'?s happening|placeholder/i.test(named) && !/\b(button|link|menuitem|checkbox)\b/i.test(named));
+    const intoBox = !!named && (/text ?box|textbox|textarea|compose|editor|input|field|what'?s happening|placeholder/i.test(named) && !/\b(button|link|menuitem|checkbox)\b/i.test(named));
     if (/click/.test(`${tool} ${action}`) && !/key|press/.test(`${tool} ${action}`) && typed === undefined && intoBox && passes.focus?.(session, tab, where, cwd)) return 'pass';
-    return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then click into the text box (up to 3 clicks before typing), type exactly that text; one click in the same tab to post it is let through for 10 minutes (a post they approved with a file: only once that file is uploaded in the tab). To delete a post: manager/ask "<which post and why>" --why post --tried "<...>" --delete <the post's URL>; their Approve lets a few clicks through in a tab on exactly that page.` };
+    return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then click into the text box with a click that names it (e.g. element "Post text textbox"; up to 3 before typing, never by screen position alone), type exactly that text; one click in the same tab to post it is let through for 10 minutes (a post they approved with a file: only once that file is uploaded in the tab). To delete a post: manager/ask "<which post and why>" --why post --tried "<...>" --delete <the post's URL>; their Approve lets a few clicks through in a tab on exactly that page.` };
   }
   return undefined;
 }

@@ -254,10 +254,13 @@ test('an approved post with a file goes out end to end: open compose, click the 
   denies(PW({ ref: 'e9', element: 'Reply' }), /button-only/);
   denies(PW({ ref: 'e9', element: 'Like' }), /button-only/);
   denies(PW({ ref: 'e9', element: 'Post text box send button' }), /button-only/);
+  // A click by screen position alone can't show it's on the box, so it never counts as a focus click.
+  denies(B('computer', { tabId: 1, action: 'left_click', coordinate: [400, 200] }), /names it/);
   // Click the box (twice: a miss, then the box), type, upload, Post.
-  assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass');
-  assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass');
-  denies(B('computer', { tabId: 2, action: 'left_click' }), /button-only/); // focus clicks stay in one tab
+  const BOX = { element: 'Post text textbox' };
+  assert.equal(B('computer', { tabId: 1, action: 'left_click', ...BOX }), 'pass');
+  assert.equal(B('computer', { tabId: 1, action: 'left_click', ...BOX }), 'pass');
+  denies(B('computer', { tabId: 2, action: 'left_click', ...BOX }), /button-only/); // focus clicks stay in one tab
   assert.equal(B('computer', { tabId: 1, action: 'type', text: 'Example 1.5 preview' }), 'pass');
   denies(B('computer', { tabId: 1, action: 'left_click' }), /only once that file is uploaded/); // typed: a click now could post the text alone
   assert.equal(B('file_upload', { tabId: 1, ref: 'r1', paths: [video] }), 'pass');
@@ -266,8 +269,8 @@ test('an approved post with a file goes out end to end: open compose, click the 
 
   // At most 3 box clicks; and once the file is up before the text, no more (the video could go alone).
   grantPass(path, 'Second post', room, Date.now(), 'https://x.com/compose', '', pa.mediaOf!(video) as { name: string; sha256: string; bytes: number });
-  for (let i = 0; i < 3; i++) assert.equal(B('computer', { tabId: 2, action: 'left_click' }), 'pass');
-  denies(B('computer', { tabId: 2, action: 'left_click' }), /button-only/);
+  for (let i = 0; i < 3; i++) assert.equal(B('computer', { tabId: 2, action: 'left_click', ...BOX }), 'pass');
+  denies(B('computer', { tabId: 2, action: 'left_click', ...BOX }), /button-only/);
   // Text typed under a pass whose Post click never came stops holding the box once its click time is over.
   const later = join(data, 'later.json');
   grantPass(later, 'Left behind', room, Date.now(), 'https://x.com/compose');
@@ -278,7 +281,7 @@ test('an approved post with a file goes out end to end: open compose, click the 
   grantPass(path, 'Third post', room, Date.now(), 'https://x.com/compose', '', pa.mediaOf!(video) as { name: string; sha256: string; bytes: number });
   B('navigate', { tabId: 4, url: 'https://x.com/compose/post' });
   assert.equal(B('file_upload', { tabId: 4, ref: 'r1', paths: [video] }), 'pass');
-  denies(B('computer', { tabId: 4, action: 'left_click' }), /button-only/);
+  denies(B('computer', { tabId: 4, action: 'left_click', ...BOX }), /button-only/);
   // A named click on the text box itself is a focus click.
   grantPass(path, 'Fourth post', room, Date.now(), 'https://x.com/compose');
   assert.equal(PW({ ref: 'e2', element: 'Post text textbox' }), 'pass');
