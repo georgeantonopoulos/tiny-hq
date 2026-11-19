@@ -248,6 +248,12 @@ test('an approved post with a file goes out end to end: open compose, click the 
   denies(B('computer', { tabId: 3, action: 'left_click' }), /button-only/); // not the approved page
   denies(B('computer', { tabId: 1, action: 'left_click' }, 'c', '/Dev/other'), /button-only/); // another room
   denies(B('computer', { tabId: 1, action: 'key', text: 'Return' }), /button-only/); // keys aren't focus clicks
+  // A click that names its target must be on the text box, never a button that sends (a saved draft's Post).
+  const PW = (input: Record<string, unknown>) => decide('mcp__playwright__browser_click', input, { default: 'https://x.com/compose/post' }, 'p', passes, room);
+  denies(PW({ ref: 'e9', element: 'Post button' }), /button-only/);
+  denies(PW({ ref: 'e9', element: 'Reply' }), /button-only/);
+  denies(PW({ ref: 'e9', element: 'Like' }), /button-only/);
+  denies(PW({ ref: 'e9', element: 'Post text box send button' }), /button-only/);
   // Click the box (twice: a miss, then the box), type, upload, Post.
   assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass');
   assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass');
@@ -273,6 +279,9 @@ test('an approved post with a file goes out end to end: open compose, click the 
   B('navigate', { tabId: 4, url: 'https://x.com/compose/post' });
   assert.equal(B('file_upload', { tabId: 4, ref: 'r1', paths: [video] }), 'pass');
   denies(B('computer', { tabId: 4, action: 'left_click' }), /button-only/);
+  // A named click on the text box itself is a focus click.
+  grantPass(path, 'Fourth post', room, Date.now(), 'https://x.com/compose');
+  assert.equal(PW({ ref: 'e2', element: 'Post text textbox' }), 'pass');
 });
 
 // Making a repo public has no text, so the text the owner approves is
