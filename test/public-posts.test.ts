@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 // @ts-expect-error: a plain .mjs hook, no types
 import { decide, postingCommand } from '../hooks/public-post-guard.mjs';
 
@@ -107,6 +107,165 @@ test("only the owner's approved text gets through, once, in the room that asked,
   denies(B('computer', { tabId: 9, action: 'left_click' }, 'another-session'), /button-only/);
   assert.equal(B('computer', { tabId: 9, action: 'left_click' }), 'pass');
   denies(B('computer', { tabId: 9, action: 'left_click' }), /button-only/); // and only once
+});
+
+// A post approved with its video must not go out as text alone, and the video must be able to go up.
+// A pass approved with a file posts only with that file, and lets exactly that file up.
+test('a post the owner approved with a file goes up only with that file, and that file can go up', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'cm-media-'));
+  const path = join(data, 'post-approvals.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as Record<string, (...a: unknown[]) => unknown>;
+  const passes = {
+    use: (t: string, s: string, cwd?: string, where?: unknown, target?: string, submits?: boolean) => pa.usePass!(t, s, Date.now(), path, cwd, where, target, submits) as boolean,
+    click: (s: string, tab: string, site: string) => pa.useClick!(s, tab, site, Date.now(), path) as boolean,
+    upload: (files: unknown, s: string, cwd?: string, where?: unknown, page?: string) => pa.useUpload!(files, s, Date.now(), path, cwd, where, page) as boolean,
+    repo: () => 'x/x',
+  };
+  const room = '/Dev/example';
+  const video = join(data, 'launch.mp4');
+  const other = join(data, 'other.mp4');
+  writeFileSync(video, 'the approved video');
+  writeFileSync(other, 'something else');
+  const media = pa.mediaOf!(video) as { name: string; sha256: string; bytes: number };
+  assert.equal(media.name, 'launch.mp4');
+  const tabs: Record<string, string> = {};
+  const B = (name: string, input: Record<string, unknown>, session = 'c') => decide(`mcp__claude-in-chrome__${name}`, input, tabs, session, passes, room);
+  B('navigate', { tabId: 1, url: 'https://x.com/compose/post' });
+  B('navigate', { tabId: 2, url: 'https://x.com/compose/post' });
+
+  // (1) Approved with the video: the text alone can't go out, not even by typing that sends it.
+  grantPass(path, 'Example 2 is out', room, Date.now(), 'https://x.com/compose', '', media);
+  denies(decide('mcp__playwright__browser_type', { ref: 'e1', text: 'Example 2 is out', submit: true }, { default: 'https://x.com/compose/post' }, 'c', passes, room), /button-only/);
+  denies(B('computer', { tabId: 1, action: 'type', text: 'Example 2 is out\n' }), /button-only/);
+  assert.equal(B('computer', { tabId: 1, action: 'type', text: 'Example 2 is out' }), 'pass'); // typing is not posting
+  denies(B('computer', { tabId: 1, action: 'left_click' }), /only once that file is uploaded/);
+  denies(B('computer', { tabId: 1, action: 'key', text: 'cmd+Return' }), /button-only/);
+  // Nor through gh or curl, which can't carry the file.
+  grantPass(path, 'Example 2 is out', room, Date.now(), 'x/x#1', '', media);
+  denies(decide('Bash', { command: "gh pr comment 1 -R x/x -b 'Example 2 is out'" }, {}, 'c', passes, room), /hasn't approved/);
+
+  // (2) The approved file can go up, in that tab, once; another file, two files, a link to it or a
+  // relative path can't.
+  symlinkSync(video, join(data, 'link.mp4'));
+  denies(B('file_upload', { tabId: 1, ref: 'r1', paths: [join(data, 'link.mp4')] }), /--media/);
+  denies(B('file_upload', { tabId: 1, ref: 'r1', paths: ['launch.mp4'] }), /--media/);
+  denies(B('file_upload', { tabId: 1, ref: 'r1', paths: [other] }), /--media/);
+  denies(B('file_upload', { tabId: 1, ref: 'r1', paths: [video, other] }), /--media/);
+  denies(B('file_upload', { tabId: 2, ref: 'r1', paths: [video] }), /--media/); // typed in tab 1, not 2
+  denies(B('file_upload', { tabId: 1, ref: 'r1', paths: [video] }, 'another-session'), /--media/);
+  assert.equal(B('file_upload', { tabId: 1, ref: 'r1', paths: [video] }), 'pass');
+  denies(B('file_upload', { tabId: 1, ref: 'r1', paths: [video] }), /--media/); // once
+  assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass'); // text and video: posts
+  denies(B('computer', { tabId: 1, action: 'left_click' }), /button-only/);
+
+  // The file first, then the text, works too; a file changed after the owner saw it doesn't.
+  grantPass(path, 'Second clip', room, Date.now(), 'https://x.com/compose', '', media);
+  writeFileSync(video, 'edited after the owner saw it');
+  denies(B('file_upload', { tabId: 2, ref: 'r1', paths: [video] }), /--media/);
+  writeFileSync(video, 'the approved video');
+  assert.equal(B('file_upload', { tabId: 2, ref: 'r1', paths: [video] }), 'pass');
+  assert.equal(B('computer', { tabId: 2, action: 'type', text: 'Second clip\n' }), 'pass'); // the file is up: Enter may send both
+
+  // No pass with a file: uploads on a social site stay refused, and a text-only pass still posts text.
+  denies(B('file_upload', { tabId: 1, ref: 'r1', paths: [video] }), /--media/);
+  grantPass(path, 'Just words', room, Date.now(), 'https://x.com/compose');
+  denies(B('file_upload', { tabId: 1, ref: 'r1', paths: [video] }), /--media/);
+  assert.equal(B('computer', { tabId: 1, action: 'type', text: 'Just words' }), 'pass');
+  assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass');
+});
+
+// Deleting a post takes a few clicks. A --delete button's Approve lets a few clicks through in one
+// tab on exactly that post's page.
+test('a post the owner approved deleting can be deleted: a few clicks on exactly that page, no typing', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'cm-delete-'));
+  const path = join(data, 'passes.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as Record<string, (...a: unknown[]) => unknown>;
+  const passes = {
+    use: (t: string, s: string, cwd?: string, where?: unknown, target?: string, submits?: boolean) => pa.usePass!(t, s, Date.now(), path, cwd, where, target, submits) as boolean,
+    click: (s: string, tab: string, site: string) => pa.useClick!(s, tab, site, Date.now(), path) as boolean,
+    act: (s: string, tab: string, page: string, cwd?: string) => pa.useActClick!(s, tab, page, Date.now(), path, cwd) as boolean,
+    repo: () => 'x/x',
+  };
+  const room = '/Dev/example';
+  const post = 'https://x.com/ExampleApp/status/123';
+  const sentence = pa.actText!(post) as string;
+  const tabs: Record<string, string> = {};
+  const B = (name: string, input: Record<string, unknown>, session = 'c', cwd = room) => decide(`mcp__claude-in-chrome__${name}`, input, tabs, session, passes, cwd);
+  B('navigate', { tabId: 1, url: post });
+  B('navigate', { tabId: 2, url: 'https://x.com/ExampleApp/status/999' });
+  B('navigate', { tabId: 3, url: `${post}/analytics` });
+  denies(B('computer', { tabId: 1, action: 'left_click' }), /--delete/); // nothing approved yet
+
+  grantPass(path, sentence, room, Date.now(), post);
+  denies(B('computer', { tabId: 2, action: 'left_click' }), /button-only/); // another post
+  denies(B('computer', { tabId: 3, action: 'left_click' }), /button-only/); // a page under it
+  denies(B('computer', { tabId: 1, action: 'left_click' }, 'c', '/Dev/other'), /button-only/); // another room
+  denies(B('computer', { tabId: 1, action: 'type', text: sentence }), /button-only/); // never typing
+  denies(B('form_input', { tabId: 1, ref: 'r', value: 'hello' }), /button-only/);
+  // More, Delete, Delete, and one spare.
+  for (let i = 0; i < 4; i++) assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass');
+  denies(B('computer', { tabId: 1, action: 'left_click' }), /button-only/);
+  // Used up in tab 1: not again in another tab.
+  B('navigate', { tabId: 4, url: post });
+  denies(B('computer', { tabId: 4, action: 'left_click' }), /button-only/);
+  // A delete pass never passes a post, through gh or typing; it does the delete it's for.
+  grantPass(path, sentence, room, Date.now(), post);
+  denies(decide('Bash', { command: `gh issue comment 1 -R x/x -b '${sentence}'` }, {}, 'c', passes, room), /hasn't approved/);
+  assert.equal(B('computer', { tabId: 4, action: 'left_click' }, 'd'), 'pass');
+});
+
+// Typing into a compose box needs a click into it first, or the typing lands nowhere and the pass is
+// spent. Up to 3 clicks into the empty box before typing, without spending the pass.
+test('an approved post with a file goes out end to end: open compose, click the box, type, upload, Post', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'cm-focus-'));
+  const path = join(data, 'passes.json');
+  const { grantPass } = await import('../src/team/posts.ts');
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const pa = (await import('../hooks/post-approvals.mjs')) as Record<string, (...a: unknown[]) => unknown>;
+  const passes = {
+    use: (t: string, s: string, cwd?: string, where?: unknown, target?: string, submits?: boolean) => pa.usePass!(t, s, Date.now(), path, cwd, where, target, submits) as boolean,
+    click: (s: string, tab: string, site: string) => pa.useClick!(s, tab, site, Date.now(), path) as boolean,
+    upload: (files: unknown, s: string, cwd?: string, where?: unknown, page?: string) => pa.useUpload!(files, s, Date.now(), path, cwd, where, page) as boolean,
+    act: (s: string, tab: string, page: string, cwd?: string) => pa.useActClick!(s, tab, page, Date.now(), path, cwd) as boolean,
+    focus: (s: string, tab: string, page: string, cwd?: string) => pa.useFocusClick!(s, tab, page, Date.now(), path, cwd) as boolean,
+    repo: () => 'x/x',
+  };
+  const room = '/Dev/example';
+  const video = join(data, 'preview.mp4');
+  writeFileSync(video, 'the approved video');
+  const tabs: Record<string, string> = {};
+  const B = (name: string, input: Record<string, unknown>, session = 'c', cwd = room) => decide(`mcp__claude-in-chrome__${name}`, input, tabs, session, passes, cwd);
+  B('navigate', { tabId: 1, url: 'https://x.com/compose/post' });
+  B('navigate', { tabId: 2, url: 'https://x.com/compose/post' });
+  B('navigate', { tabId: 3, url: 'https://x.com/home' });
+
+  denies(B('computer', { tabId: 1, action: 'left_click', coordinate: [400, 200] }), /click into the text box/); // nothing approved yet
+  grantPass(path, 'Example 1.5 preview', room, Date.now(), 'https://x.com/compose', '', pa.mediaOf!(video) as { name: string; sha256: string; bytes: number });
+  denies(B('computer', { tabId: 3, action: 'left_click' }), /button-only/); // not the approved page
+  denies(B('computer', { tabId: 1, action: 'left_click' }, 'c', '/Dev/other'), /button-only/); // another room
+  denies(B('computer', { tabId: 1, action: 'key', text: 'Return' }), /button-only/); // keys aren't focus clicks
+  // Click the box (twice: a miss, then the box), type, upload, Post.
+  assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass');
+  assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass');
+  denies(B('computer', { tabId: 2, action: 'left_click' }), /button-only/); // focus clicks stay in one tab
+  assert.equal(B('computer', { tabId: 1, action: 'type', text: 'Example 1.5 preview' }), 'pass');
+  denies(B('computer', { tabId: 1, action: 'left_click' }), /only once that file is uploaded/); // typed: a click now could post the text alone
+  assert.equal(B('file_upload', { tabId: 1, ref: 'r1', paths: [video] }), 'pass');
+  assert.equal(B('computer', { tabId: 1, action: 'left_click' }), 'pass'); // Post: text and video
+  denies(B('computer', { tabId: 1, action: 'left_click' }), /button-only/);
+
+  // At most 3 box clicks; and once the file is up before the text, no more (the video could go alone).
+  grantPass(path, 'Second post', room, Date.now(), 'https://x.com/compose', '', pa.mediaOf!(video) as { name: string; sha256: string; bytes: number });
+  for (let i = 0; i < 3; i++) assert.equal(B('computer', { tabId: 2, action: 'left_click' }), 'pass');
+  denies(B('computer', { tabId: 2, action: 'left_click' }), /button-only/);
+  grantPass(path, 'Third post', room, Date.now(), 'https://x.com/compose', '', pa.mediaOf!(video) as { name: string; sha256: string; bytes: number });
+  B('navigate', { tabId: 4, url: 'https://x.com/compose/post' });
+  assert.equal(B('file_upload', { tabId: 4, ref: 'r1', paths: [video] }), 'pass');
+  denies(B('computer', { tabId: 4, action: 'left_click' }), /button-only/);
 });
 
 // Making a repo public has no text, so the text the owner approves is

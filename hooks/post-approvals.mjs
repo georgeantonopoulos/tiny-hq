@@ -8,7 +8,8 @@
 // room set on forging a pass could write this file itself: the guard refuses any shell command that
 // names it, but a hook can't be airtight against a determined session on the owner's own account.
 
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -128,19 +129,29 @@ const inRoom = (cwd, folder) => {
 const passHere = (cwd, p) => inRoom(cwd, p.from) || (typeof p.alsoFrom === 'string' && p.alsoFrom !== '' && inRoom(cwd, p.alsoFrom));
 
 // the owner's Approve: one pass for this exact text, at this target, for the room that asked.
-export function grantPass(text, from, now = Date.now(), path = approvalsPath(), target = '', alsoFrom = '') {
+// `media`: the one file the owner saw on the button ({ name, sha256, bytes }), for a post that carries it.
+export function grantPass(text, from, now = Date.now(), path = approvalsPath(), target = '', alsoFrom = '', media) {
   locked(path, () => {
     const keep = loadPasses(path).filter((p) => p.expires > now - 24 * 60 * 60_000).slice(-50);
-    save(path, [...keep, { text: String(text), from: String(from ?? ''), ...(alsoFrom && alsoFrom !== from ? { alsoFrom: String(alsoFrom) } : {}), target: normTarget(target), at: now, expires: now + PASS_TTL_MS }]);
+    save(path, [...keep, { text: String(text), from: String(from ?? ''), ...(alsoFrom && alsoFrom !== from ? { alsoFrom: String(alsoFrom) } : {}), target: normTarget(target), ...(media ? { media } : {}), ...(!media && /^https:\/\//.test(normTarget(target)) && String(text) === actText(target) ? { act: 'delete' } : {}), at: now, expires: now + PASS_TTL_MS }]);
   });
 }
 
 // Uses up the first unused, unexpired pass for this room whose text and target match. `where` notes a
 // browser tab and site, so that tab's Post click may follow. True if there was one.
-export function usePass(text, session, now = Date.now(), path = approvalsPath(), cwd, where, target) {
+// A pass the owner approved with a file attached is only for a post in a browser tab (where the file can
+// go up with it): a gh or curl post can't carry it, so it never uses one (a post approved with its
+// video must not go out as text alone).
+// `submits`: the typing itself sends the post (Enter at the end, or the tool's submit): under a pass
+// with a file, only once that file is up in this tab, like the click.
+export function usePass(text, session, now = Date.now(), path = approvalsPath(), cwd, where, target, submits = false) {
   return locked(path, () => {
     const list = loadPasses(path);
-    const i = list.findIndex((p) => !p.usedAt && p.expires > now && passHere(cwd, p) && sameText(p.text, text) && sameTarget(p.target, target));
+    const fileUp = (p) => p.uploaded && p.uploadSession === String(session ?? '') && p.uploadTab === String(where?.tab);
+    const fits = (p) => !p.usedAt && !p.act && p.expires > now && passHere(cwd, p) && sameText(p.text, text) && sameTarget(p.target, target) && (!p.media || (!!where && (!submits || fileUp(p))));
+    // A pass whose file already went up in this very tab first, so the click that follows can post both.
+    let i = where ? list.findIndex((p) => fits(p) && fileUp(p)) : -1;
+    if (i < 0) i = list.findIndex(fits);
     if (i < 0) return false;
     list[i] = { ...list[i], usedAt: now, session: String(session ?? ''), ...(where ? { tab: String(where.tab), site: String(where.site) } : {}) };
     save(path, list);
@@ -156,7 +167,7 @@ export function usePass(text, session, now = Date.now(), path = approvalsPath(),
 export function useTargetPass(session, now = Date.now(), path = approvalsPath(), cwd, target, match = () => true) {
   return locked(path, () => {
     const list = loadPasses(path);
-    const i = list.findIndex((p) => !p.usedAt && p.expires > now && passHere(cwd, p) && sameTarget(p.target, target) && match(p));
+    const i = list.findIndex((p) => !p.usedAt && !p.act && p.expires > now && passHere(cwd, p) && sameTarget(p.target, target) && match(p));
     if (i < 0) return false;
     list[i] = { ...list[i], usedAt: now, session: String(session ?? '') };
     save(path, list);
@@ -187,12 +198,98 @@ export function recordDeploy(project, commit, now = Date.now(), path = baselines
 
 // The Post click after typing approved text: only in the same session, tab and site, within a few
 // minutes, and only once.
+// A pass approved with a file posts only once that file has gone up in the same tab, so the text
+// never goes out alone under a pass approved with a video.
 export function useClick(session, tab, site, now = Date.now(), path = approvalsPath()) {
   return locked(path, () => {
     const list = loadPasses(path);
-    const i = list.findIndex((p) => p.usedAt && !p.clicked && p.session === String(session ?? '') && p.tab === String(tab) && p.site === String(site) && now - p.usedAt < CLICK_WINDOW_MS);
+    const i = list.findIndex((p) => p.usedAt && !p.clicked && p.session === String(session ?? '') && p.tab === String(tab) && p.site === String(site) && now - p.usedAt < CLICK_WINDOW_MS && (!p.media || (p.uploaded && p.uploadSession === p.session && p.uploadTab === p.tab)));
     if (i < 0) return false;
     list[i] = { ...list[i], clicked: now };
+    save(path, list);
+    return true;
+  });
+}
+
+// The file a post carries, as the owner sees it on their button and the guard checks it at upload: its
+// name, size and SHA-256. undefined when it isn't a readable regular file.
+export const MEDIA_MAX = 512 * 1024 * 1024;
+export function mediaOf(file) {
+  try {
+    const st = statSync(file);
+    if (!st.isFile() || st.size > MEDIA_MAX) return undefined;
+    return { name: String(file).split('/').pop(), sha256: createHash('sha256').update(readFileSync(file)).digest('hex'), bytes: st.size };
+  } catch {
+    return undefined;
+  }
+}
+
+// The upload of the one file the owner approved with a post's text, on the approved page: one file per
+// call, the same bytes they approved (its SHA-256), in the room that asked, once. Before the text is
+// typed, or after it in the same session and tab. `where`: { tab, site }; `page`: the tab's URL.
+export function useUpload(files, session, now = Date.now(), path = approvalsPath(), cwd, where, page) {
+  if (!Array.isArray(files) || files.length !== 1) return false;
+  // A full path to the file itself: the browser reads it after this check, so no link that could be
+  // pointed elsewhere in between, and no relative path read from another folder.
+  const file = String(files[0]);
+  try {
+    if (!file.startsWith('/') || lstatSync(file).isSymbolicLink()) return false;
+  } catch {
+    return false;
+  }
+  const m = mediaOf(file);
+  if (!m) return false;
+  return locked(path, () => {
+    const list = loadPasses(path);
+    const s = String(session ?? '');
+    const i = list.findIndex((p) => p.media && p.media.sha256 === m.sha256 && !p.uploaded && !p.clicked && p.expires > now && passHere(cwd, p) && sameTarget(p.target, page) && (!p.usedAt || (p.session === s && p.tab === String(where.tab) && p.site === String(where.site))));
+    if (i < 0) return false;
+    list[i] = { ...list[i], uploaded: now, uploadSession: s, uploadTab: String(where.tab) };
+    save(path, list);
+    return true;
+  });
+}
+
+// A one-off action the owner picked for one page (say, deleting a post that went out wrong): their
+// Approve on a --delete button gives a few clicks in one tab that is on exactly that page, from the room that
+// asked, within 10 minutes of the first, never any typing. Enough for a menu, its item and the
+// confirm; the pass text is the fixed sentence "delete the post at <page>".
+export const ACT_CLICKS = 4;
+export const actText = (page) => `delete the post at ${normTarget(page)}`;
+export function useActClick(session, tab, page, now = Date.now(), path = approvalsPath(), cwd) {
+  const at = normTarget(page);
+  if (!/^https:\/\//.test(at)) return false;
+  return locked(path, () => {
+    const list = loadPasses(path);
+    const s = String(session ?? '');
+    const here = (p) => p.act === 'delete' && p.target === at && sameText(p.text, actText(at)) && passHere(cwd, p);
+    // One already started in this tab first; else a fresh one.
+    let i = list.findIndex((p) => here(p) && p.usedAt && p.session === s && p.tab === String(tab) && now - p.usedAt < CLICK_WINDOW_MS && (p.clicks ?? 0) < ACT_CLICKS);
+    if (i < 0) i = list.findIndex((p) => here(p) && !p.usedAt && p.expires > now);
+    if (i < 0) return false;
+    const p = list[i];
+    list[i] = p.usedAt ? { ...p, clicks: (p.clicks ?? 0) + 1 } : { ...p, usedAt: now, session: s, tab: String(tab), clicks: 1 };
+    save(path, list);
+    return true;
+  });
+}
+
+// Clicks that put the cursor in the compose box before anything is in it (without them, typing can
+// land nowhere because the click into the text box was refused, and the pass is spent). Only while the pass is unused and its file (if any) not yet up, so the box holds nothing a
+// click could post; up to 3, in one tab, on the approved page, from the room that asked. They never
+// spend the pass: that is still the typing, then one Post click. With a file: click, type, upload, Post.
+export const FOCUS_CLICKS = 3;
+export function useFocusClick(session, tab, page, now = Date.now(), path = approvalsPath(), cwd) {
+  return locked(path, () => {
+    const list = loadPasses(path);
+    const s = String(session ?? '');
+    const t = String(tab);
+    // Nothing waiting in this tab under any pass (text typed or a file up, not yet posted): a click
+    // there could post it.
+    if (list.some((p) => !p.clicked && ((p.usedAt && p.session === s && p.tab === t) || (p.uploaded && p.uploadSession === s && p.uploadTab === t)))) return false;
+    const i = list.findIndex((p) => !p.usedAt && !p.act && !p.uploaded && p.expires > now && passHere(cwd, p) && sameTarget(p.target, page) && (p.focusClicks ?? 0) < FOCUS_CLICKS && (!p.focusTab || (p.focusTab === String(tab) && p.focusSession === s)));
+    if (i < 0) return false;
+    list[i] = { ...list[i], focusClicks: (list[i].focusClicks ?? 0) + 1, focusTab: String(tab), focusSession: s };
     save(path, list);
     return true;
   });

@@ -1075,15 +1075,15 @@ function personFor(folder: string): { id: string; path: string } | undefined {
   const r = (floors.latest()?.rooms ?? []).find((x) => x.kind === 'project' && x.project && worksIn(folder, x.project.path));
   return r?.project ? { id: `lead:${r.id}`, path: r.project.path } : undefined;
 }
-function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string }> {
-  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string }> = {};
+function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string }> {
+  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string }> = {};
   // A "Trust and start" button for a folder that isn't a room on the floor (an archive project like
   // in the cupboard) shows over the manager's head, ahead of their own questions: otherwise the owner could never see it.
   const offFloorTrust = (a: Ask) => !!a.trust && !personFor(a.folder);
   const shown = oldestPerFolder(loadAsks(ASKS)).sort((x, y) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask)));
   for (const { ask, more } of shown) {
     const who = personFor(ask.folder) ?? (offFloorTrust(ask) ? { id: 'manager' } : undefined);
-    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
+    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.media ? { media: `${ask.media.name} (${(ask.media.bytes / 1e6).toFixed(1)} MB)` } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
   }
   return out;
 }
@@ -1210,7 +1210,7 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
     // For that PR/issue only; a button from before --target names it in its question ("PR #44").
     // The pass works in the room and, when it asked from elsewhere, in that folder too (a worktree or
     // clone kept outside the room): one pass, used up wherever it's used.
-    grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '', ask.from ?? '');
+    grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '', ask.from ?? '', ask.media);
     console.log(`posts: the owner approved a post's exact text for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
   }
   // Camera and microphone: the owner's Approve on a --why camera button lets one capture run from

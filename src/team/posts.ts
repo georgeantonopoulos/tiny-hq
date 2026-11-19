@@ -10,7 +10,9 @@ import { withFileLock } from './file-lock.ts';
 export const PASS_TTL_MS = 2 * 60 * 60_000;
 export const approvalsPath = (dataDir: string) => join(dataDir, 'post-approvals.json');
 
-type Pass = { text: string; from: string; alsoFrom?: string; target?: string; at: number; expires: number; usedAt?: number; session?: string };
+// The one file a post carries, as the owner saw it on their button: the guard lets only these bytes up.
+export type PostMedia = { name: string; sha256: string; bytes: number };
+type Pass = { text: string; from: string; alsoFrom?: string; target?: string; media?: PostMedia; act?: 'delete'; at: number; expires: number; usedAt?: number; session?: string };
 
 const withLock = (path: string, fn: () => void) => withFileLock(path, fn, 'post approvals are busy');
 
@@ -38,7 +40,7 @@ export function normTarget(t: string | undefined): string {
 
 // `alsoFrom`: the folder the asker ran from when it isn't inside the room (a worktree or clone kept
 // elsewhere); the one pass works in either place, and using it in one uses it up for both.
-export function grantPass(path: string, text: string, from: string, now = Date.now(), target = '', alsoFrom = ''): void {
+export function grantPass(path: string, text: string, from: string, now = Date.now(), target = '', alsoFrom = '', media?: PostMedia): void {
   withLock(path, () => {
     let list: Pass[] = [];
     try {
@@ -50,9 +52,11 @@ export function grantPass(path: string, text: string, from: string, now = Date.n
     const keep = list.filter((p) => p && typeof p.expires === 'number' && p.expires > now - 24 * 60 * 60_000).slice(-50);
     // One decision, one pass: an Approve delivered twice (a retry) doesn't make a second one.
     const where = normTarget(target);
-    if (keep.some((p) => !p.usedAt && p.expires > now && p.text === text && p.from === from && (p.target ?? '') === where)) return;
+    if (keep.some((p) => !p.usedAt && p.expires > now && p.text === text && p.from === from && (p.target ?? '') === where && (p.media?.sha256 ?? '') === (media?.sha256 ?? ''))) return;
     const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify([...keep, { text, from, ...(alsoFrom && alsoFrom !== from ? { alsoFrom } : {}), target: where, at: now, expires: now + PASS_TTL_MS }], null, 2) + '\n', { mode: 0o600 });
+    // A --delete button: its fixed sentence makes the pass a few clicks on that one page, never typing.
+    const act = where.startsWith('https://') && text === `delete the post at ${where}` && !media ? { act: 'delete' as const } : {};
+    writeFileSync(tmp, JSON.stringify([...keep, { text, from, ...(alsoFrom && alsoFrom !== from ? { alsoFrom } : {}), target: where, ...(media ? { media } : {}), ...act, at: now, expires: now + PASS_TTL_MS }], null, 2) + '\n', { mode: 0o600 });
     renameSync(tmp, path);
   });
 }

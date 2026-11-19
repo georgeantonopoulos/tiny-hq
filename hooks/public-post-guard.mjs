@@ -745,9 +745,20 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
     const site = hostOf(where);
     // Typing the owner's approved text uses its pass; one click in that tab right after posts it.
     const typed = typeof input.text === 'string' ? input.text : typeof input.value === 'string' ? input.value : undefined;
-    if (typed !== undefined && /type|form_input|fill/.test(`${tool} ${action}`) && passes.use(typed, session, cwd, { tab, site }, where)) return 'pass';
+    // Typing that sends the post itself (the tool's submit, or Enter at the end) counts as the Post click too.
+    const submits = input.submit === true || (typed !== undefined && /[\r\n]$/.test(typed));
+    if (typed !== undefined && /type|form_input|fill/.test(`${tool} ${action}`) && passes.use(typed, session, cwd, { tab, site }, where, submits)) return 'pass';
+    // The one file the owner approved with the post's text: a post approved with a video must not go out as text alone.
+    if (/file_upload/.test(tool)) {
+      if (passes.upload?.(input.paths, session, cwd, { tab, site }, where)) return 'pass';
+      return { deny: `Public posts are button-only, files included: this uploads a file on ${site}, and the owner hasn't approved a post with exactly this file there. Ask with the file on the button: manager/ask "<what and where>" --why post --tried "<what you did>" --text "<the exact text>" --target <the page URL> --media <the file>. Once they approve, upload that one file (unchanged) in the tab, type exactly the text, then one click posts both. A post they approved with a file can't go out without it.` };
+    }
     if (/click|key|press/.test(`${tool} ${action}`) && passes.click(session, tab, site)) return 'pass';
-    return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then type exactly that text; one click in the same tab to post it is let through for 10 minutes.` };
+    // Deleting one post the owner approved on a --delete button: a few clicks on exactly that page.
+    if (/click|key|press/.test(`${tool} ${action}`) && typed === undefined && passes.act?.(session, tab, where, cwd)) return 'pass';
+    // A click into the empty compose box before typing the owner's approved text there.
+    if (/click/.test(`${tool} ${action}`) && !/key|press/.test(`${tool} ${action}`) && typed === undefined && passes.focus?.(session, tab, where, cwd)) return 'pass';
+    return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then click into the text box (up to 3 clicks before typing), type exactly that text; one click in the same tab to post it is let through for 10 minutes (a post they approved with a file: only once that file is uploaded in the tab). To delete a post: manager/ask "<which post and why>" --why post --tried "<...>" --delete <the post's URL>; their Approve lets a few clicks through in a tab on exactly that page.` };
   }
   return undefined;
 }
@@ -776,8 +787,11 @@ if (isMain) {
     try {
       const pa = await import('./post-approvals.mjs');
       defaultPasses = {
-        use: (text, session, cwd, where, target) => pa.usePass(text, session, Date.now(), pa.approvalsPath(), cwd, where, target),
+        use: (text, session, cwd, where, target, submits) => pa.usePass(text, session, Date.now(), pa.approvalsPath(), cwd, where, target, submits),
+        act: (session, tab, page, cwd) => pa.useActClick(session, tab, page, Date.now(), pa.approvalsPath(), cwd),
+        focus: (session, tab, page, cwd) => pa.useFocusClick(session, tab, page, Date.now(), pa.approvalsPath(), cwd),
         click: (session, tab, site) => pa.useClick(session, tab, site, Date.now(), pa.approvalsPath()),
+        upload: (files, session, cwd, where, page) => pa.useUpload(files, session, Date.now(), pa.approvalsPath(), cwd, where, page),
         target: (session, cwd, target) => pa.useTargetPass(session, Date.now(), pa.approvalsPath(), cwd, target),
         deployed: (project, commit) => pa.recordDeploy(project, commit),
       };
