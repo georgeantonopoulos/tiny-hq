@@ -770,31 +770,32 @@ function decideOnce(tool, input, tabs, session = '', passes = defaultPasses, cwd
     if (/click|key|press/.test(`${tool} ${action}`) && passes.click(session, tab, site)) return 'pass';
     // Deleting one post the owner approved on a --delete button: a few clicks on exactly that page.
     if (/click|key|press/.test(`${tool} ${action}`) && typed === undefined && passes.act?.(session, tab, where, cwd)) return 'pass';
-    // A click into the empty compose box before typing the owner's approved text there. The click must
-    // name what it's on (a browser tool's element description), and that must be a text box, never a
-    // button that sends: a click by screen position alone could land on a saved draft's Post button.
-    // Chrome clicks by element number (ref) with no description: its role comes from what Chrome's own
-    // page reading said that number was, in this tab, on this page, in the last few minutes.
-    // For Chrome only that recorded role counts (never words the click brings along, and never with a
-    // screen position the click could use instead).
-    const chrome = /claude-in-chrome/.test(tool);
-    const named = (chrome ? [input.coordinate === undefined ? refRole(refs, tabs[tab], input.ref) : undefined] : [input.element, input.description, input.target]).filter((v) => typeof v === 'string').join(' ');
-    const intoBox = !!named && (/text ?box|textbox|textarea|compose|editor|input|field|what'?s happening|placeholder/i.test(named) && !/\b(button|link|menuitem|checkbox)\b/i.test(named));
+    // A click into the empty compose box before typing the owner's approved text there. It must be on a
+    // text box, never a button that sends: a click by screen position alone could land on a saved draft's
+    // Post button. The click names its element by number (Chrome's ref, Playwright's ref), and what that
+    // number is comes only from the browser's own page reading (Chrome's find or read_page, Playwright's
+    // snapshot), in this tab, on this page, in the last few minutes: never from words the click brings
+    // along, and never with a screen position the click could use instead.
+    const ref = /claude-in-chrome/.test(tool) ? (input.coordinate === undefined ? input.ref : undefined) : (input.target ?? input.ref);
+    const intoBox = refRole(refs, tabs[tab], ref) === 'textbox';
     if (/click/.test(`${tool} ${action}`) && !/key|press/.test(`${tool} ${action}`) && typed === undefined && intoBox && passes.focus?.(session, tab, where, cwd)) {
-      if (chrome && refs) tabs[`refs:${tab}`] = refs; // a click into the box leaves the page as it was
+      if (refs) tabs[`refs:${tab}`] = refs; // a click into the box leaves the page as it was
       return 'pass';
     }
-    return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then click into the text box with a click that names it (an element description such as "Post text textbox", or in Chrome the text box's ref from find or read_page; up to 3 before typing, never by screen position alone), type exactly that text; one click in the same tab to post it is let through for 10 minutes (a post they approved with a file: only once that file is uploaded in the tab). To delete a post: manager/ask "<which post and why>" --why post --tried "<...>" --delete <the post's URL>; their Approve lets a few clicks through in a tab on exactly that page.` };
+    return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then click into the text box by its element number as the browser's own page reading gave it (in Chrome the ref from find or read_page, in Playwright the ref from browser_snapshot; up to 3 before typing, never by screen position alone), type exactly that text; one click in the same tab to post it is let through for 10 minutes (a post they approved with a file: only once that file is uploaded in the tab). To delete a post: manager/ask "<which post and why>" --why post --tried "<...>" --delete <the post's URL>; their Approve lets a few clicks through in a tab on exactly that page.` };
   }
   return undefined;
 }
 
-// What Chrome's find / read_page said each element number is, kept per tab for a few minutes. Only
-// the role is kept (textbox, button, link), from Chrome's accessibility tree, never the page's label.
+// What the browser's own page reading said each element number is, kept per tab for a few minutes: Chrome's
+// find / read_page, or the snapshot Playwright returns. Only the role is kept (textbox, button, link), from
+// the accessibility tree, never the page's label.
 const REF_TTL_MS = 5 * 60_000;
 const ROLE_OK = /^(textbox|searchbox|combobox)$/;
+const PW_TOOL = /^mcp__(plugin_playwright_playwright|playwright)__browser_/;
 export function recordRefs(tool, input, response, tabs, now = Date.now()) {
-  if (!/^mcp__claude-in-chrome__(find|read_page)$/.test(String(tool))) return false;
+  const pw = PW_TOOL.test(String(tool));
+  if (!pw && !/^mcp__claude-in-chrome__(find|read_page)$/.test(String(tool))) return false;
   const tab = String(input?.tabId ?? input?.tab_id ?? 'default');
   const texts = [];
   const walk = (v) => {
@@ -803,14 +804,22 @@ export function recordRefs(tool, input, response, tabs, now = Date.now()) {
     else if (v && typeof v === 'object') Object.values(v).forEach(walk);
   };
   walk(response);
-  // find: `ref_1 textbox "Post text"`; read_page: `textbox "Post text" [ref_1] ...`. A line naming more
-  // than one ref (a label that holds "[ref_7]") is skipped, and a ref seen with two roles is no text box.
+  // Chrome find: `ref_1 textbox "Post text"`; read_page: `textbox "Post text" [ref_1] ...`; Playwright:
+  // `- textbox "Post text" [ref=e3]`. A line naming more than one ref (a label that holds "[ref_7]") is
+  // skipped, and a ref seen with two roles is no text box.
   const roles = {};
   for (const line of texts.join('\n').split('\n')) {
-    if (new Set(line.match(/ref_\d+/g) ?? []).size !== 1) continue;
-    const f = line.match(/^\s*-?\s*(ref_\d+)\s+([a-z]+)\b/);
-    const r = f ? undefined : line.match(/^\s*-?\s*([a-z]+)\b.*\[(ref_\d+)\]/);
-    const [ref, role] = f ? [f[1], f[2]] : r ? [r[2], r[1]] : [];
+    let ref, role;
+    if (pw) {
+      if ((line.match(/ref=/g) ?? []).length !== 1) continue;
+      const m = line.match(/^\s*-\s*([a-z]+)\b.*\[ref=([\w-]+)\]/);
+      if (m) [role, ref] = [m[1], m[2]];
+    } else {
+      if (new Set(line.match(/ref_\d+/g) ?? []).size !== 1) continue;
+      const f = line.match(/^\s*-?\s*(ref_\d+)\s+([a-z]+)\b/);
+      const r = f ? undefined : line.match(/^\s*-?\s*([a-z]+)\b.*\[(ref_\d+)\]/);
+      [ref, role] = f ? [f[1], f[2]] : r ? [r[2], r[1]] : [];
+    }
     if (ref) roles[ref] = roles[ref] === undefined || roles[ref] === role ? role : 'conflicting';
   }
   if (!Object.keys(roles).length) return false;
@@ -891,7 +900,7 @@ if (isMain) {
       }
     } catch {
       // Fail closed for anything that could be a post: a guard problem is never a go-ahead.
-      if (/"hook_event_name"\s*:\s*"PostToolUse"/.test(raw)) return; // only notes what Chrome read; never a post
+      if (/"hook_event_name"\s*:\s*"PostToolUse"/.test(raw)) return; // only notes what the browser read; never a post
       if (/\b(gh|curl|wget|xh|http|vercel|netlify|gh-pages|firebase|surge|wrangler|fly|flyctl)\b|mcp__(claude-in-chrome|plugin_playwright|playwright)__/.test(raw)) refuse('Public-post guard could not check this call; refused to be safe. Try again; if it keeps happening, tell the manager.');
     }
   });

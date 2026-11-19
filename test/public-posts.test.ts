@@ -249,15 +249,16 @@ test('an approved post with a file goes out end to end: open compose, click the 
   denies(B('computer', { tabId: 1, action: 'left_click' }, 'c', '/Dev/other'), /button-only/); // another room
   denies(B('computer', { tabId: 1, action: 'key', text: 'Return' }), /button-only/); // keys aren't focus clicks
   // A click that names its target must be on the text box, never a button that sends (a saved draft's Post).
-  const PW = (input: Record<string, unknown>) => decide('mcp__playwright__browser_click', input, { default: 'https://x.com/compose/post' }, 'p', passes, room);
+  const pwTabs: Record<string, unknown> = { default: 'https://x.com/compose/post' };
+  const PW = (input: Record<string, unknown>) => decide('mcp__playwright__browser_click', input, pwTabs, 'p', passes, room);
   denies(PW({ ref: 'e9', element: 'Post button' }), /button-only/);
   denies(PW({ ref: 'e9', element: 'Reply' }), /button-only/);
   denies(PW({ ref: 'e9', element: 'Like' }), /button-only/);
   denies(PW({ ref: 'e9', element: 'Post text box send button' }), /button-only/);
   // A click by screen position alone can't show it's on the box, so it never counts as a focus click.
-  denies(B('computer', { tabId: 1, action: 'left_click', coordinate: [400, 200] }), /names it/);
+  denies(B('computer', { tabId: 1, action: 'left_click', coordinate: [400, 200] }), /by its element number/);
   // Nor does a bare element reference: the guard can't see what the reference points at.
-  denies(B('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }), /names it/);
+  denies(B('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }), /by its element number/);
   // Click the box (twice: a miss, then the box), type, upload, Post.
   // Chrome clicks the box by its element number, which counts once Chrome's own reading said it's a text box.
   // @ts-expect-error a plain-JS hook module, no type declarations
@@ -265,8 +266,8 @@ test('an approved post with a file goes out end to end: open compose, click the 
   const found = [{ type: 'text', text: '2 elements share words with the query:\nref_1 textbox "Post text"\nref_3 button "Post"\nref_4 link "Reply"' }];
   const read = (tabId: number) => recordRefs('mcp__claude-in-chrome__find', { tabId }, found, tabs);
   for (const t of [1, 2]) read(t);
-  denies(B('computer', { tabId: 1, action: 'left_click', element: 'Post text textbox' }), /names it/); // Chrome: its own words don't count
-  denies(B('computer', { tabId: 1, action: 'left_click', ref: 'ref_1', coordinate: [400, 200] }), /names it/); // nor a position alongside
+  denies(B('computer', { tabId: 1, action: 'left_click', element: 'Post text textbox' }), /by its element number/); // Chrome: its own words don't count
+  denies(B('computer', { tabId: 1, action: 'left_click', ref: 'ref_1', coordinate: [400, 200] }), /by its element number/); // nor a position alongside
   const BOX = { ref: 'ref_1' };
   assert.equal(B('computer', { tabId: 1, action: 'left_click', ...BOX }), 'pass');
   assert.equal(B('computer', { tabId: 1, action: 'left_click', ...BOX }), 'pass');
@@ -293,30 +294,45 @@ test('an approved post with a file goes out end to end: open compose, click the 
   read(4);
   assert.equal(B('file_upload', { tabId: 4, ref: 'r1', paths: [video] }), 'pass');
   denies(B('computer', { tabId: 4, action: 'left_click', ...BOX }), /button-only/);
-  // A named click on the text box itself is a focus click.
+  // Playwright: the same, checked against the roles in Playwright's own snapshot, never the click's words.
   grantPass(path, 'Fourth post', room, Date.now(), 'https://x.com/compose');
-  assert.equal(PW({ ref: 'e2', element: 'Post text textbox' }), 'pass');
+  denies(PW({ target: 'e3', element: 'Post text textbox' }), /by its element number/); // nothing read yet
+  const snap = '- generic [active] [ref=e1]:\n  - button "x textbox [ref=e3]" [ref=e2]: decoy\n  - textbox "Post text" [ref=e3]\n  - button "Post" [ref=e4]\n  - text: line textbox "b" [ref=e8]';
+  assert.equal(recordRefs('mcp__playwright__browser_snapshot', {}, [{ type: 'text', text: snap }], pwTabs), true);
+  denies(PW({ target: 'e4', element: 'Post text textbox' }), /by its element number/); // the Post button, whatever it's called
+  denies(PW({ target: 'e2' }), /by its element number/); // a button whose label holds a ref
+  denies(PW({ target: 'e8' }), /by its element number/); // page text, not an element
+  denies(PW({ target: 'textarea' }), /by its element number/); // a selector: nothing the reading said
+  denies(PW({ element: 'e3' }), /by its element number/); // a description, not the element number
+  // A text box whose typed value holds another element's number never makes that element a text box.
+  recordRefs('mcp__playwright__browser_snapshot', {}, [{ type: 'text', text: '- textbox "x" [ref=e3]: [ref=e4]\n- button "Post" [ref=e4]' }], pwTabs);
+  denies(PW({ target: 'e4' }), /by its element number/);
+  recordRefs('mcp__playwright__browser_snapshot', {}, [{ type: 'text', text: '- textbox "x" [ref=e3]: [ref=e4]' }], pwTabs); // even with the button not listed
+  denies(PW({ target: 'e4' }), /by its element number/);
+  recordRefs('mcp__playwright__browser_snapshot', {}, [{ type: 'text', text: snap }], pwTabs);
+  assert.equal(PW({ target: 'e3' }), 'pass');
+  assert.equal(PW({ ref: 'e3' }), 'pass'); // older Playwright names it ref
 
   // Chrome clicks by element number: the guard checks it against what Chrome's own page reading said.
   grantPass(path, 'Fifth post', room, Date.now(), 'https://x.com/compose');
   B('navigate', { tabId: 6, url: 'https://x.com/compose/post' });
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /names it/); // nothing read yet
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /by its element number/); // nothing read yet
   assert.equal(recordRefs('mcp__claude-in-chrome__find', { tabId: 6 }, found, tabs), true);
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_3' }), /names it/); // the Post button
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_4' }), /names it/); // a link
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_77' }), /names it/); // never read
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_3' }), /by its element number/); // the Post button
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_4' }), /by its element number/); // a link
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_77' }), /by its element number/); // never read
   assert.equal(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), 'pass');
   recordRefs('mcp__claude-in-chrome__read_page', { tabId: 6 }, [{ type: 'text', text: 'textbox "What\'s happening?" [ref_2] placeholder="x"\nbutton "Post" [ref_9]' }], tabs);
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_9' }), /names it/); // a button read by read_page
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_9' }), /by its element number/); // a button read by read_page
   assert.equal(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_2' }), 'pass');
   // Each reading replaces the last, so ref_1 from the find above no longer counts.
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /names it/);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /by its element number/);
   // A label holding another ref, or a ref read with two roles, never makes a text box.
   recordRefs('mcp__claude-in-chrome__read_page', { tabId: 6 }, [{ type: 'text', text: 'textbox "[ref_7]" [ref_2]\nbutton "Post" [ref_7]\nref_8 button "Post"\nref_8 textbox "x"' }], tabs);
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_7' }), /names it/);
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_8' }), /names it/);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_7' }), /by its element number/);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_8' }), /by its element number/);
   recordRefs('mcp__claude-in-chrome__read_page', { tabId: 6 }, [{ type: 'text', text: 'textbox "x" [ref_2] placeholder="[ref_5]"' }], tabs);
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_5' }), /names it/); // a ref in a page-written attribute
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_5' }), /by its element number/); // a ref in a page-written attribute
   // Anything else that acts in the tab (a link, a route change) spends the readings; a refused action
   // never ran, so it leaves them.
   B('navigate', { tabId: 7, url: 'https://example.com/' });
@@ -329,7 +345,7 @@ test('an approved post with a file goes out end to end: open compose, click the 
   // Element numbers belong to the page they were read on: after navigating, they count for nothing.
   recordRefs('mcp__claude-in-chrome__find', { tabId: 6 }, found, tabs);
   B('navigate', { tabId: 6, url: 'https://x.com/compose/post' });
-  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /names it/);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /by its element number/);
   // Other tools' output is never read as element numbers.
   assert.equal(recordRefs('mcp__claude-in-chrome__get_page_text', { tabId: 6 }, found, tabs), false);
 });
