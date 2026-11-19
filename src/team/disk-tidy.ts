@@ -27,6 +27,12 @@ import { homedir } from 'node:os';
 export const LOW_GB = 30; // start clearing under this much free space
 export const ENOUGH_GB = 80; // stop once this much is free again
 export const IDLE_DAYS = 2; // untouched for this long before it counts as idle
+// Disk nearly full (free space can fall from 15 GB to 2 GB in a day while a huge build written the
+// day before stays, "used in the last 2 days"): under CRITICAL_GB a build untouched for
+// CRITICAL_IDLE_HOURS may go too. A busy session in the project still holds it.
+export const CRITICAL_GB = 10;
+export const CRITICAL_IDLE_HOURS = 6;
+export const TELL_EVERY_MS = 6 * 60 * 60_000; // tell the manager at most this often while still short
 export const EVERY_MS = 60 * 60_000; // look at most once an hour while space is low
 
 const GB = 1024 ** 3;
@@ -188,9 +194,13 @@ export function jobBuilds(home = homedir(), out: Candidate[] = []): Candidate[] 
   return out;
 }
 
+const idleLabel = (ms: number): string => (ms % DAY === 0 ? `${ms / DAY} days` : `${Math.round(ms / 3_600_000)} hours`);
+/** How long a build must sit untouched before it may go, given the free space now. */
+export const idleFor = (freeBytes: number): number => (freeBytes < CRITICAL_GB * GB ? CRITICAL_IDLE_HOURS * 3_600_000 : IDLE_DAYS * DAY);
+
 /** Why a build folder must stay, or undefined when it may go. `busy` = folders busy sessions work in. */
-export function keepReason(c: Candidate, busy: string[], now: number): string | undefined {
-  if (now - c.newest < IDLE_DAYS * DAY) return `used in the last ${IDLE_DAYS} days`;
+export function keepReason(c: Candidate, busy: string[], now: number, idleMs = IDLE_DAYS * DAY): string | undefined {
+  if (now - c.newest < idleMs) return `used in the last ${idleLabel(idleMs)}`;
   if (busy.some((b) => b === c.project || b.startsWith(`${c.project}/`))) return 'a session is busy in this project';
   if (c.project.includes('/.claude/jobs/') && jobWorking(c.project)) return 'its background job is still working';
   return gitAllows(c.path);
@@ -260,10 +270,10 @@ export function survey(projects: string[], busy: string[], now = Date.now(), hom
 
 /** Clears the picked folders, looking again at each one just before it goes (measuring and earlier
  * removals take time, and a build may have started meanwhile); returns what went. */
-export async function clear(pick: Candidate[], busyNow: () => Promise<string[]> = busyFolders): Promise<{ path: string; bytes: number }[]> {
+export async function clear(pick: Candidate[], busyNow: () => Promise<string[]> = busyFolders, idleMs = IDLE_DAYS * DAY): Promise<{ path: string; bytes: number }[]> {
   const done: { path: string; bytes: number }[] = [];
   for (const c of pick) {
-    if (keepReason({ ...c, newest: newestIn(c.path) }, await busyNow(), Date.now())) continue;
+    if (keepReason({ ...c, newest: newestIn(c.path) }, await busyNow(), Date.now(), idleMs)) continue;
     if (await remove(c.path)) done.push({ path: c.path, bytes: c.bytes ?? 0 });
   }
   return done;
@@ -279,13 +289,30 @@ export async function busyFolders(): Promise<string[]> {
   return [...bg.filter((s) => s.status === 'busy' || s.servers).map((s) => s.realCwd), ...mine.map((s) => s.realCwd ?? '')].filter(Boolean);
 }
 
+/** What the manager hears when the tidy can't get free space back over LOW_GB. */
+export function shortText(free: number, kept: Candidate[]): string {
+  const big = kept
+    .filter((c) => (c.bytes ?? 0) >= GB)
+    .sort((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0))
+    .slice(0, 3)
+    .map((c) => `${gb(c.bytes ?? 0)} ${c.path.replace(homedir(), '~')} (${c.keep})`);
+  return `Disk low: ${gb(free)} free and the office can't clear more on its own.${big.length ? ` Biggest builds it kept: ${big.join('; ')}.` : ''} Something else is filling it; look before it hits zero.`;
+}
+
 let lastLook = 0;
+let lastTold = 0;
 let running = false;
 const breathe = () => new Promise<void>((ok) => setImmediate(ok));
 /** The office tick: nothing at all unless free space is under LOW_GB, then at most once an hour. */
-export async function tidyDiskIfLow(dataDir: string, projects: string[], now = Date.now()): Promise<TidyLog | undefined> {
+// `tell` runs (at most every TELL_EVERY_MS) when free space is still under LOW_GB afterwards: a run
+// that found nothing to clear used to write only to the log, and the disk could fill unnoticed.
+export async function tidyDiskIfLow(dataDir: string, projects: string[], now = Date.now(), tell: (text: string) => unknown = () => undefined): Promise<TidyLog | undefined> {
   const before = freeBytes();
-  if (before >= LOW_GB * GB || now - lastLook < EVERY_MS) return undefined;
+  if (before >= LOW_GB * GB) {
+    lastTold = 0; // back over the line: the next drop is news again
+    return undefined;
+  }
+  if (now - lastLook < EVERY_MS) return undefined;
   if (running) return undefined; // the last run is still measuring or clearing
   lastLook = now;
   running = true;
@@ -298,17 +325,24 @@ export async function tidyDiskIfLow(dataDir: string, projects: string[], now = D
     }
     jobBuilds(homedir(), cands);
     const busy = await busyFolders();
+    const idleMs = idleFor(before);
     for (const c of cands) {
-      c.keep = keepReason(c, busy, now);
+      c.keep = keepReason(c, busy, now, idleMs);
       await breathe();
     }
     for (const c of cands) if (!c.keep) c.bytes = await sizeOfLater(c.path);
     const pick = pickToClear(cands, before);
-    if (!pick.length) {
-      console.log(`disk: ${gb(before)} free and nothing idle to clear`);
-      return undefined;
+    let entry: TidyLog | undefined;
+    if (!pick.length) console.log(`disk: ${gb(before)} free and nothing idle to clear`);
+    else entry = finish(dataDir, now, before, await clear(pick, busyFolders, idleMs));
+    const after = entry?.freeAfter ?? before;
+    if (after < LOW_GB * GB && now - lastTold >= TELL_EVERY_MS) {
+      lastTold = now;
+      const kept = cands.filter((c) => c.keep);
+      for (const c of kept) if ((c.bytes ?? 0) === 0) c.bytes = await sizeOfLater(c.path);
+      await tell(shortText(after, kept));
     }
-    return finish(dataDir, now, before, await clear(pick));
+    return entry;
   } finally {
     running = false;
   }
