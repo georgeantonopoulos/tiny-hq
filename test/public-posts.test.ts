@@ -256,6 +256,8 @@ test('an approved post with a file goes out end to end: open compose, click the 
   denies(PW({ ref: 'e9', element: 'Post text box send button' }), /button-only/);
   // A click by screen position alone can't show it's on the box, so it never counts as a focus click.
   denies(B('computer', { tabId: 1, action: 'left_click', coordinate: [400, 200] }), /names it/);
+  // Nor does a bare element reference: the guard can't see what the reference points at.
+  denies(B('computer', { tabId: 1, action: 'left_click', ref: 'ref_7' }), /names it/);
   // Click the box (twice: a miss, then the box), type, upload, Post.
   const BOX = { element: 'Post text textbox' };
   assert.equal(B('computer', { tabId: 1, action: 'left_click', ...BOX }), 'pass');
