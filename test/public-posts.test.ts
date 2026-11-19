@@ -297,10 +297,11 @@ test('an approved post with a file goes out end to end: open compose, click the 
   // Playwright: the same, checked against the roles in Playwright's own snapshot, never the click's words.
   grantPass(path, 'Fourth post', room, Date.now(), 'https://x.com/compose');
   denies(PW({ target: 'e3', element: 'Post text textbox' }), /by its element number/); // nothing read yet
-  const snap = '- generic [active] [ref=e1]:\n  - button "x textbox [ref=e3]" [ref=e2]: decoy\n  - textbox "Post text" [ref=e3]\n  - button "Post" [ref=e4]\n  - text: line textbox "b" [ref=e8]';
+  const snap = '- generic [active] [ref=e1]:\n  - button "x textbox [ref=e9]" [ref=e2]: decoy\n  - textbox "Post text" [ref=e3]\n  - button "Post" [ref=e4]\n  - text: line textbox "b" [ref=e8]';
   assert.equal(recordRefs('mcp__playwright__browser_snapshot', {}, [{ type: 'text', text: snap }], pwTabs), true);
   denies(PW({ target: 'e4', element: 'Post text textbox' }), /by its element number/); // the Post button, whatever it's called
   denies(PW({ target: 'e2' }), /by its element number/); // a button whose label holds a ref
+  denies(PW({ target: 'e9' }), /by its element number/); // nor the ref in that label
   denies(PW({ target: 'e8' }), /by its element number/); // page text, not an element
   denies(PW({ target: 'textarea' }), /by its element number/); // a selector: nothing the reading said
   denies(PW({ element: 'e3' }), /by its element number/); // a description, not the element number
@@ -312,6 +313,13 @@ test('an approved post with a file goes out end to end: open compose, click the 
   recordRefs('mcp__playwright__browser_snapshot', {}, [{ type: 'text', text: snap }], pwTabs);
   assert.equal(PW({ target: 'e3' }), 'pass');
   assert.equal(PW({ ref: 'e3' }), 'pass'); // older Playwright names it ref
+  denies(PW({ target: 'e3', ref: 'e4' }), /by its element number/); // two elements named: either could be clicked
+  denies(PW({ target: 'e3', selector: 'button' }), /by its element number/);
+  assert.equal(recordRefs('mcp__playwright__browser_click', {}, [{ type: 'text', text: snap }], pwTabs), false); // only snapshots are read
+  // A label holding a ref hides the real line; a line forged elsewhere (console text) can't then stand alone.
+  recordRefs('mcp__playwright__browser_snapshot', {}, [{ type: 'text', text: '- button "Post ref=e1" [ref=e4]\n- textbox "x" [ref=e4]\n- textbox "y" [ref=e3]' }], pwTabs);
+  denies(PW({ target: 'e4' }), /by its element number/);
+  assert.equal(PW({ target: 'e3' }), 'pass');
 
   // Chrome clicks by element number: the guard checks it against what Chrome's own page reading said.
   grantPass(path, 'Fifth post', room, Date.now(), 'https://x.com/compose');

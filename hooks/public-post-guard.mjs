@@ -776,7 +776,9 @@ function decideOnce(tool, input, tabs, session = '', passes = defaultPasses, cwd
     // number is comes only from the browser's own page reading (Chrome's find or read_page, Playwright's
     // snapshot), in this tab, on this page, in the last few minutes: never from words the click brings
     // along, and never with a screen position the click could use instead.
-    const ref = /claude-in-chrome/.test(tool) ? (input.coordinate === undefined ? input.ref : undefined) : (input.target ?? input.ref);
+    // A Playwright click names one element: a second, different one (ref beside target) or a selector could be the one it clicks.
+    const pwRef = input.target === undefined || input.ref === undefined || input.target === input.ref ? (input.target ?? input.ref) : undefined;
+    const ref = /claude-in-chrome/.test(tool) ? (input.coordinate === undefined ? input.ref : undefined) : input.selector === undefined ? pwRef : undefined;
     const intoBox = refRole(refs, tabs[tab], ref) === 'textbox';
     if (/click/.test(`${tool} ${action}`) && !/key|press/.test(`${tool} ${action}`) && typed === undefined && intoBox && passes.focus?.(session, tab, where, cwd)) {
       if (refs) tabs[`refs:${tab}`] = refs; // a click into the box leaves the page as it was
@@ -792,7 +794,7 @@ function decideOnce(tool, input, tabs, session = '', passes = defaultPasses, cwd
 // the accessibility tree, never the page's label.
 const REF_TTL_MS = 5 * 60_000;
 const ROLE_OK = /^(textbox|searchbox|combobox)$/;
-const PW_TOOL = /^mcp__(plugin_playwright_playwright|playwright)__browser_/;
+const PW_TOOL = /^mcp__(plugin_playwright_playwright|playwright)__browser_snapshot$/;
 export function recordRefs(tool, input, response, tabs, now = Date.now()) {
   const pw = PW_TOOL.test(String(tool));
   if (!pw && !/^mcp__claude-in-chrome__(find|read_page)$/.test(String(tool))) return false;
@@ -805,17 +807,25 @@ export function recordRefs(tool, input, response, tabs, now = Date.now()) {
   };
   walk(response);
   // Chrome find: `ref_1 textbox "Post text"`; read_page: `textbox "Post text" [ref_1] ...`; Playwright:
-  // `- textbox "Post text" [ref=e3]`. A line naming more than one ref (a label that holds "[ref_7]") is
-  // skipped, and a ref seen with two roles is no text box.
+  // `- textbox "Post text" [ref=e3]`. A line naming more than one ref (a label that holds "[ref_7]") marks
+  // every ref on it as no text box, as does a ref seen with two roles.
   const roles = {};
   for (const line of texts.join('\n').split('\n')) {
     let ref, role;
     if (pw) {
-      if ((line.match(/ref=/g) ?? []).length !== 1) continue;
+      const all = [...line.matchAll(/ref=([\w-]+)/g)].map((x) => x[1]);
+      if (all.length !== 1) {
+        for (const x of all) roles[x] = 'conflicting'; // a page-written ref hides the real line: its number never counts
+        continue;
+      }
       const m = line.match(/^\s*-\s*([a-z]+)\b.*\[ref=([\w-]+)\]/);
       if (m) [role, ref] = [m[1], m[2]];
     } else {
-      if (new Set(line.match(/ref_\d+/g) ?? []).size !== 1) continue;
+      const all = new Set(line.match(/ref_\d+/g) ?? []);
+      if (all.size !== 1) {
+        for (const x of all) roles[x] = 'conflicting';
+        continue;
+      }
       const f = line.match(/^\s*-?\s*(ref_\d+)\s+([a-z]+)\b/);
       const r = f ? undefined : line.match(/^\s*-?\s*([a-z]+)\b.*\[(ref_\d+)\]/);
       [ref, role] = f ? [f[1], f[2]] : r ? [r[2], r[1]] : [];

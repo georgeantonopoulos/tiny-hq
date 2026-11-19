@@ -40,7 +40,7 @@ export const HOOKS: HookSpec[] = [
     matcher: 'Bash|mcp__claude-in-chrome__.*|mcp__plugin_playwright_playwright__.*|mcp__playwright__.*',
     // It also reads what the browser's own page reading (Chrome's find / read_page, Playwright's snapshot)
     // said each element number is, so a click by number into a compose box can be checked to be on the text box.
-    also: [{ event: 'PostToolUse', matcher: 'mcp__claude-in-chrome__(find|read_page)|mcp__plugin_playwright_playwright__browser_.*|mcp__playwright__browser_.*' }],
+    also: [{ event: 'PostToolUse', matcher: 'mcp__claude-in-chrome__(find|read_page)|mcp__plugin_playwright_playwright__browser_snapshot|mcp__playwright__browser_snapshot' }],
     file: 'public-post-guard.mjs',
     what: 'Public-post guard: any session about to comment, post or upload on a public site (GitHub comments, social sites, forums) stops and asks you first, showing the exact action.',
   },

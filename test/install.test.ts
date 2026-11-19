@@ -10,7 +10,7 @@ test("hooks go in and come out without touching anything of the owner's", () => 
   const mine = { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo mine' }] }] }, model: 'opus' };
   const on = withHooks(mine, '/app', ['name-tag', 'public-posts']);
   assert.equal(installedHooks(on).length, 3, 'the post guard also reads Chrome page readings');
-  assert.match(JSON.stringify(on.hooks?.PostToolUse), /claude-in-chrome__\(find\|read_page\)\|mcp__plugin_playwright_playwright__browser_\.\*\|mcp__playwright__browser_\.\*".*# tiny-hq public-posts/);
+  assert.match(JSON.stringify(on.hooks?.PostToolUse), /claude-in-chrome__\(find\|read_page\)\|mcp__plugin_playwright_playwright__browser_snapshot\|mcp__playwright__browser_snapshot".*# tiny-hq public-posts/);
   assert.equal(installedHooks(withHooks(on, '/app', ['name-tag', 'public-posts'])).length, 3, 'running setup twice adds nothing twice');
   assert.deepEqual(withoutHooks(on), mine, 'uninstall leaves exactly what was there');
   assert.deepEqual(withoutHooks({ model: 'x' }), { model: 'x' });
