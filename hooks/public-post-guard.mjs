@@ -730,6 +730,7 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
   const action = String(input.action ?? '');
   const url = typeof input.url === 'string' ? input.url : undefined;
   if (/navigate/.test(tool) && url) {
+    delete tabs[`refs:${tab}`]; // element numbers belong to the page they were read on
     tabs[tab] = url;
     tabs._last = tab;
     return undefined; // going to a page is looking; acting on it is what's checked
@@ -759,12 +760,49 @@ export function decide(tool, input, tabs, session = '', passes = defaultPasses, 
     // A click into the empty compose box before typing the owner's approved text there. The click must
     // name what it's on (a browser tool's element description), and that must be a text box, never a
     // button that sends: a click by screen position alone could land on a saved draft's Post button.
-    const named = [input.element, input.description, input.target].filter((v) => typeof v === 'string').join(' ');
+    // Chrome clicks by element number (ref) with no description: its role comes from what Chrome's own
+    // page reading said that number was, in this tab, on this page, in the last few minutes.
+    const named = [input.element, input.description, input.target, refRole(tabs, tab, input.ref)].filter((v) => typeof v === 'string').join(' ');
     const intoBox = !!named && (/text ?box|textbox|textarea|compose|editor|input|field|what'?s happening|placeholder/i.test(named) && !/\b(button|link|menuitem|checkbox)\b/i.test(named));
     if (/click/.test(`${tool} ${action}`) && !/key|press/.test(`${tool} ${action}`) && typed === undefined && intoBox && passes.focus?.(session, tab, where, cwd)) return 'pass';
-    return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then click into the text box with a click that names it (e.g. element "Post text textbox"; up to 3 before typing, never by screen position alone), type exactly that text; one click in the same tab to post it is let through for 10 minutes (a post they approved with a file: only once that file is uploaded in the tab). To delete a post: manager/ask "<which post and why>" --why post --tried "<...>" --delete <the post's URL>; their Approve lets a few clicks through in a tab on exactly that page.` };
+    return { deny: `Public posts are button-only: this browser action is on ${site}, and the owner hasn't approved the text being posted there. ${HOW} Then click into the text box with a click that names it (an element description such as "Post text textbox", or in Chrome the text box's ref from find or read_page; up to 3 before typing, never by screen position alone), type exactly that text; one click in the same tab to post it is let through for 10 minutes (a post they approved with a file: only once that file is uploaded in the tab). To delete a post: manager/ask "<which post and why>" --why post --tried "<...>" --delete <the post's URL>; their Approve lets a few clicks through in a tab on exactly that page.` };
   }
   return undefined;
+}
+
+// What Chrome's find / read_page said each element number is, kept per tab for a few minutes. Only
+// the role is kept (textbox, button, link), from Chrome's accessibility tree, never the page's label.
+const REF_TTL_MS = 5 * 60_000;
+const ROLE_OK = /^(textbox|searchbox|combobox)$/;
+export function recordRefs(tool, input, response, tabs, now = Date.now()) {
+  if (!/^mcp__claude-in-chrome__(find|read_page)$/.test(String(tool))) return false;
+  const tab = String(input?.tabId ?? input?.tab_id ?? 'default');
+  const texts = [];
+  const walk = (v) => {
+    if (typeof v === 'string') texts.push(v);
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  walk(response);
+  const roles = {};
+  for (const line of texts.join('\n').split('\n')) {
+    // find: `ref_1 textbox "Post text"`; read_page: `textbox "Post text" [ref_1] ...`
+    const f = line.match(/^\s*-?\s*(ref_\d+)\s+([a-z]+)\b/);
+    const r = f ? undefined : line.match(/^\s*-?\s*([a-z]+)\b[^\[]*\[(ref_\d+)\]/);
+    if (f) roles[f[1]] = f[2];
+    else if (r) roles[r[2]] = r[1];
+  }
+  if (!Object.keys(roles).length) return false;
+  const key = `refs:${tab}`;
+  const prev = tabs[key] && now - tabs[key].at < REF_TTL_MS ? tabs[key].roles : {};
+  tabs[key] = { at: now, page: tabs[tab], roles: { ...prev, ...roles } };
+  return true;
+}
+function refRole(tabs, tab, ref, now = Date.now()) {
+  const r = tabs[`refs:${tab}`];
+  if (typeof ref !== 'string' || !r || now - r.at >= REF_TTL_MS || r.page !== tabs[tab]) return undefined;
+  const role = r.roles?.[ref];
+  return typeof role === 'string' && ROLE_OK.test(role) ? 'textbox' : role;
 }
 
 let defaultPasses = { use: () => false, click: () => false };
@@ -808,6 +846,10 @@ if (isMain) {
         // first browser call this session
       }
       const before = JSON.stringify(tabs);
+      if (hook.hook_event_name === 'PostToolUse') {
+        if (recordRefs(hook.tool_name, hook.tool_input, hook.tool_response, tabs)) writeFileSync(file, JSON.stringify(tabs), { mode: 0o600 });
+        return;
+      }
       const d = decide(hook.tool_name, hook.tool_input, tabs, hook.session_id ?? '', defaultPasses, hook.cwd ?? process.cwd());
       if (JSON.stringify(tabs) !== before) writeFileSync(file, JSON.stringify(tabs), { mode: 0o600 });
       if (d && typeof d === 'object') {
@@ -816,6 +858,7 @@ if (isMain) {
       }
     } catch {
       // Fail closed for anything that could be a post: a guard problem is never a go-ahead.
+      if (/"hook_event_name"\s*:\s*"PostToolUse"/.test(raw)) return; // only notes what Chrome read; never a post
       if (/\b(gh|curl|wget|xh|http|vercel|netlify|gh-pages|firebase|surge|wrangler|fly|flyctl)\b|mcp__(claude-in-chrome|plugin_playwright|playwright)__/.test(raw)) refuse('Public-post guard could not check this call; refused to be safe. Try again; if it keeps happening, tell the manager.');
     }
   });

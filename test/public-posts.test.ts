@@ -287,6 +287,27 @@ test('an approved post with a file goes out end to end: open compose, click the 
   // A named click on the text box itself is a focus click.
   grantPass(path, 'Fourth post', room, Date.now(), 'https://x.com/compose');
   assert.equal(PW({ ref: 'e2', element: 'Post text textbox' }), 'pass');
+
+  // Chrome clicks by element number: the guard checks it against what Chrome's own page reading said.
+  // @ts-expect-error a plain-JS hook module, no type declarations
+  const { recordRefs } = (await import('../hooks/public-post-guard.mjs')) as { recordRefs: (...a: unknown[]) => boolean };
+  grantPass(path, 'Fifth post', room, Date.now(), 'https://x.com/compose');
+  B('navigate', { tabId: 6, url: 'https://x.com/compose/post' });
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /names it/); // nothing read yet
+  const found = [{ type: 'text', text: '2 elements share words with the query:\nref_1 textbox "Post text"\nref_3 button "Post"\nref_4 link "Reply"' }];
+  assert.equal(recordRefs('mcp__claude-in-chrome__find', { tabId: 6 }, found, tabs), true);
+  recordRefs('mcp__claude-in-chrome__read_page', { tabId: 6 }, [{ type: 'text', text: 'textbox "What\'s happening?" [ref_2] placeholder="x"\nbutton "Post" [ref_9]' }], tabs);
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_3' }), /names it/); // the Post button
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_4' }), /names it/); // a link
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_9' }), /names it/); // a button read by read_page
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_77' }), /names it/); // never read
+  assert.equal(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), 'pass');
+  assert.equal(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_2' }), 'pass');
+  // Element numbers belong to the page they were read on: after navigating, they count for nothing.
+  B('navigate', { tabId: 6, url: 'https://x.com/compose/post' });
+  denies(B('computer', { tabId: 6, action: 'left_click', ref: 'ref_1' }), /names it/);
+  // Other tools' output is never read as element numbers.
+  assert.equal(recordRefs('mcp__claude-in-chrome__get_page_text', { tabId: 6 }, found, tabs), false);
 });
 
 // Making a repo public has no text, so the text the owner approves is
