@@ -23,7 +23,9 @@ export function withFileLock<T>(path: string, fn: () => T, busy = `${path} is bu
       // Its age: the time written inside it, or (just taken, nothing written yet) the folder's own
       // age, so a lock another process has only this moment taken is never mistaken for a stale one.
       try {
-        stale = Date.now() - Number(readFileSync(`${lock}/at`, 'utf8')) > STALE_MS;
+        const at = Number(readFileSync(`${lock}/at`, 'utf8'));
+        if (!at) throw new Error('time not written yet'); // fall back to the folder's age
+        stale = Date.now() - at > STALE_MS;
       } catch {
         try {
           stale = Date.now() - statSync(lock).mtimeMs > STALE_MS;

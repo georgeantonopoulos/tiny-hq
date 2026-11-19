@@ -91,7 +91,9 @@ function locked(path, fn) {
       // Its age: the time written inside it, or (just taken, time not written yet) the folder's own
       // age, so a lock another process has only this moment taken is never mistaken for a stale one.
       try {
-        stale = Date.now() - Number(readFileSync(`${lock}/at`, 'utf8')) > 10_000;
+        const at = Number(readFileSync(`${lock}/at`, 'utf8'));
+        if (!at) throw new Error('time not written yet'); // fall back to the folder's age
+        stale = Date.now() - at > 10_000;
       } catch {
         try {
           stale = Date.now() - statSync(lock).mtimeMs > 10_000;
@@ -285,8 +287,9 @@ export function useFocusClick(session, tab, page, now = Date.now(), path = appro
     const s = String(session ?? '');
     const t = String(tab);
     // Nothing waiting in this tab under any pass (text typed or a file up, not yet posted): a click
-    // there could post it.
-    if (list.some((p) => !p.clicked && ((p.usedAt && p.session === s && p.tab === t) || (p.uploaded && p.uploadSession === s && p.uploadTab === t)))) return false;
+    // there could post it. Typed text waits only as long as its Post click may come; a file up waits
+    // until its pass runs out, so a post never left behind blocks the box for good.
+    if (list.some((p) => !p.clicked && ((p.usedAt && p.session === s && p.tab === t && now - p.usedAt < CLICK_WINDOW_MS) || (p.uploaded && p.uploadSession === s && p.uploadTab === t && p.expires > now)))) return false;
     const i = list.findIndex((p) => !p.usedAt && !p.act && !p.uploaded && p.expires > now && passHere(cwd, p) && sameTarget(p.target, page) && (p.focusClicks ?? 0) < FOCUS_CLICKS && (!p.focusTab || (p.focusTab === String(tab) && p.focusSession === s)));
     if (i < 0) return false;
     list[i] = { ...list[i], focusClicks: (list[i].focusClicks ?? 0) + 1, focusTab: String(tab), focusSession: s };

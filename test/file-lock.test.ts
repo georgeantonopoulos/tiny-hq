@@ -81,3 +81,12 @@ test('updateJobs and updateAsks change only what the caller changes', () => {
   assert.equal(loadAsks(asks)[0]?.id, 'abc123');
   assert.equal(execFileSync('ls', [dir]).toString().includes('.lock'), false);
 });
+
+test('a lock just taken, its time not written yet, is never taken for a stale one', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+  const path = join(dir, 'x.json');
+  mkdirSync(`${path}.lock`);
+  writeFileSync(`${path}.lock/at`, ''); // the holder has created the file but not written the time
+  assert.throws(() => withFileLock(path, () => 1, 'x is busy'), /x is busy/);
+  assert.equal(existsSync(`${path}.lock`), true, 'the live lock is left alone');
+});

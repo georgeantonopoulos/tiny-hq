@@ -262,6 +262,13 @@ test('an approved post with a file goes out end to end: open compose, click the 
   grantPass(path, 'Second post', room, Date.now(), 'https://x.com/compose', '', pa.mediaOf!(video) as { name: string; sha256: string; bytes: number });
   for (let i = 0; i < 3; i++) assert.equal(B('computer', { tabId: 2, action: 'left_click' }), 'pass');
   denies(B('computer', { tabId: 2, action: 'left_click' }), /button-only/);
+  // Text typed under a pass whose Post click never came stops holding the box once its click time is over.
+  const later = join(data, 'later.json');
+  grantPass(later, 'Left behind', room, Date.now(), 'https://x.com/compose');
+  assert.equal(pa.usePass!('Left behind', 'c', Date.now(), later, room, { tab: '5', site: 'x.com', page: 'https://x.com/compose/post' }, 'https://x.com/compose/post'), true);
+  grantPass(later, 'Next one', room, Date.now(), 'https://x.com/compose');
+  assert.equal(pa.useFocusClick!('c', '5', 'https://x.com/compose/post', Date.now(), later, room), false); // typed text waiting
+  assert.equal(pa.useFocusClick!('c', '5', 'https://x.com/compose/post', Date.now() + 11 * 60_000, later, room), true);
   grantPass(path, 'Third post', room, Date.now(), 'https://x.com/compose', '', pa.mediaOf!(video) as { name: string; sha256: string; bytes: number });
   B('navigate', { tabId: 4, url: 'https://x.com/compose/post' });
   assert.equal(B('file_upload', { tabId: 4, ref: 'r1', paths: [video] }), 'pass');
