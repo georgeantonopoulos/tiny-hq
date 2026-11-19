@@ -14,10 +14,10 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writ
 import { dirname, resolve } from 'node:path';
 import { MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
-import { addAsk, asksPath, loadAsks, saveAsks } from '../team/asks.ts';
+import { addAsk, asksPath, updateAsks } from '../team/asks.ts';
 import { normTarget } from '../team/posts.ts';
 import { holdWatch, holdWatchId, loadSchedule, saveSchedule, schedulePath } from '../team/schedule.ts';
-import { briefPath, briefTemplate, describeJobs, emptySections, jobsPath, loadJobs, parseUntil, saveJobs, validJob, type Job } from '../team/jobs.ts';
+import { briefPath, briefTemplate, CHECK_EVERY, describeJobs, emptySections, jobsPath, loadJobs, parseUntil, updateJobs, validJob, type Job } from '../team/jobs.ts';
 
 const path = jobsPath(MANAGER_NOTES_DIR);
 const [cmd, ...rest] = process.argv.slice(2);
@@ -28,7 +28,8 @@ const fail = (msg: string): never => {
 const jobs = loadJobs(path);
 const base = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
 const find = (id: string | undefined): Job => jobs.find((j) => j.id === id) ?? fail(`No job called "${id}". Try: job list`);
-const put = (j: Job) => saveJobs(path, [...jobs.filter((x) => x.id !== j.id), j]);
+// Only this one job changes; any other job changed meanwhile (the office nudging) is kept.
+const put = (j: Job) => updateJobs(path, (all) => [...all.filter((x) => x.id !== j.id), j]);
 // A held job's own watch on the timetable (src/team/schedule.ts holdWatch).
 const SCHEDULE = schedulePath(MANAGER_NOTES_DIR);
 const JOB_CLI = resolve(dirname(process.argv[1] ?? '.'), '../../manager/job');
@@ -100,14 +101,13 @@ switch (cmd) {
     } catch {
       /* keep as written */
     }
-    const asks = addAsk(loadAsks(asksPath(MANAGER_NOTES_DIR)), folder, what, Date.now(), undefined, undefined, j.id, undefined, false, undefined, { why: proof.why!.trim().toLowerCase(), tried: proof.tried!, ...(isPost ? { post: postText, target: normTarget(postTarget) } : {}) });
-    saveAsks(asksPath(MANAGER_NOTES_DIR), asks);
+    const asks = updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => addAsk(all, folder, what, Date.now(), undefined, undefined, j.id, undefined, false, undefined, { why: proof.why!.trim().toLowerCase(), tried: proof.tried!, ...(isPost ? { post: postText, target: normTarget(postTarget) } : {}) }));
     const rides = asks.find((a) => a.forJob === j.id);
     if (rides) {
-      console.log(`${j.id} is waiting on the owner: ${what}. The room already has its own question over its head ("${rides.question.slice(0, 80)}"), so the owner sees only that one; their answer goes to the room and puts the job back to work. Don't also ask them in chat. The office checks every 15 minutes whether it's done; when it is: job go ${j.id}`);
+      console.log(`${j.id} is waiting on the owner: ${what}. The room already has its own question over its head ("${rides.question.slice(0, 80)}"), so the owner sees only that one; their answer goes to the room and puts the job back to work. Don't also ask them in chat. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
       break;
     }
-    console.log(`${j.id} is waiting on the owner: ${what}. The owner sees it as an Approve / No button over the room's head; Approve is typed into the room's chat and puts the job back to work. Don't also ask them in chat. The office checks every 15 minutes whether it's done; when it is: job go ${j.id}`);
+    console.log(`${j.id} is waiting on the owner: ${what}. The owner sees it as an Approve / No button over the room's head; Approve is typed into the room's chat and puts the job back to work. Don't also ask them in chat. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
     break;
   }
   case 'hold': {
@@ -119,7 +119,7 @@ switch (cmd) {
     if (!until) fail('Could not read --until, or it is not within the next 14 days. Use 03:00, "2026-11-08 03:00" or "in 3h".');
     const { waitingFor: _w, ...held } = j;
     put({ ...held, status: 'active', holdFor: what.slice(0, 300), holdUntil: until!, updatedAt: Date.now(), lastNudge: undefined, nudgesToday: 0, stuckDay: undefined });
-    saveAsks(asksPath(MANAGER_NOTES_DIR), loadAsks(asksPath(MANAGER_NOTES_DIR)).filter((a) => a.job !== j.id));
+    updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => all.filter((a) => a.job !== j.id));
     const watch = holdWatch(j.id, j.title, what.slice(0, 300), until!, JOB_CLI);
     saveSchedule(SCHEDULE, [...loadSchedule(SCHEDULE).filter((t) => t.id !== watch.id), watch]);
     console.log(`${j.id} is held until ${new Date(until!).toLocaleString('en-GB')}: waiting for ${what}. No nudges and no button for the owner; it resumes by itself then. The office added a watch for it to the timetable ("${watch.title}", every 2 hours until then; it goes when the job does). To end the hold early: job go ${j.id}`);
@@ -129,7 +129,7 @@ switch (cmd) {
     const j = find(rest[0]);
     const { waitingFor: _w, holdFor: _hf, holdUntil: _hu, ...back } = j;
     put({ ...back, status: 'active', updatedAt: Date.now(), lastNudge: undefined, nudgesToday: 0 });
-    saveAsks(asksPath(MANAGER_NOTES_DIR), loadAsks(asksPath(MANAGER_NOTES_DIR)).filter((a) => a.job !== j.id));
+    updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => all.filter((a) => a.job !== j.id));
     dropWatch(j.id);
     console.log(`${j.id} is active again.`);
     break;
@@ -138,7 +138,7 @@ switch (cmd) {
     const j = find(rest[0]);
     const { waitingFor: _w, holdFor: _hf, holdUntil: _hu, ...fin } = j;
     put({ ...fin, status: 'done', updatedAt: Date.now() });
-    saveAsks(asksPath(MANAGER_NOTES_DIR), loadAsks(asksPath(MANAGER_NOTES_DIR)).filter((a) => a.job !== fin.id));
+    updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => all.filter((a) => a.job !== fin.id));
     dropWatch(j.id);
     console.log(`${j.id} is done.`);
     break;
@@ -173,7 +173,7 @@ switch (cmd) {
   }
   case 'remove':
     find(rest[0]);
-    saveJobs(path, jobs.filter((x) => x.id !== rest[0]));
+    updateJobs(path, (all) => all.filter((x) => x.id !== rest[0]));
     dropWatch(rest[0]!);
     console.log(`Removed ${rest[0]}.`);
     break;

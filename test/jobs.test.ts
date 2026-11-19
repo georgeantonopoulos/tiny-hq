@@ -105,3 +105,10 @@ test('a long "done when" line is kept whole', () => {
   assert.ok(done.length > 900);
   assert.equal(validJob({ id: 'audit', room: '/r', title: 't', done, status: 'active', createdAt: 1, updatedAt: 1 })!.done, done.trim());
 });
+
+test("every brief and the room guidance forbid touching the owner's VPN or network settings", async () => {
+  const { briefTemplate } = await import('../src/team/jobs.ts');
+  const { readFileSync } = await import('node:fs');
+  assert.match(briefTemplate(job), /Never change, import or connect a VPN or network profile/);
+  assert.match(readFileSync(new URL('../skills/theoffice/SKILL.md', import.meta.url), 'utf8'), /Never touch the owner's VPN or network settings/);
+});

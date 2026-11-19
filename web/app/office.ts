@@ -10,6 +10,8 @@ import { drawProp, effect, type Effect } from './antics.ts';
 import type { Anim, Prop } from './whimsy.ts';
 import { Bubbles, type Answer, type AskInfo, type Speaker } from './bubbles.ts';
 import type { SceneObject } from '../../src/office/scene.ts';
+import { buildFloorPlan } from './floorplan.ts';
+import { drawFloorBase } from './hallway.ts';
 
 type Graphics = import('pixi.js').Graphics;
 type Container = import('pixi.js').Container;
@@ -231,34 +233,30 @@ export class Office {
     this.pills.clear();
     this.screens.clear();
     this.sparks = [];
-    const W = floor.width * TILE;
-    const H = floor.height * TILE;
-
-    // Hallway: dark two-tone tiles, so the lit rooms stand out (colours can come from the saved decor).
+    // Hallways and common areas: stone pavers and carpet runners along the walking routes, with
+    // furnished nooks filling the space the rooms leave empty (honours saved decor).
     const theme = (floor as Floor & { theme?: { corridor?: string; wall?: string; background?: string } }).theme ?? {};
     const k = th.night ? 0.45 : 1;
     this.wallColour = theme.wall ? dim(hexOr(theme.wall, th.wall), k) : th.wall;
     this.edgeColour = theme.wall && /^#[0-9a-f]{6}$/i.test(theme.wall) ? parseInt(darker(theme.wall, th.night ? 0.7 : 0.4).slice(1), 16) : th.edge;
     this.app.renderer.background.color = theme.background ? dim(hexOr(theme.background, th.void), k) : th.void;
-    const hall = theme.corridor ? dim(hexOr(theme.corridor, th.hall), k) : th.hall;
-    const base = new PIXI.Graphics().rect(0, 0, W, H).fill(hall);
-    for (let y = 0; y < floor.height; y++)
-      for (let x = 0; x < floor.width; x++) {
-        if ((x + y) % 2) base.rect(x * TILE, y * TILE, TILE, TILE).fill({ color: theme.corridor ? 0x000000 : th.hallAlt, alpha: theme.corridor ? 0.1 : 1 });
-        base.rect(x * TILE, y * TILE, TILE, 1).fill({ color: th.hallLine, alpha: 0.6 });
-      }
+    const corridorOverride = theme.corridor ? dim(hexOr(theme.corridor, th.hall), k) : undefined;
+    const plan = buildFloorPlan(floor);
+    const base = drawFloorBase(floor, plan, {
+      night: th.night,
+      edge: this.edgeColour,
+      trim: th.trim,
+      desk: th.desk,
+      deskTop: th.deskTop,
+      pot: th.pot,
+      potRim: th.potRim,
+      leaves: th.leaves,
+      ...(corridorOverride !== undefined ? { corridorOverride } : {}),
+    });
     this.world.addChild(base);
 
     for (const room of floor.rooms) this.world.addChild(this.drawRoom(room, handlers));
     this.hallway = new PIXI.Container();
-
-    // Front door on the top wall, by the manager's office, with a welcome mat.
-    const door = new PIXI.Graphics()
-      .rect(floor.door.x * TILE, 0, TILE * 2, 6)
-      .fill(0xf2b544)
-      .roundRect(floor.door.x * TILE + 6, 8, TILE * 2 - 12, 10, 3)
-      .fill(th.night ? 0x5a3e36 : 0x9b4d5f);
-    this.world.addChild(door);
     this.world.addChild(this.hallway);
 
     for (const agent of floor.agents) {

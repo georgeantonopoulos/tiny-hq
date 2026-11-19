@@ -71,7 +71,7 @@ test('only the nudge for a job the owner gave may reach an on-call room on its o
 
 test('rooms the office picks by itself (goal steps, the coffee room) leave on-call rooms out', () => {
   const goals = main.slice(main.indexOf('async function runGoals('), main.indexOf('pickRoom(cands'));
-  assert.match(goals, /!isOnCall\(r\.project!\.path, config\.onCallProjects\)/);
+  assert.match(goals, /!isOnCall\((r\.project!\.path|c\.room), config\.onCallProjects\)/);
   const coffee = main.slice(main.indexOf('function coffeeRoom('), main.indexOf('applyPosts(s, posts'));
   assert.match(coffee, /const rooms = projectRooms\.filter\(\(r\) => !outOfCoffee\(r\.project!\.path, config\)\)/, 'a post from a private or on-call room is never filed');
   assert.match(coffee, /withoutRooms\(was, projectRooms\.filter\(\(r\) => outOfCoffee\(/, 'what they already shared comes off');

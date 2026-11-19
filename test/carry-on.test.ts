@@ -55,5 +55,7 @@ test('the office types "carry on" only through typeInto, under the leave-alone r
   assert.match(fn, /await typeInto\(s, `Your last reply was cut off/);
   assert.match(fn, /leaveAlone\(s, asking, now\)/);
   assert.match(fn, /isOnCall\(s\.realCwd, config\.onCallProjects\)/);
-  assert.match(main, /await carryOnAfterApiErrors\(\)\.catch\(/, 'a failure must not skip the rest of the tick');
+  // A failure must not skip the rest of the tick: both are tick steps, each caught on its own (test/tick-steps.test.ts).
+  assert.match(main, /\['carry on', carryOnAfterApiErrors\]/);
+  assert.match(main, /\['claude update', moveRoomsToNewClaude\]/);
 });

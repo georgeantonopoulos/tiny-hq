@@ -53,16 +53,38 @@ export interface Candidate {
   hasJob: boolean; // an open job (active, held or waiting): that's already its work
   hasAsk: boolean; // a question is up over its head
   busy: boolean; // a session there is mid-reply, blocked, or the owner is watching it
+  since?: number; // when the owner set this goal
 }
 
-// The room to give the next step to, or none. Longest-waiting first.
-export function pickRoom(cands: Candidate[], steps: Step[], now: number): Candidate | undefined {
+const lastStep = (steps: Step[], room: string) => steps.filter((s) => s.room === room).reduce((m, s) => Math.max(m, s.at), 0);
+// A goal that hasn't had a step since the owner set it. Without this, goals set in the morning
+// could sit untouched all day because the one free place was always taken by a busy room.
+export const isNew = (c: Candidate, steps: Step[]) => lastStep(steps, c.room) < (c.since ?? 0);
+
+// The room to give the next step to, or none. New goals first, then longest-waiting.
+// `free`: places left under the allowance once busy rooms are counted. With none left, a new
+// goal still gets its first step (the allowance itself must have room: the caller checks).
+export function pickRoom(cands: Candidate[], steps: Step[], now: number, free = 1): Candidate | undefined {
   const lastStart = steps.reduce((m, s) => Math.max(m, s.at), 0);
   if (now - lastStart < START_GAP_MS) return undefined;
-  const last = (room: string) => steps.filter((s) => s.room === room).reduce((m, s) => Math.max(m, s.at), 0);
   return cands
-    .filter((c) => c.goal && !c.hasJob && !c.hasAsk && !c.busy && now - last(c.room) >= ROOM_GAP_MS)
-    .sort((a, b) => last(a.room) - last(b.room))[0];
+    .filter((c) => c.goal && !c.hasJob && !c.hasAsk && !c.busy && now - lastStep(steps, c.room) >= ROOM_GAP_MS && (free >= 1 || isNew(c, steps)))
+    .sort((a, b) => Number(isNew(b, steps)) - Number(isNew(a, steps)) || lastStep(steps, a.room) - lastStep(steps, b.room))[0];
+}
+
+// New goals still without a first step this long after the owner set them are reported to the manager once.
+export const FIRST_STEP_LATE_MS = 4 * 3_600_000;
+export function lateFirstSteps(cands: Candidate[], steps: Step[], now: number): Candidate[] {
+  return cands.filter((c) => c.goal && c.since && now - c.since >= FIRST_STEP_LATE_MS && isNew(c, steps));
+}
+
+// Why a room hasn't had its first step, in plain words for the manager.
+export function whyNoStep(c: Candidate, allowance: string, onCall: boolean): string {
+  if (onCall) return 'it is an on-call room, so the office never starts work there by itself';
+  if (c.hasJob) return 'it has an open job, which counts as its work';
+  if (c.hasAsk) return 'a question is up over its head, waiting for the owner';
+  if (c.busy) return 'its session has been busy every time the office looked';
+  return `the Claude allowance had no room (${allowance})`;
 }
 
 // What the room is told. One line: Enter sends it.

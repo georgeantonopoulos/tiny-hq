@@ -6,6 +6,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { withFileLock } from './file-lock.ts';
 import { normTarget } from './posts.ts';
 
 export interface Ask {
@@ -23,6 +24,7 @@ export interface Ask {
   tried?: string; // what the asker already tried, shown to the owner under the question
   askedFor?: true; // put over this room by someone else (The manager's `ask --room`): never the room's own question; the owner's answer goes into the room's chat as their own click (roomLine) and a copy to the session that asked
   post?: string; // --why post: the exact text the owner approves; their Approve gives a one-time pass for it
+  media?: { name: string; sha256: string; bytes: number }; // --why post --media: the one file the post carries; the pass lets only it up, and the post can't go without it
   target?: string; // --why post: where it goes (owner/repo#N, owner/repo, or a page URL); the pass is only for there
   deploy?: { changes: string; proven: string; commits: string[] }; // a deploy's button: what changes, what was proven where, the commits since the last approved deploy
 }
@@ -56,6 +58,13 @@ function validDeploy(d: unknown): Ask['deploy'] | undefined {
   return changes && proven ? { changes, proven, commits } : undefined;
 }
 
+// A post's file: its name, size and SHA-256, as manager/ask read them.
+function validMedia(m: unknown): Ask['media'] | undefined {
+  const o = m as Record<string, unknown> | null;
+  if (!o || typeof o !== 'object' || typeof o.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(o.sha256) || typeof o.bytes !== 'number' || typeof o.name !== 'string') return undefined;
+  return { name: o.name.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200), sha256: o.sha256, bytes: o.bytes };
+}
+
 export function validAsk(a: unknown): Ask | undefined {
   if (!a || typeof a !== 'object') return undefined;
   const o = a as Record<string, unknown>;
@@ -79,6 +88,7 @@ export function validAsk(a: unknown): Ask | undefined {
     ...(typeof o.post === 'string' && o.why === 'post' && o.post.trim() ? { post: o.post.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, 5000) } : {}),
     ...(typeof o.target === 'string' && o.why === 'post' && normTarget(o.target) ? { target: normTarget(o.target) } : {}),
     ...(validDeploy(o.deploy) && o.why === 'post' ? { deploy: validDeploy(o.deploy) } : {}),
+    ...(validMedia(o.media) && o.why === 'post' ? { media: validMedia(o.media) } : {}),
     ...(o.askedFor === true && typeof o.sessionId === 'string' ? { askedFor: true as const } : {}),
     ...(validTrust(o.trust) && typeof o.job !== 'string' && !validOptions(o.options) ? { trust: validTrust(o.trust) } : {}),
   };
@@ -125,7 +135,18 @@ export function loadAsks(path: string): Ask[] {
   }
 }
 
-export function saveAsks(path: string, asks: Ask[]): void {
+// Every change to the file goes through here: read, change and write under one lock, so the office
+// and a manager command changing it at the same moment can't lose each other's change. Nothing
+// writes the file any other way (test/file-lock.test.ts).
+export function updateAsks(path: string, change: (asks: Ask[]) => Ask[]): Ask[] {
+  return withFileLock(path, () => {
+    const next = change(loadAsks(path));
+    writeAsks(path, next);
+    return next;
+  });
+}
+
+function writeAsks(path: string, asks: Ask[]): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify({ asks }, null, 2) + '\n', { mode: 0o600 });
@@ -141,7 +162,7 @@ export const MAX_ASKS_PER_FOLDER = 5;
 // A new ask joins the folder's open ones. Only the same question again (or a new
 // `job wait` for the same job) replaces its older copy; past five the oldest goes.
 // (It used to replace every ask from the folder: the second question wiped the first.)
-export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string; deploy?: Ask['deploy'] }, from?: string): Ask[] {
+export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string; media?: Ask['media']; deploy?: Ask['deploy'] }, from?: string): Ask[] {
   const a = validAsk({ id: id.padEnd(6, '0'), folder, ...(from ? { from } : {}), question, createdAt: now, sessionId, job, options, ...(askedFor ? { askedFor: true } : {}), ...(trust ? { trust } : {}), ...(proof ?? {}) });
   if (!a) return asks;
   const same = (x: Ask) => x.folder === folder && (x.question === a.question || (!!a.job && x.job === a.job));
@@ -309,6 +330,14 @@ export function answerLine(ask: Ask, answer: Answer | boolean): string | undefin
   if (ask.post && 'yes' in a) {
     // The text the pass is for (--text), not the question's wording; a long one is named, not cut mid-way.
     const said = ask.post.length <= 300 ? `"${ask.post}"` : `"${ask.post.slice(0, 200)}…" (the full --text you gave, ${ask.post.length} characters)`;
+    // A --delete button: the approval is a few clicks on that one page.
+    if (ask.target && ask.post === `delete the post at ${ask.target}`)
+      return clean(
+        a.yes
+          ? `The owner: yes, delete the post at ${ask.target}. (They clicked Approve on the button over your head in the office; your question was: "${ask.question}".) Open exactly that page in a tab (navigate), then delete it: up to 4 clicks or keys in that tab, within 10 minutes of the first, good for 2 hours. No typing; anything else is still refused.`
+          : `The owner: no, leave the post at ${ask.target} up. (They clicked No on the button over your head.)`,
+        900,
+      );
     return clean(
       a.yes
         ? `The owner: yes, post exactly this: ${said}${ask.target ? ` on ${ask.target}` : ''}. (They clicked Approve on the button over your head in the office, on this exact text; your question was: "${ask.question}".) The office gave you a one-time pass for it, good for 2 hours${ask.target ? `, only on ${ask.target}` : ''}: post it once, exactly as approved (same words), on its own; anything else is still refused.`

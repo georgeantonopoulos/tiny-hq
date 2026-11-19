@@ -10,6 +10,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { withFileLock } from './file-lock.ts';
 import { localDay } from './schedule.ts';
 import { WHY_LIST } from './only-owner.ts';
 
@@ -87,7 +88,18 @@ export function loadJobs(path: string): Job[] {
   }
 }
 
-export function saveJobs(path: string, jobs: Job[]): void {
+// Every change to the file goes through here: read, change and write under one lock, so the office
+// and a manager command changing it at the same moment can't lose each other's change. Nothing
+// writes the file any other way (test/file-lock.test.ts).
+export function updateJobs(path: string, change: (jobs: Job[]) => Job[]): Job[] {
+  return withFileLock(path, () => {
+    const next = change(loadJobs(path));
+    writeJobs(path, next);
+    return next;
+  });
+}
+
+function writeJobs(path: string, jobs: Job[]): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify({ jobs }, null, 2) + '\n', { mode: 0o600 });
@@ -126,7 +138,8 @@ export function briefTemplate(job: Pick<Job, 'id' | 'title' | 'done' | 'room'>):
     '## Rules and limits',
     '- No email (or message to a person outside the office) is sent without the owner: draft only.',
     "- Nothing goes on a public site (post, comment, reply, review, DM, upload) without the owner's yes for that exact text: put the text to them with manager/ask \"<what and where>\" --why post --tried \"<...>\" --text \"<the exact text>\" --target <owner/repo#N, owner/repo for a new issue, or the page URL> (posts are button-only, each pass for that one place: only their Approve on that exact text lets it through, once).",
-    "- \"Works\" means seen or heard: report fixed, working or ready only after you saw or heard the real output the person gets, on the device they use (phone, the Mac's browser, the live link); say which device and how. Checking what the code asked for is not proof. A desktop app counts as tested only after a screenshot of it running (peekaboo image --app <App>) shows the change. If the owner reports a problem without saying where, ask which device first.",
+    "- Never change, import or connect a VPN or network profile on the owner's Mac, and never change its routes, DNS or network settings: a network fix goes to them as a plain choice (manager/ask --why choice). A wrong profile can cut their remote logins and the room's own connection mid-work.",
+    "- \"Works\" means seen or heard: report fixed, working or ready only after you saw or heard the real output the person gets, on the device they use (phone, the Mac's browser, the live link); say which device and how. Checking what the code asked for is not proof. A desktop app counts as tested only after a screenshot of it running (peekaboo image --window-id <id>, the id from peekaboo list windows --app <App>) shows the change. If the owner reports a problem without saying where, ask which device first.",
     "- Nothing you build is reachable without a login unless the owner said yes for that project (a deploy is a post): manager/ask \"<...>\" --why post --text \"deploy <project> at <commit> publicly\" --target deploy:<project> --changes \"<...>\" --proven \"<...>\" (one Approve per exact commit, nothing uncommitted); check every deploy's address logged out.",
     "- Every other step of this job is the room's to do, Chrome consoles and sign-ins their Chrome already has included. A broken office tool goes to the manager as an office fault. Need a yes from the owner (money, public text, something that can't be undone, or a choice that changes what they get): manager/ask --why <reason> --tried \"<what you tried>\" (a choice: --why choice --choices \"<your pick>\" \"<other>\"). Small, reversible choices are yours: decide them and add them to their evening note with manager/evening add \"<what you decided, and why>\".",
     '',
@@ -172,6 +185,8 @@ export type Decision = 'none' | 'nudge' | 'no-session' | 'stuck' | 'check';
 // A job waiting on the owner is checked every so often: has they done it yet (sent
 // the email, clicked the thing)? Nobody else tells the room when they do.
 export const CHECK_MS = 60 * 60_000; // hourly: every 15 minutes, one waiting job could be checked dozens of times in a few days
+/** CHECK_MS in words, for what the job command tells rooms ("every hour"). */
+export const CHECK_EVERY = CHECK_MS % 3_600_000 === 0 ? (CHECK_MS === 3_600_000 ? 'every hour' : `every ${CHECK_MS / 3_600_000} hours`) : `every ${CHECK_MS / 60_000} minutes`;
 export const MAX_CHECKS_PER_DAY = 16;
 
 export const MAX_HOLD_MS = 14 * 86_400_000;

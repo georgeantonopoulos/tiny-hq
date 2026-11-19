@@ -1,7 +1,8 @@
 // Starts the office: the local token, HTTP on 127.0.0.1 (plus the Tailscale door
 // if configured), the floor plan from discovery, and terminals onto the Claude
-// Code session in each project's folder. Nothing runs on a timer: the floor is
-// rescanned when the page asks, and sessions run only when started.
+// Code session in each project's folder. The floor is rescanned when the page asks; a regular
+// tick (every minute, see TICK_STEPS) runs the timetable, jobs, evening note and the office's own
+// checks, typing into sessions only for those.
 
 import { execFile, execFileSync } from 'node:child_process';
 import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -12,11 +13,11 @@ import { loadConfig } from '../config.ts';
 import { BRIEF_PROMPT } from './brief.ts';
 import { describeWhen, expired, isDue, lastSlot, loadSchedule, localDay, nextSlot, saveSchedule, schedulePath, withDailyBrief } from '../team/schedule.ts';
 import { queuedAfter } from '../terminal/queued.ts';
-import { addAsk, answerLine, isHands, isPassword, roomLine, typedLinesSince, answersAsk, wantsAction, asksPath, jobAnswered, loadAsks, oldestPerFolder, saveAsks, type Answer, type Ask } from '../team/asks.ts';
+import { addAsk, answerLine, isHands, isPassword, roomLine, typedLinesSince, answersAsk, wantsAction, asksPath, jobAnswered, loadAsks, oldestPerFolder, updateAsks, type Answer, type Ask } from '../team/asks.ts';
 import { addDismissed, dismissedPath, loadDismissed, removeDismissed } from '../team/dismissed.ts';
 import { goalsPath, loadGoals, setGoal } from '../team/goals.ts';
 import { isTrusted, trustFolder } from '../terminal/trust.ts';
-import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, saveJobs, type Job } from '../team/jobs.ts';
+import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs, nudged, nudgeLine, updateJobs, type Job } from '../team/jobs.ts';
 import { loadOrCreateToken } from './token.ts';
 import { idleMs, tidyScreen } from '../team/screen.ts';
 import { projectsIn, tidyDiskIfLow } from '../team/disk-tidy.ts';
@@ -35,7 +36,7 @@ import { managerAddress, promptPending, userEnv, allSessions, setRoomFolders, ex
 import { leftovers, renderStatus, type StatusSession } from '../terminal/status.ts';
 import { writeManagerRules } from '../team/manager-rules.ts';
 import { Allowance, meters, plan, usageReader, type Plan } from '../team/budget.ts';
-import { logStep, loadSteps, pickRoom, stepLine, stepsPath, type Candidate } from '../team/autonomy.ts';
+import { lateFirstSteps, logStep, loadSteps, pickRoom, stepLine, stepsPath, whyNoStep, type Candidate } from '../team/autonomy.ts';
 import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.ts';
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
@@ -774,7 +775,7 @@ const server = createDaemon({
     if (undo) return boardBringBack(room, text);
     let job: Job | undefined;
     if (jobId) {
-      saveJobs(JOBS, loadJobs(JOBS).map((j) => {
+      updateJobs(JOBS, (all) => all.map((j) => {
         if (j.id !== jobId || j.status === 'done') return j;
         job = j;
         const { waitingFor: _w, ...rest } = j;
@@ -784,7 +785,7 @@ const server = createDaemon({
     // Remember the job only if this click closed it, so Bring back never reopens one that was already finished.
     const item = addDismissed(DISMISSED, room, text, job?.id, Date.now(), job?.status === 'waiting' ? job.waitingFor : undefined);
     // A job waiting on the owner had an Approve button over the room's head: it goes too.
-    if (job) saveAsks(ASKS, loadAsks(ASKS).filter((a) => a.job !== job!.id));
+    if (job) updateAsks(ASKS, (all) => all.filter((a) => a.job !== job!.id));
     const line = job
       ? `The owner: drop job ${job.id} (${item.room}: ${item.text}). They clicked × on it on your whiteboard: they don't want it actioned. The office has closed the job. Tell the room to stop work on it, take it out of your notebook, and don't bring it back. It's in ${DISMISSED}.`
       : `The owner: don't action this from your whiteboard. ${item.room}: ${item.text}. (They clicked × on it.) Take it off your notebook's Next line, don't suggest it again or hand it out, and pick a different Next for that room. It's in ${DISMISSED}.`;
@@ -1074,15 +1075,15 @@ function personFor(folder: string): { id: string; path: string } | undefined {
   const r = (floors.latest()?.rooms ?? []).find((x) => x.kind === 'project' && x.project && worksIn(folder, x.project.path));
   return r?.project ? { id: `lead:${r.id}`, path: r.project.path } : undefined;
 }
-function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string }> {
-  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string }> = {};
+function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string }> {
+  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string }> = {};
   // A "Trust and start" button for a folder that isn't a room on the floor (an archive project like
   // in the cupboard) shows over the manager's head, ahead of their own questions: otherwise the owner could never see it.
   const offFloorTrust = (a: Ask) => !!a.trust && !personFor(a.folder);
   const shown = oldestPerFolder(loadAsks(ASKS)).sort((x, y) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask)));
   for (const { ask, more } of shown) {
     const who = personFor(ask.folder) ?? (offFloorTrust(ask) ? { id: 'manager' } : undefined);
-    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
+    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.media ? { media: `${ask.media.name} (${(ask.media.bytes / 1e6).toFixed(1)} MB)` } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
   }
   return out;
 }
@@ -1120,7 +1121,7 @@ async function runAcks(): Promise<void> {
 function ignoreAsk(id: string): void {
   const ask = loadAsks(ASKS).find((a) => a.id === id);
   if (!ask) throw Object.assign(new Error('That question was already answered or withdrawn.'), { status: 404 });
-  saveAsks(ASKS, loadAsks(ASKS).filter((a) => a.id !== id));
+  updateAsks(ASKS, (all) => all.filter((a) => a.id !== id));
   console.log(`asks: the owner ignored "${ask.question.slice(0, 80)}" from ${roomName(ask.folder)} (nobody told)`);
 }
 
@@ -1130,8 +1131,13 @@ async function answerAsk(id: string, answer: Answer, from?: From): Promise<void>
   if (!answerLine(ask, answer)) throw Object.assign(new Error("That answer doesn't fit this question; reload the page."), { status: 400 });
   // Claim it before typing, so a second tap (or another device) can't deliver the same answer twice
   // while this one is on its way (that takes seconds). Put back if it doesn't land.
-  saveAsks(ASKS, loadAsks(ASKS).filter((a) => a.id !== id));
-  const restore = () => saveAsks(ASKS, [...loadAsks(ASKS).filter((a) => a.id !== id), ask]);
+  let claimed = false;
+  updateAsks(ASKS, (all) => {
+    claimed = all.some((a) => a.id === id);
+    return all.filter((a) => a.id !== id);
+  });
+  if (!claimed) throw Object.assign(new Error('That question was already answered or withdrawn.'), { status: 404 });
+  const restore = () => updateAsks(ASKS, (all) => [...all.filter((a) => a.id !== id), ask]);
   try {
     await deliverAnswer(ask, answer, from);
   } catch (err) {
@@ -1144,7 +1150,7 @@ async function answerAsk(id: string, answer: Answer, from?: From): Promise<void>
 function resumeJob(ask: Ask, answer: Answer): void {
   const resume = jobAnswered(ask, answer);
   if (!resume) return;
-  saveJobs(JOBS, loadJobs(JOBS).map((j: Job) => {
+  updateJobs(JOBS, (all) => all.map((j: Job) => {
     if (j.id !== resume || j.status !== 'waiting') return j;
     const { waitingFor: _w, ...back } = j;
     return { ...back, status: 'active' as const, updatedAt: Date.now(), lastNudge: Date.now(), nudgesToday: 0 };
@@ -1204,7 +1210,7 @@ async function deliverAnswer(ask: Ask, answer: Answer, from?: From): Promise<voi
     // For that PR/issue only; a button from before --target names it in its question ("PR #44").
     // The pass works in the room and, when it asked from elsewhere, in that folder too (a worktree or
     // clone kept outside the room): one pass, used up wherever it's used.
-    grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '', ask.from ?? '');
+    grantPass(approvalsPath(DATA_DIR), ask.post, ask.folder, Date.now(), ask.target ?? postTargetGuess(ask) ?? '', ask.from ?? '', ask.media);
     console.log(`posts: the owner approved a post's exact text for ${roomName(ask.folder)} (one-time pass, 2 hours)`);
   }
   // Camera and microphone: the owner's Approve on a --why camera button lets one capture run from
@@ -1325,7 +1331,7 @@ async function boardBringBack(room: string, text: string): Promise<void> {
   if (!item) throw Object.assign(new Error("That's not on the dismissed list any more."), { status: 404 });
   let job: Job | undefined;
   if (item.job) {
-    saveJobs(JOBS, loadJobs(JOBS).map((j) => {
+    updateJobs(JOBS, (all) => all.map((j) => {
       if (j.id !== item.job || j.status !== 'done') return j;
       job = item.waitingFor
         ? { ...j, status: 'waiting' as const, waitingFor: item.waitingFor, updatedAt: Date.now(), lastNudge: undefined, nudgesToday: 0 }
@@ -1341,7 +1347,8 @@ async function boardBringBack(room: string, text: string): Promise<void> {
     } catch {
       /* keep as written */
     }
-    saveAsks(ASKS, addAsk(loadAsks(ASKS), folder, job.waitingFor ?? item.text, Date.now(), undefined, undefined, job.id));
+    const waiting = job;
+    updateAsks(ASKS, (all) => addAsk(all, folder, waiting.waitingFor ?? item.text, Date.now(), undefined, undefined, waiting.id));
   }
   const line = job
     ? job.status === 'waiting'
@@ -1404,17 +1411,22 @@ async function runGoals(): Promise<void> {
   // Working now: a busy session anywhere on the floor, or an active job (not held, not waiting on the owner).
   const working = new Set([...rooms.filter((r) => busyIn(r.project!.path)).map((r) => r.project!.path), ...jobs.filter((j) => j.status === 'active' && !isHeld(j, now)).map((j) => j.room)]);
   lastPlan = plan(allowance.latest(), now, working.size, undefined, config.usageCommand ? undefined : config.goalRooms);
-  if (lastPlan.free < 1) return;
-  const cands: Candidate[] = rooms
-    .filter((r) => goals[r.project!.path] && !isOnCall(r.project!.path, config.onCallProjects))
+  const goalRooms: Candidate[] = rooms
+    .filter((r) => goals[r.project!.path])
     .map((r) => ({
       room: r.project!.path,
       goal: goals[r.project!.path]!.goal,
+      since: goals[r.project!.path]!.at || undefined,
       hasJob: jobs.some((j) => worksIn(real(j.room), r.project!.path)),
       hasAsk: asks.some((a) => worksIn(real(a.folder), r.project!.path)),
       busy: busyIn(r.project!.path),
     }));
-  const pick = pickRoom(cands, loadSteps(STEPS, now - 86_400_000), now);
+  const steps = loadSteps(STEPS, Math.min(now - 86_400_000, ...goalRooms.map((c) => c.since ?? now)));
+  void reportLateGoals(goalRooms, steps, now);
+  // The allowance must have room at all; a new goal's first step may take a place a busy room holds.
+  if (lastPlan.rooms < 1) return;
+  const cands = goalRooms.filter((c) => !isOnCall(c.room, config.onCallProjects));
+  const pick = pickRoom(cands, steps, now, lastPlan.free);
   if (!pick) return;
   const room = rooms.find((r) => r.project!.path === pick.room)!;
   const line = stepLine(pick.goal, lastPlan.why, join(MANAGER_DIR, 'ask'));
@@ -1439,6 +1451,35 @@ async function runGoals(): Promise<void> {
     if (!ok) return;
   }
   console.log(`goal step: ${room.name} works on "${pick.goal}" (${lastPlan.why})`);
+}
+// A new goal still without its first step 4 hours on is put to the manager once, with the reason
+// (goal-late.json in the manager's notes remembers which, so a restart doesn't repeat it).
+const GOAL_LATE = join(MANAGER_NOTES_DIR, 'goal-late.json');
+let lateBusy = false;
+async function reportLateGoals(cands: Candidate[], steps: ReturnType<typeof loadSteps>, now: number): Promise<void> {
+  if (lateBusy) return;
+  let told: Record<string, number> = {};
+  try {
+    told = JSON.parse(readFileSync(GOAL_LATE, 'utf8')) as Record<string, number>;
+  } catch {
+    /* none yet */
+  }
+  const late = lateFirstSteps(cands, steps, now).filter((c) => !told[`${c.room}@${c.since}`]);
+  if (!late.length) return;
+  lateBusy = true;
+  try {
+    const lines = late.map((c) => `${roomName(c.room)} ("${c.goal.slice(0, 80)}"): ${whyNoStep(c, lastPlan?.why ?? 'not read yet', isOnCall(c.room, config.onCallProjects))}`);
+    const ok = await tellManager(`[Office: goal not started] The owner set ${late.length === 1 ? 'a goal' : 'goals'} 4+ hours ago with no step yet. ${lines.join('; ')}. Start the room by hand, or tell the owner on a button why it waits.`);
+    if (ok !== true) return; // the manager is busy: try again next minute
+    for (const c of late) told[`${c.room}@${c.since}`] = now;
+    mkdirSync(MANAGER_NOTES_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(GOAL_LATE, JSON.stringify(told), { mode: 0o600 });
+    console.log(`goals: told the manager ${late.length} new goal(s) had no first step`);
+  } catch (e) {
+    console.log(`goals: could not tell the manager about late goals (${(e as Error).message})`);
+  } finally {
+    lateBusy = false;
+  }
 }
 
 // Every question put to the owner, once (for the scorecard): asks.json only holds open ones.
@@ -1465,15 +1506,16 @@ const EVENING = eveningPath(MANAGER_NOTES_DIR);
 const expiredUntold = new Map<string, { ask: Ask; since: number }>();
 async function runEvening(): Promise<void> {
   const now = Date.now();
-  const { left, expired } = expiredAsks(loadAsks(ASKS), now);
+  const { expired } = expiredAsks(loadAsks(ASKS), now);
   if (expired.length) {
     // The note entries go first, so the owner's note lists them even if telling the room fails.
     for (const a of expired) {
       addEntry(EVENING, { at: now, kind: 'expired', folder: a.folder, text: `"${a.question}" (up since ${new Date(a.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })})` });
       console.log(`asks: "${a.question}" came down after 2 days unanswered (not now)`);
     }
-    saveAsks(ASKS, left);
-    saveJobs(JOBS, restJobs(loadJobs(JOBS), expired, now));
+    const gone = new Set(expired.map((a) => a.id));
+    updateAsks(ASKS, (all) => all.filter((a) => !gone.has(a.id)));
+    updateJobs(JOBS, (all) => restJobs(all, expired, now));
     // The manager (who asks over rooms too) reads it in the note.
     for (const a of expired) if (!a.askedFor) expiredUntold.set(a.id, { ask: a, since: now });
   }
@@ -1556,13 +1598,13 @@ async function clearAnsweredInChat(): Promise<void> {
   }
   if (!gone.length) return;
   const ids = new Set(gone.map((a) => a.id));
-  saveAsks(ASKS, loadAsks(ASKS).filter((a) => !ids.has(a.id)));
+  updateAsks(ASKS, (all) => all.filter((a) => !ids.has(a.id)));
   // The room's own question a waiting job rides on: any answer puts the job back to work (as a click
   // would). A job's own Approve button (job wait) is different: their typed reply may be a "no", so that
   // job stays waiting and the room, which read their words, moves it on itself (job go).
   const resume = new Set(gone.map((a) => a.forJob).filter((x): x is string => !!x));
   if (resume.size)
-    saveJobs(JOBS, loadJobs(JOBS).map((j: Job) => {
+    updateJobs(JOBS, (all) => all.map((j: Job) => {
       if (!resume.has(j.id) || j.status !== 'waiting') return j;
       const { waitingFor: _w, ...back } = j;
       return { ...back, status: 'active' as const, updatedAt: Date.now(), lastNudge: Date.now(), nudgesToday: 0 };
@@ -1603,7 +1645,7 @@ async function runJobs(): Promise<void> {
     if (ok === 'later') continue;
     if (!ok) console.error(`jobs: "${job.title}" ${d} didn't land`);
     else console.log(`jobs: ${d} for "${job.title}" (${name})`);
-    saveJobs(JOBS, loadJobs(JOBS).map((j: Job) => (j.id === job.id ? nudged(j, d, now) : j)));
+    updateJobs(JOBS, (all) => all.map((j: Job) => (j.id === job.id ? nudged(j, d, now) : j)));
   }
 }
 
@@ -1724,7 +1766,7 @@ async function carryOnAfterApiErrors(): Promise<void> {
     const tries = (carriedOn.get(s.sessionId!) ?? []).filter((t) => now - t < CARRY_ON_WINDOW);
     if (tries.length >= CARRY_ON_TRIES || now - (tries.at(-1) ?? 0) < 10 * 60_000) continue;
     carriedOn.set(s.sessionId!, [...tries, now]);
-    const ok = await typeInto(s, `Your last reply was cut off by "${err.text.slice(0, 80)}". Please carry on where you left off.`, true);
+    const ok = await typeInto(s, `Your last reply was cut off by "${err.text.slice(0, 80)}". Please carry on where you left off.`, staysAttached(s));
     if (ok === 'later') carriedOn.set(s.sessionId!, tries); // someone was looking or typing: not a try
     console.log(`carry on: ${s.name ?? s.id} stopped on an API error, typed carry on (try ${tries.length + 1}): ${ok}`);
   }
@@ -1733,6 +1775,10 @@ async function carryOnAfterApiErrors(): Promise<void> {
 // Long conversations: type /compact into one quiet office session a tick whose last step read
 // more than 250k tokens (src/team/compact.ts). The owner's own terminal sessions aren't listed here.
 const COMPACTS = compactPath(DATA_DIR);
+// Only the manager's hidden terminal stays attached after the office types in; a room's detaches
+// once the line is in, like any other office-typed line.
+const staysAttached = (s: { realCwd: string }) => worksIn(s.realCwd, MANAGER_DIR);
+
 async function compactLongSessions(): Promise<void> {
   const now = Date.now();
   const asked = loadCompacts(COMPACTS);
@@ -1743,7 +1789,7 @@ async function compactLongSessions(): Promise<void> {
     const transcript = join(homedir(), '.claude', 'projects', s.cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${s.sessionId}.jsonl`);
     const tokens = contextSize(transcript);
     if (!shouldCompact({ tokens, quietFor: now - lastActiveAt(s), askedAt: asked[s.sessionId!], now })) continue;
-    const ok = await typeInto(s, '/compact', true);
+    const ok = await typeInto(s, '/compact', staysAttached(s));
     console.log(`long conversation: asked ${s.name ?? s.id} to summarise (${Math.round(tokens / 1000)}k tokens): ${ok}`);
     if (ok === 'later') continue; // its screen wasn't up: try the next one, and this one next tick
     asked[s.sessionId!] = now;
@@ -1867,36 +1913,48 @@ server.listen(port, '127.0.0.1', () => {
   // started while launchd was restarting this one) must not start a manager of its own.
   if (!process.env.CM_NO_WARM) {
     void warmManager();
-    // One at a time: the timetable, then open jobs (both may type into the manager).
+    // One at a time: the timetable, then open jobs (both may type into the manager). Every step runs on
+    // its own: one that throws is logged and the rest still run, so a bad job file can never skip the
+    // runaway checks. Add a step here, never as a bare call in tick (test/tick-steps.test.ts fails otherwise).
+    const TICK_STEPS: [string, () => unknown][] = [
+      ['timetable', runSchedule],
+      ['jobs', runJobs],
+      ['goals', runGoals],
+      ['asks log', logAsks],
+      ['evening note', runEvening],
+      ['answered in chat', clearAnsweredInChat],
+      ['spare sessions', retireExtraRoomSessions],
+      ['claude update', moveRoomsToNewClaude],
+      ['carry on', carryOnAfterApiErrors],
+      ['compact', compactLongSessions],
+      ['screen helper', () => tidyScreen(DATA_DIR) && console.log('screen helper: time up, stopped')],
+      ['disk', () => {
+        if (config.extras.diskTidy) void tidyDiskIfLow(DATA_DIR, projectsIn(config.projectRoots, config.extraProjects), Date.now(), (text) => tellManagerNow(`[office] ${text}`)).catch((e) => console.log(`disk: ${e}`));
+      }],
+      ['github news', tellGithub],
+      ['happenings', freshGags],
+      ['coffee room', coffeeRoom],
+      ['runaway', runaways],
+      ['github', () => {
+        if (ghBusy || !config.extras.github) return;
+        ghBusy = true;
+        void lookGithub()
+          .catch((err) => console.error('github:', err))
+          .finally(() => (ghBusy = false));
+      }],
+    ];
     let ticking = false;
     const tick = async () => {
       if (ticking) return;
       ticking = true;
       try {
-        await runSchedule();
-        await runJobs();
-        await runGoals();
-        logAsks();
-        await runEvening();
-        await clearAnsweredInChat();
-        await retireExtraRoomSessions();
-        await moveRoomsToNewClaude().catch((e) => console.error('claude update:', e));
-        await carryOnAfterApiErrors().catch((e) => console.error('carry on:', e));
-        await compactLongSessions();
-        if (tidyScreen(DATA_DIR)) console.log('screen helper: time up, stopped');
-        if (config.extras.diskTidy) void tidyDiskIfLow(DATA_DIR, projectsIn(config.projectRoots, config.extraProjects)).catch((e) => console.log(`disk: ${e}`));
-        await tellGithub();
-        freshGags();
-        coffeeRoom();
-        await runaways().catch((e) => console.error('runaway:', e));
-        if (!ghBusy && config.extras.github) {
-          ghBusy = true;
-          void lookGithub()
-            .catch((err) => console.error('github:', err))
-            .finally(() => (ghBusy = false));
+        for (const [name, step] of TICK_STEPS) {
+          try {
+            await step();
+          } catch (err) {
+            console.error(`${name}:`, err);
+          }
         }
-      } catch (err) {
-        console.error('timetable/jobs:', err);
       } finally {
         ticking = false;
       }

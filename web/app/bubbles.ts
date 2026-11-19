@@ -34,6 +34,7 @@ export interface AskInfo {
   options?: string[]; // multiple choice; otherwise Approve / No
   post?: string; // a public post's exact text: Approve lets only this go up, once
   target?: string; // where it goes (owner/repo#N, owner/repo, a page): Approve is for there only
+  media?: string; // the one file the post carries (its name and size): Approve lets only that file up, and the post can't go without it
   deploy?: { changes: string; proven: string; commits: string[] }; // a deploy: what changes, what was proven where, the commits going out
   hands?: boolean; // a step only the owner's hands can do: Done, I did it / Stuck
   password?: boolean; // a sign-in only the owner can do: Done, I did it / You sign in (saved passkey or password manager) / No
@@ -205,7 +206,7 @@ export class Bubbles {
     // Answered from this page: a check that left before the answer landed can still list it. Ignore that.
     if (this.answered.has(ask.id)) return;
     const p = this.person(speaker);
-    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.hands === ask.hands && p.ask.post === ask.post && p.ask.target === ask.target && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
+    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.hands === ask.hands && p.ask.post === ask.post && p.ask.target === ask.target && p.ask.media === ask.media && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
     if (same) return;
     this.endHappening(speaker.id);
     const isNew = p.ask?.id !== ask.id;
@@ -360,6 +361,12 @@ export class Bubbles {
       body.className = 'post-text';
       body.textContent = ask.post;
       q.append(document.createElement('br'), label, body);
+      if (ask.media) {
+        const m = document.createElement('small');
+        m.className = 'tried';
+        m.textContent = `With this file attached (only this file, and the post can't go without it): ${ask.media}`;
+        q.append(m);
+      }
       // A deploy: what changes for people, what was proven on which device, and the
       // exact commits going out since the last approved deploy.
       if (ask.deploy) {

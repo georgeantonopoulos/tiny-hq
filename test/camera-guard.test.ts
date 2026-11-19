@@ -81,6 +81,14 @@ test('a capture waits for the owner: refused without a pass; their Approve lets 
   assert.match(decideCamera('Bash', { command: 'rec private.wav' }, { cwd: room, session_id: 's' }, now, path), /microphone|camera/, 'a different capture');
   assert.match(decideCamera('Bash', cmd, { cwd: room, session_id: 's' }, now, path), /camera/, 'not the approved command');
   assert.equal(decideCamera('Bash', { command: 'imagesnap  lamp.jpg' }, { cwd: room, session_id: 's' }, now, path), undefined, 'the approved one, spaces aside');
+  // A shorter piece of an approved command is a different capture (no frame limit: a live feed).
+  grantPass(path, 'Photograph the lamp: `ffmpeg -f avfoundation -i 0 -frames:v 1 lamp.jpg` once.', room, now, 'device:camera');
+  assert.match(decideCamera('Bash', { command: 'ffmpeg -f avfoundation -i 0' }, { cwd: room, session_id: 's' }, now, path), /camera/, 'a piece of the approved command');
+  assert.match(decideCamera('Bash', { command: 'ffmpeg -f avfoundation -i 0 -frames:v 1 lamp' }, { cwd: room, session_id: 's' }, now, path), /camera/, 'cut mid-word');
+  assert.equal(decideCamera('Bash', cmd, { cwd: room, session_id: 's' }, now, path), undefined, 'the whole command, in backticks');
+  // The button's question may end the command with a question mark.
+  grantPass(path, 'Photograph the lamp? Run ffmpeg -f avfoundation -i 0 -frames:v 1 lamp.jpg?', room, now, 'device:camera');
+  assert.equal(decideCamera('Bash', cmd, { cwd: room, session_id: 's' }, now, path), undefined, 'ending in a question mark');
   grantPass(path, 'Photograph the lamp: ffmpeg -f avfoundation -i 0 -frames:v 1 lamp.jpg', room, now, 'device:camera');
   assert.match(decideCamera('Bash', cmd, { cwd: '/Users/x/Dev/other', session_id: 's' }, now, path), /camera/, 'another room');
   assert.equal(decideCamera('Bash', cmd, { cwd: `${room}/.claude/worktrees/w`, session_id: 's' }, now, path), undefined, 'the room, from its worktree');

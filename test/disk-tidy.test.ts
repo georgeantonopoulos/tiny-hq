@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { allBuilds, gitAllows, keepReason, kindOf, pickToClear, projectsIn, type Candidate } from '../src/team/disk-tidy.ts';
+import { allBuilds, gitAllows, keepReason, kindOf, pickToClear, projectsIn, idleFor, shortText, type Candidate } from '../src/team/disk-tidy.ts';
 
 const GB = 1024 ** 3;
 const DAY = 24 * 60 * 60_000;
@@ -86,4 +86,18 @@ test('a folder that became busy or fresh after the survey is not removed', async
   const surveyed: Candidate = { path: next, kind: 'next', project: join(home, 'Dev', 'site'), newest: Date.now() - 5 * DAY, bytes: GB };
   assert.deepEqual(await clear([surveyed], async () => []), []);
   assert.ok(existsSync(next));
+});
+
+test('a nearly full disk lets builds idle for 6 hours go, and the alert names what it kept', () => {
+  assert.equal(idleFor(50 * GB), 2 * DAY);
+  assert.equal(idleFor(5 * GB), 6 * 60 * 60_000);
+  const now = Date.now();
+  const c: Candidate = { path: '/x/target', kind: 'rust', project: '/nowhere-' + now, newest: now - 8 * 60 * 60_000 };
+  assert.match(keepReason(c, [], now) ?? '', /last 2 days/);
+  assert.equal(keepReason(c, [], now, idleFor(5 * GB)), undefined);
+  assert.match(keepReason({ ...c, newest: now - 60_000 }, [], now, idleFor(5 * GB)) ?? '', /last 6 hours/);
+  assert.match(keepReason(c, [c.project], now, idleFor(5 * GB)) ?? '', /busy/); // a busy session still holds it
+  const text = shortText(4 * GB, [{ ...c, bytes: 81 * GB, keep: 'used in the last 6 hours' }]);
+  assert.match(text, /4\.0 GB free/);
+  assert.match(text, /81\.0 GB \/x\/target/);
 });

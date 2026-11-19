@@ -1,7 +1,8 @@
 // manager/ask: put a yes/no question for the owner on the office floor, as a button
 // over your head. Their answer arrives in your own chat as a message from them.
 //   ask "<one-line question>" --why <reason> --tried "<what you already tried>"   (from your project folder)
-//   ask "<what and where>" --why post --tried "..." --text "<exact text>" --target <owner/repo#N | owner/repo | https://page>   (a public post: the pass is for that text at that place only)
+//   ask "<what and where>" --why post --tried "..." --text "<exact text>" --target <owner/repo#N | owner/repo | https://page> [--media <file>]   (a public post: the pass is for that text at that place only; with --media, only together with that one file)
+//   ask "<which post and why>" --why post --tried "..." --delete <post URL>   (deleting one post: a few clicks on exactly that page)
 //     reason: post | pay | irreversible | choice | permission | hands | camera | password (src/team/only-owner.ts); anything else is refused
 //   ask "<question>" --why choice --tried "..." --choices "<option>" "<option>" [...]   (2 to 6: the owner picks one)
 //   ask --room "<room folder>" "<question>" --choices ...   (The manager: the button goes over that room's
@@ -14,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 // @ts-expect-error a plain-JS hook module, no type declarations
 import { versionOf } from '../../hooks/public-post-guard.mjs';
 // @ts-expect-error a plain-JS hook module, no type declarations
-import { loadBaselines } from '../../hooks/post-approvals.mjs';
+import { actText, loadBaselines, mediaOf } from '../../hooks/post-approvals.mjs';
 
 // The commits a deploy adds since the last approved deploy of this project (deploy-baselines.json,
 // written when a deploy passes the guard), or the last 10 when there's none.
@@ -28,11 +29,12 @@ function commitsSinceLastDeploy(folder: string, name: string, head: string): str
   }
 }
 import { realpathSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { DATA_DIR, MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
 import { floorPath, loadSeats } from '../office/seats.ts';
 import { roomOfFolder, roomOfSession } from '../office/room-of-folder.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
-import { addAsk, afterCancel, asksPath, loadAsks, MAX_OPTIONS, roomsOwnQuestion, saveAsks, validOptions } from '../team/asks.ts';
+import { addAsk, afterCancel, asksPath, loadAsks, MAX_OPTIONS, roomsOwnQuestion, updateAsks, validOptions } from '../team/asks.ts';
 
 const path = asksPath(MANAGER_NOTES_DIR);
 // --why / --tried can go anywhere on the line.
@@ -44,7 +46,9 @@ let postText: string | undefined;
 let postTarget: string | undefined;
 let changes: string | undefined;
 let proven: string | undefined;
-for (const [flag, set] of [['--text', (v: string) => (postText = v)], ['--target', (v: string) => (postTarget = v)], ['--changes', (v: string) => (changes = v)], ['--proven', (v: string) => (proven = v)]] as const) {
+let mediaFile: string | undefined; // --media <file>: the one file a post carries
+let deletePage: string | undefined; // --delete <post URL>: the owner's Approve lets the room delete that one post
+for (const [flag, set] of [['--text', (v: string) => (postText = v)], ['--target', (v: string) => (postTarget = v)], ['--changes', (v: string) => (changes = v)], ['--proven', (v: string) => (proven = v)], ['--media', (v: string) => (mediaFile = v)], ['--delete', (v: string) => (deletePage = v)]] as const) {
   const i = args.indexOf(flag);
   if (i >= 0) {
     set(args[i + 1] ?? '');
@@ -109,9 +113,13 @@ if (args[0] === 'list') {
     for (const a of mine) console.error(`  ${a.id}  ${a.question.slice(0, 100)}`);
     process.exit(2);
   }
-  const left = afterCancel(asks, folder, me, askedFor, id, folder === realpathSync(MANAGER_DIR));
-  saveAsks(path, left);
-  console.log(`Cancelled ${asks.length - left.length} open question${asks.length - left.length === 1 ? '' : 's'}.`);
+  let cancelled = 0;
+  updateAsks(path, (all) => {
+    const left = afterCancel(all, folder, me, askedFor, id, folder === realpathSync(MANAGER_DIR));
+    cancelled = all.length - left.length;
+    return left;
+  });
+  console.log(`Cancelled ${cancelled} open question${cancelled === 1 ? '' : 's'}.`);
 } else {
   const at = args.indexOf('--choices');
   const question = (at < 0 ? args : args.slice(0, at)).join(' ').trim();
@@ -135,6 +143,18 @@ if (args[0] === 'list') {
     process.exit(2);
   }
   const why = proofArgs.why!.trim().toLowerCase();
+  // Deleting one post (the post guard refuses every click on a social site without a pass): the button
+  // reads "delete the post at <page>"; Approve lets a few clicks through in a tab on exactly that page,
+  // never typing.
+  if (deletePage !== undefined) {
+    const page = normTarget(deletePage);
+    if (why !== 'post' || postText !== undefined || postTarget !== undefined || mediaFile !== undefined || choices || !page.startsWith('https://')) {
+      console.error('Deleting a post: ask "<which post and why>" --why post --tried "<what you checked>" --delete <the post\'s full https:// URL> (no --text, --target, --media or --choices). Their Approve lets a few clicks through in a tab on exactly that page, within 10 minutes.');
+      process.exit(2);
+    }
+    postText = actText(page);
+    postTarget = page;
+  }
   // Button-only posts: a post's button carries its exact text; Approve passes only that text.
   if (why === 'post' && (!postText || !postText.trim() || choices)) {
     console.error('A post needs its exact text on the button: ask "<what and where>" --why post --tried "<what you did>" --text "<the exact text to post>" (yes/no, no --choices). The owner approves that text; only it can then be posted, once.');
@@ -149,6 +169,20 @@ if (args[0] === 'list') {
   if (why === 'post' && !normTarget(postTarget)) {
     console.error('A post needs where it goes on the button too: --target owner/repo#<number> for a PR or issue comment or review, owner/repo for a new issue, or the full https:// URL of the page for another site. The owner approves the text for that place only.');
     process.exit(2);
+  }
+  // A post with a file: the button shows the file, and the owner's Approve lets only those bytes up
+  // with that text, and the text can't go out without them.
+  let media: { name: string; sha256: string; bytes: number } | undefined;
+  if (mediaFile !== undefined) {
+    if (why !== 'post' || !/^https?:\/\//i.test(normTarget(postTarget))) {
+      console.error('--media is for a post on a web page: ask "<what and where>" --why post --tried "<...>" --text "<the exact text>" --target <the page URL> --media <the file>.');
+      process.exit(2);
+    }
+    media = mediaOf(resolve(process.cwd(), mediaFile));
+    if (!media) {
+      console.error(`--media ${mediaFile}: not a readable file (up to 512 MB). Give the path of the one file to post with the text.`);
+      process.exit(2);
+    }
   }
   // A deploy Approve is for one exact version: the text names the
   // project and the commit, the folder must be at that commit with everything committed, and the
@@ -171,7 +205,7 @@ if (args[0] === 'list') {
     deploy = { changes, proven, commits: commitsSinceLastDeploy(folder, name, m[1]!) };
   }
   // Claude Code tells its shell which session this is: the answer goes back to exactly this one.
-  saveAsks(path, addAsk(asks, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(deploy ? { deploy } : {}) } : {}) }, folder));
+  updateAsks(path, (all) => addAsk(all, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(media ? { media } : {}), ...(deploy ? { deploy } : {}) } : {}) }, folder));
   console.log(
     choices
       ? `The owner now sees a question mark over your head; tapping it shows your question with ${choices.length} buttons: ${choices.map((c) => `"${c}"`).join(', ')}. Their pick will arrive in this chat as "The owner chose: ..."; stop here and wait for it.`
