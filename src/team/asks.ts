@@ -6,6 +6,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { withFileLock } from './file-lock.ts';
 import { normTarget } from './posts.ts';
 
 export interface Ask {
@@ -125,7 +126,18 @@ export function loadAsks(path: string): Ask[] {
   }
 }
 
-export function saveAsks(path: string, asks: Ask[]): void {
+// Every change to the file goes through here: read, change and write under one lock, so the office
+// and a manager command changing it at the same moment can't lose each other's change. Nothing
+// writes the file any other way (test/file-lock.test.ts).
+export function updateAsks(path: string, change: (asks: Ask[]) => Ask[]): Ask[] {
+  return withFileLock(path, () => {
+    const next = change(loadAsks(path));
+    writeAsks(path, next);
+    return next;
+  });
+}
+
+function writeAsks(path: string, asks: Ask[]): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify({ asks }, null, 2) + '\n', { mode: 0o600 });

@@ -3,47 +3,16 @@
 // uses the passes (same file, same format, same lock); it's plain JS because hooks run it, so the
 // office writes the file itself here.
 
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { withFileLock } from './file-lock.ts';
 
 export const PASS_TTL_MS = 2 * 60 * 60_000;
 export const approvalsPath = (dataDir: string) => join(dataDir, 'post-approvals.json');
 
 type Pass = { text: string; from: string; alsoFrom?: string; target?: string; at: number; expires: number; usedAt?: number; session?: string };
 
-function withLock(path: string, fn: () => void): void {
-  const lock = `${path}.lock`;
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const until = Date.now() + 3000;
-  for (;;) {
-    try {
-      mkdirSync(lock);
-      break;
-    } catch {
-      let stale = false;
-      // Its age: the time written inside it, or (just taken, time not written yet) the folder's own
-      // age, so a lock another process has only this moment taken is never mistaken for a stale one.
-      try {
-        stale = Date.now() - Number(readFileSync(`${lock}/at`, 'utf8')) > 10_000;
-      } catch {
-        try {
-          stale = Date.now() - statSync(lock).mtimeMs > 10_000;
-        } catch {
-          stale = false; // gone in between: try again
-        }
-      }
-      if (stale) rmSync(lock, { recursive: true, force: true });
-      else if (Date.now() > until) throw new Error('post approvals are busy');
-      else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-    }
-  }
-  try {
-    writeFileSync(`${lock}/at`, String(Date.now()));
-    fn();
-  } finally {
-    rmSync(lock, { recursive: true, force: true });
-  }
-}
+const withLock = (path: string, fn: () => void) => withFileLock(path, fn, 'post approvals are busy');
 
 // Where a post goes: the same reading as hooks/post-approvals.mjs normTarget (a test keeps them alike).
 export function normTarget(t: string | undefined): string {

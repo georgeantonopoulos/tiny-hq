@@ -32,7 +32,7 @@ import { DATA_DIR, MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
 import { floorPath, loadSeats } from '../office/seats.ts';
 import { roomOfFolder, roomOfSession } from '../office/room-of-folder.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
-import { addAsk, afterCancel, asksPath, loadAsks, MAX_OPTIONS, roomsOwnQuestion, saveAsks, validOptions } from '../team/asks.ts';
+import { addAsk, afterCancel, asksPath, loadAsks, MAX_OPTIONS, roomsOwnQuestion, updateAsks, validOptions } from '../team/asks.ts';
 
 const path = asksPath(MANAGER_NOTES_DIR);
 // --why / --tried can go anywhere on the line.
@@ -109,9 +109,13 @@ if (args[0] === 'list') {
     for (const a of mine) console.error(`  ${a.id}  ${a.question.slice(0, 100)}`);
     process.exit(2);
   }
-  const left = afterCancel(asks, folder, me, askedFor, id, folder === realpathSync(MANAGER_DIR));
-  saveAsks(path, left);
-  console.log(`Cancelled ${asks.length - left.length} open question${asks.length - left.length === 1 ? '' : 's'}.`);
+  let cancelled = 0;
+  updateAsks(path, (all) => {
+    const left = afterCancel(all, folder, me, askedFor, id, folder === realpathSync(MANAGER_DIR));
+    cancelled = all.length - left.length;
+    return left;
+  });
+  console.log(`Cancelled ${cancelled} open question${cancelled === 1 ? '' : 's'}.`);
 } else {
   const at = args.indexOf('--choices');
   const question = (at < 0 ? args : args.slice(0, at)).join(' ').trim();
@@ -171,7 +175,7 @@ if (args[0] === 'list') {
     deploy = { changes, proven, commits: commitsSinceLastDeploy(folder, name, m[1]!) };
   }
   // Claude Code tells its shell which session this is: the answer goes back to exactly this one.
-  saveAsks(path, addAsk(asks, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(deploy ? { deploy } : {}) } : {}) }, folder));
+  updateAsks(path, (all) => addAsk(all, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(deploy ? { deploy } : {}) } : {}) }, folder));
   console.log(
     choices
       ? `The owner now sees a question mark over your head; tapping it shows your question with ${choices.length} buttons: ${choices.map((c) => `"${c}"`).join(', ')}. Their pick will arrive in this chat as "The owner chose: ..."; stop here and wait for it.`
