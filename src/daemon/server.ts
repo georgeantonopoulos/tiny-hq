@@ -19,6 +19,7 @@ import { createReadStream, mkdirSync, openSync, readdirSync, statSync, unlinkSyn
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { tokenMatches } from './token.ts';
+import { linkValid, reportLink } from '../team/desk.ts';
 import { serveStatic } from './web.ts';
 import { audit, type Devices, type RateLimit, type RemoteConfig } from './remote.ts';
 import type { Terminal } from '../terminal/sessions.ts';
@@ -59,7 +60,9 @@ export interface DaemonDeps {
   // The office's written happenings (the Haiku writer's pool; see src/office/gags.ts).
   gags?: () => unknown;
   // The owner's desk: reports they asked for (src/team/desk.ts). `open` marks one read.
-  desk?: { list: () => unknown; open: (id: string) => unknown | undefined; unread: () => number };
+  // `page` is one report as a whole page for its own tab (src/team/desk.ts reportPage).
+  desk?: { list: () => { reports: { id: string }[] }; page: (id: string, peek?: boolean) => { html: string; sandboxed: boolean } | undefined; open: (id: string) => unknown | undefined; unread: () => number };
+  build?: () => string; // changes when the office page's own files change: an open page reloads itself
   // The coffee room (src/team/coffee.ts): the last break (who said what) and the board.
   coffee?: { last: () => unknown; board: () => unknown; remove: (id: string) => boolean };
   // The office's microphone: what the owner said (the page's speech recognition), typed into the manager's chat.
@@ -221,6 +224,22 @@ export function createDaemon(deps: DaemonDeps): Server {
       return send(res, 200, { token: key, device: true });
     }
 
+    // A desk report in its own tab: a new tab can't send the token, so the desk list hands out a
+    // link signed with it, good for 12 hours. Over Tailscale it still needs the owner's own login,
+    // checked above. The page loads
+    // nothing from anywhere; a room's own .html page runs sandboxed, cut off from the office.
+    const deskPage = /^\/desk\/([a-z0-9]{8,16})$/.exec(url.pathname);
+    if (deskPage && req.method === 'GET' && deps.desk) {
+      const id = deskPage[1]!;
+      const page = linkValid(deps.token, id, url.searchParams.get('e'), url.searchParams.get('k')) ? deps.desk.page(id, url.searchParams.get('peek') === '1') : undefined; // peek: desk add checking, leaves it unread
+      const csp = page?.sandboxed
+        ? "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:"
+        : "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+      res.writeHead(page ? 200 : 404, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': csp, 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' });
+      res.end(page ? page.html : '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Report</title><p style="font:16px system-ui;padding:24px">This link has run out or the report has moved. Open it again from the desk in the office.</p>');
+      return;
+    }
+
     const auth = req.headers.authorization;
     const given = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
     let device: ReturnType<Devices['check']>;
@@ -286,8 +305,11 @@ export function createDaemon(deps: DaemonDeps): Server {
       return deps.coffee.remove(coffeeM[1]!) ? send(res, 200, { ok: true }) : send(res, 404, { error: 'that tip is already gone' });
     }
     if (req.method === 'GET' && url.pathname === '/api/desk' && deps.desk) {
-      return send(res, 200, deps.desk.list());
+      const d = deps.desk.list();
+      return send(res, 200, { ...d, reports: d.reports.map((r) => ({ ...r, link: reportLink(deps.token, r.id) })) });
     }
+    // The in-office reader. Office pages opened before an update may still call it; without it they
+    // would say every report is gone until reloaded. Keep it.
     const deskM = /^\/api\/desk\/([a-z0-9]{8,16})$/.exec(url.pathname);
     if (deskM && req.method === 'GET' && deps.desk) {
       const r = deps.desk.open(deskM[1]!);
@@ -346,7 +368,7 @@ export function createDaemon(deps: DaemonDeps): Server {
       const lastDone = deps.lastDone?.();
       const deskUnread = deps.desk?.unread();
       const coffee = deps.coffee?.last();
-      return send(res, 200, { sessions, said, ...(models ? { models } : {}), ...(asks ? { asks } : {}), ...(waiting ? { waiting } : {}), ...(lastDone ? { lastDone } : {}), ...(deskUnread !== undefined ? { deskUnread } : {}), ...(coffee ? { coffee } : {}) });
+      return send(res, 200, { sessions, said, ...(models ? { models } : {}), ...(asks ? { asks } : {}), ...(waiting ? { waiting } : {}), ...(lastDone ? { lastDone } : {}), ...(deskUnread !== undefined ? { deskUnread } : {}), ...(coffee ? { coffee } : {}), ...(deps.build ? { build: deps.build() } : {}) });
     }
     if (deps.boardAction && req.method === 'POST' && url.pathname === '/api/board/action') {
       let b: { room?: unknown; next?: unknown };

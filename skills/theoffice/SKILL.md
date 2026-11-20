@@ -53,7 +53,7 @@ When the owner has set a goal for your room and the office has room for it, it s
 
 ## Reports the owner asked for
 
-When the owner (or the manager for them) asks you for a report, put it on the owner's desk as a page: write it in Markdown (headings, tables, links), run `~/.tiny-hq/app/manager/desk add "<title>" <file.md> --from "<your office name>"` (it goes in a folder on the desk for what it is; add `--folder "<name>"` to pick one, e.g. a project series), and tell the manager in your report that it's on the desk. Markdown only; the office turns it into the page.
+When the owner (or the manager for them) asks you for a report, put it on the owner's desk as a page: write it in Markdown (headings, tables, links), run `~/.tiny-hq/app/manager/desk add "<title>" <file.md> --from "<your office name>"` (it goes in a folder on the desk for what it is; add `--folder "<name>"` to pick one, e.g. a project series), and tell the manager in your report that it's on the desk only if it printed "On the owner's desk": it opens the report through the office the way the owner's click does, and a "NOT CONFIRMED" line means they can't open it, so pass that line to the manager instead. Write short Markdown: the office turns it into a designed page that opens in a new tab, so spend no tokens on looks. A table column of numbers lines up on its own; for a bar chart write a fenced block marked `bars` with lines like `Hosting: £120`. Only when a report truly needs a richer chart, hand in a finished `.html` file instead: everything inline, nothing loaded from the internet (the office shows it cut off from everything).
 
 ## Reporting to the manager
 

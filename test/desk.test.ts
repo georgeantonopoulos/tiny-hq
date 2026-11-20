@@ -24,7 +24,7 @@ test("reports land on the owner's desk, newest first, unread until they open one
 test('reports are Markdown made into safe HTML: nothing a session writes can run in the page', () => {
   const html = renderMarkdown(['## Last 30 days', '', '| Metric | Value |', '|---|---|', '| Sales | **$29** |', '', '- one', '- two', '', '<script>alert(1)</script> <img src=x onerror=alert(1)>', '[ok](https://apple.com) [bad](javascript:alert(1))', '`<b>`'].join('\n'));
   assert.match(html, /<h2>Last 30 days<\/h2>/);
-  assert.match(html, /<table>.*<th>Metric<\/th>.*<td><strong>\$29<\/strong><\/td>/s);
+  assert.match(html, /<table>.*<th>Metric<\/th>.*<td class="num"><strong>\$29<\/strong><\/td>/s);
   assert.match(html, /<ul><li>one<\/li><li>two<\/li><\/ul>/);
   assert.doesNotMatch(html, /<script|<img|onerror=alert\(1\)>|href="javascript/i);
   assert.match(html, /&lt;script&gt;/);

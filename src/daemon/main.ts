@@ -42,7 +42,8 @@ import { lateFirstSteps, logStep, loadSteps, pickRoom, stepLine, stepsPath, whyN
 import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.ts';
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
-import { copyFlatReports, fileReport, listDesk, shortRoot, openReport, renderMarkdown, unreadCount } from '../team/desk.ts';
+import { copyFlatReports, fileReport, listDesk, shortRoot, openReport, renderMarkdown, reportPage, unreadCount } from '../team/desk.ts';
+import { webBuild } from './web.ts';
 import { addEntry, eveningPath, expiredAsks, expiredLine, fileEvening, restJobs } from '../team/evening.ts';
 import { approvalsPath, grantPass } from '../team/posts.ts';
 import { bootedSims, EVERY_MS as RUNAWAY_EVERY, OWNER_APPS, findHogs, frontApp, OWNER_USING_MS, hogLine, loadState as loadRunaway, processes, saveState as saveRunaway, simsToStop, stopSim, type Sample } from '../team/runaway.ts';
@@ -647,6 +648,8 @@ async function said(): Promise<Record<string, { text: string; at: string; to?: s
 const server = createDaemon({
   token,
   port,
+  // A fingerprint of the page's files: an open tab reloads when it changes.
+  build: () => webBuild(),
   // A picture from a person's last message, by its number (see saidImages).
   saidImage: (who: string, i: number) => saidImages.get(who)?.[i],
   // The still frame of the file an open post button carries (src/team/stills.ts), by its SHA-256.
@@ -676,6 +679,8 @@ const server = createDaemon({
       return { ...d, root: shortRoot(d.root, homedir()) };
     },
     open: (id) => openReport(DATA_DIR, id),
+    // One report as its own page; a peek (the open-check) leaves it unread.
+    page: (id, peek) => reportPage(DATA_DIR, id, Date.now(), !peek),
     unread: () => unreadCount(DATA_DIR),
   },
   coffee: {
