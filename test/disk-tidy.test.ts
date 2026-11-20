@@ -108,7 +108,8 @@ test('the low-disk alert names what grew since the most was free this week', asy
   const a = { at: now - 2 * DAY, free: 78 * GB, sizes: { '/h/Library/Caches/SomeApp': 20 * GB, '/h/Dev/x': 5 * GB } };
   const b = { at: now - DAY, free: 60 * GB, sizes: { '/h/Library/Caches/SomeApp': 30 * GB } };
   const old = { at: now - 9 * DAY, free: 200 * GB, sizes: {} };
-  assert.equal(baseline([old, a, b], now), a, 'compares with the most free this week');
+  const empty = { at: now - DAY, free: 300 * GB, sizes: {} };
+  assert.equal(baseline([old, a, b, empty], now), a, 'compares with the most free this week, never an empty measurement');
   const t = growthText(a, { at: now, free: 30 * GB, sizes: { '/h/Library/Caches/SomeApp': 38 * GB, '/h/Dev/x': 5.5 * GB, '/h/Library/Containers/docker': 2 * GB } }, '/h');
   assert.match(t, /fell 48\.0 GB/);
   assert.match(t, /\+18\.0 GB ~\/Library\/Caches\/SomeApp; \+2\.0 GB ~\/Library\/Containers\/docker\./, 'biggest first, under 1 GB left out');

@@ -78,7 +78,7 @@ export function addSample(path: string, s: Sample, now = s.at): void {
 
 /** The sample to compare with: the one from when the most was free, in the last week. */
 export function baseline(samples: Sample[], now: number): Sample | undefined {
-  return samples.filter((s) => now - s.at < 7 * DAY).sort((a, b) => b.free - a.free)[0];
+  return samples.filter((s) => now - s.at < 7 * DAY && Object.keys(s.sizes).length).sort((a, b) => b.free - a.free)[0];
 }
 
 const gb = (b: number): string => `${(b / GB).toFixed(1)} GB`;
@@ -121,7 +121,8 @@ export async function sampleIfDue(dataDir: string, free: number, now = Date.now(
   try {
     const sizes = await measure(watched());
     lastSample = now;
-    addSample(samplesPath(dataDir), { at: now, free, sizes });
+    // A failed or empty measurement isn't saved: as a baseline it would make every folder look new.
+    if (Object.keys(sizes).length) addSample(samplesPath(dataDir), { at: now, free, sizes });
   } finally {
     sampling = false;
   }
