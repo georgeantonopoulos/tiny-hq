@@ -35,7 +35,7 @@ test('a bars block draws a bar chart from plain lines', () => {
 
 test("a room's own .html page is kept as it is and flagged to run sandboxed", () => {
   const dir = mkdtempSync(join(tmpdir(), 'deskpage-'));
-  fileReport(dir, 'Chart', '<!doctype html><script>draw()</script>', 'Rusty', 1, 'bbbbbbbb', undefined, true);
+  fileReport(dir, 'Chart', '<!doctype html><script>draw()</script>', 'A room', 1, 'bbbbbbbb', undefined, true);
   assert.deepEqual(listReports(dir).map((r) => r.title), ['Chart']);
   const p = reportPage(dir, 'bbbbbbbb')!;
   assert.equal(p.sandboxed, true);

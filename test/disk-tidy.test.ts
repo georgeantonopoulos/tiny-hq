@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { allBuilds, gitAllows, keepReason, kindOf, pickToClear, projectsIn, idleFor, shortText, type Candidate } from '../src/team/disk-tidy.ts';
@@ -100,4 +100,24 @@ test('a nearly full disk lets builds idle for 6 hours go, and the alert names wh
   const text = shortText(4 * GB, [{ ...c, bytes: 81 * GB, keep: 'used in the last 6 hours' }]);
   assert.match(text, /4\.0 GB free/);
   assert.match(text, /81\.0 GB \/x\/target/);
+});
+
+test('the low-disk alert names what grew since the most was free this week', async () => {
+  const { baseline, growthText, snapshotText } = await import('../src/team/disk-growth.ts');
+  const now = 10 * DAY;
+  const a = { at: now - 2 * DAY, free: 78 * GB, sizes: { '/h/Library/Caches/SomeApp': 20 * GB, '/h/Dev/x': 5 * GB } };
+  const b = { at: now - DAY, free: 60 * GB, sizes: { '/h/Library/Caches/SomeApp': 30 * GB } };
+  const old = { at: now - 9 * DAY, free: 200 * GB, sizes: {} };
+  assert.equal(baseline([old, a, b], now), a, 'compares with the most free this week');
+  const t = growthText(a, { at: now, free: 30 * GB, sizes: { '/h/Library/Caches/SomeApp': 38 * GB, '/h/Dev/x': 5.5 * GB, '/h/Library/Containers/docker': 2 * GB } }, '/h');
+  assert.match(t, /fell 48\.0 GB/);
+  assert.match(t, /\+18\.0 GB ~\/Library\/Caches\/SomeApp; \+2\.0 GB ~\/Library\/Containers\/docker\./, 'biggest first, under 1 GB left out');
+  assert.match(snapshotText(['2026-01-15-120145']), /15\/01 12:01/);
+  assert.equal(snapshotText([]), '');
+  const text = shortText(20 * GB, [], t);
+  assert.match(text, /wants 30 GB/);
+  assert.match(text, /Grew most/);
+  const src = readFileSync(new URL('../src/team/disk-tidy.ts', import.meta.url), 'utf8');
+  assert.match(src, /void sampleIfDue\(/, 'measured daily, whatever the free space');
+  assert.match(src, /shortText\(after, kept, await whatGrew\(/, 'the alert carries what grew');
 });
