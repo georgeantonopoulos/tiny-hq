@@ -35,7 +35,8 @@ import { DATA_DIR, MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
 import { floorPath, loadSeats } from '../office/seats.ts';
 import { roomOfFolder, roomOfSession } from '../office/room-of-folder.ts';
 import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
-import { addAsk, afterCancel, asksPath, loadAsks, MAX_OPTIONS, roomsOwnQuestion, updateAsks, validOptions } from '../team/asks.ts';
+import { heldLine, waitsForList } from '../team/ask-list.ts';
+import { addAsk, afterCancel, type Ask, asksPath, loadAsks, MAX_OPTIONS, roomsOwnQuestion, updateAsks, validOptions } from '../team/asks.ts';
 
 const path = asksPath(MANAGER_NOTES_DIR);
 // --why / --tried can go anywhere on the line.
@@ -49,7 +50,8 @@ let changes: string | undefined;
 let proven: string | undefined;
 let mediaFile: string | undefined; // --media <file>: the one file a post carries
 let deletePage: string | undefined; // --delete <post URL>: the owner's Approve lets the room delete that one post
-for (const [flag, set] of [['--text', (v: string) => (postText = v)], ['--target', (v: string) => (postTarget = v)], ['--changes', (v: string) => (changes = v)], ['--proven', (v: string) => (proven = v)], ['--media', (v: string) => (mediaFile = v)], ['--delete', (v: string) => (deletePage = v)]] as const) {
+let urgent: string | undefined; // --urgent "<why it can't wait>": shown at once, not at the owner's 09:00 / 17:00 list
+for (const [flag, set] of [['--text', (v: string) => (postText = v)], ['--target', (v: string) => (postTarget = v)], ['--changes', (v: string) => (changes = v)], ['--proven', (v: string) => (proven = v)], ['--media', (v: string) => (mediaFile = v)], ['--delete', (v: string) => (deletePage = v)], ['--urgent', (v: string) => (urgent = v)]] as const) {
   const i = args.indexOf(flag);
   if (i >= 0) {
     set(args[i + 1] ?? '');
@@ -208,10 +210,23 @@ if (args[0] === 'list') {
     }
     deploy = { changes, proven, commits: commitsSinceLastDeploy(folder, name, m[1]!) };
   }
+  if (urgent !== undefined && urgent.trim().length < 8) {
+    console.error('--urgent needs the reason it can\'t wait for the owner\'s 09:00 / 17:00 list: --urgent "<why it can\'t wait>".');
+    process.exit(2);
+  }
+  let filed: Ask | undefined;
   // Claude Code tells its shell which session this is: the answer goes back to exactly this one.
-  updateAsks(path, (all) => addAsk(all, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(media ? { media } : {}), ...(deploy ? { deploy } : {}) } : {}) }, folder));
+  updateAsks(path, (all) => {
+    const next = addAsk(all, room, question, Date.now(), undefined, me, undefined, choices, askedFor, undefined, { why, tried: proofArgs.tried!, ...(urgent ? { urgent } : {}), ...(why === 'post' ? { post: postText, target: normTarget(postTarget), ...(media ? { media } : {}), ...(deploy ? { deploy } : {}) } : {}) }, folder);
+    filed = next.find((a) => a.folder === room && a.question === question.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200));
+    return next;
+  });
+  // A button that can wait comes up at the owner's next 09:00 or 17:00 list (src/team/ask-list.ts).
+  const held = filed && waitsForList(filed, (f) => f === realpathSync(MANAGER_DIR));
   console.log(
-    choices
+    held
+      ? heldLine(filed!.since ?? filed!.createdAt)
+      : choices
       ? `The owner now sees a question mark over your head; tapping it shows your question with ${choices.length} buttons: ${choices.map((c) => `"${c}"`).join(', ')}. Their pick will arrive in this chat as "The owner chose: ..."; stop here and wait for it.`
       : 'The owner now sees a question mark over your head; tapping it shows your question with Approve / No. Their answer will arrive in this chat as a message from them; stop here and wait for it.',
   );

@@ -73,7 +73,7 @@ test('ask refuses a folder that is no room, and files a worktree button under it
   execFileSync('sh', ['-c', `printf '%s' '${JSON.stringify({ seated: [notes, editor], away: [] })}' > ${join(data, 'floor.json')}`]);
   const cli = join(import.meta.dirname, '..', 'src', 'cli', 'ask.ts');
   const ask = (cwd: string) =>
-    spawnSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', cli, 'Merge it?', '--why', 'pay', '--tried', 'ran the tests and checked the page', '--choices', 'Yes', 'Not yet'], { cwd, encoding: 'utf8', env: { ...process.env, CM_DATA_DIR: data, CLAUDE_CODE_SESSION_ID: SID } });
+    spawnSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', cli, 'Use the new layout?', '--why', 'pay', '--tried', 'ran the tests and checked the page', '--choices', 'Yes', 'Not yet'], { cwd, encoding: 'utf8', env: { ...process.env, CM_DATA_DIR: data, CLAUDE_CODE_SESSION_ID: SID } });
   const stray = join(top, 'stray');
   mkdirSync(stray);
   const no = ask(stray);
@@ -111,7 +111,7 @@ test('ask --room <worktree of a room> files the button under the room, and cance
   git(notes, 'worktree', 'add', '-q', wt);
   const cli = join(import.meta.dirname, '..', 'src', 'cli', 'ask.ts');
   const run = (...a: string[]) => spawnSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', cli, ...a], { cwd: top, encoding: 'utf8', env: { ...process.env, CM_DATA_DIR: data, CLAUDE_CODE_SESSION_ID: SID } });
-  const put = run('--room', wt, 'Merge it?', '--why', 'pay', '--tried', 'ran the tests and checked the page', '--choices', 'Yes', 'Not yet');
+  const put = run('--room', wt, 'Use the new layout?', '--why', 'pay', '--tried', 'ran the tests and checked the page', '--choices', 'Yes', 'Not yet');
   assert.equal(put.status, 0, put.stderr);
   const asks = () => {
     const s = JSON.parse(readFileSync(join(data, 'manager', 'asks.json'), 'utf8'));

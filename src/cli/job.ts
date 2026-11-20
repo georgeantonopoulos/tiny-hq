@@ -12,6 +12,7 @@
 //   job remove <id>
 // Writes ~/.tiny-hq/manager/jobs.json.
 
+import { heldLine, waitsForList } from '../team/ask-list.ts';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
@@ -84,9 +85,11 @@ switch (cmd) {
     };
     const postText = flag('--text');
     const postTarget = flag('--target');
+    const urgent = flag('--urgent'); // shown at once, not at the owner's 09:00 / 17:00 list (src/team/ask-list.ts)
     const j = find(words[0]);
     const what = words.slice(1).join(' ').trim();
-    if (!what) fail('usage: job wait <id> "<the one thing the owner must do>" --why <reason> --tried "<what was tried>"');
+    if (!what) fail('usage: job wait <id> "<the one thing the owner must do>" --why <reason> --tried "<what was tried>" [--urgent "<why it can\'t wait for the 09:00 / 17:00 list>"]');
+    if (urgent !== undefined && urgent.trim().length < 8) fail('--urgent needs the reason it can\'t wait for the owner\'s 09:00 / 17:00 list: --urgent "<why it can\'t wait>".');
     // Only the owner's things reach the owner (src/team/only-owner.ts).
     const refused = checkOnlyOwner(proof.why, proof.tried, what);
     if (refused) fail(`Not waiting on the owner: ${j.id} stays active.\n${refused}`);
@@ -103,10 +106,17 @@ switch (cmd) {
     } catch {
       /* keep as written */
     }
-    const asks = updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => addAsk(all, folder, what, Date.now(), undefined, undefined, j.id, undefined, false, undefined, { why: proof.why!.trim().toLowerCase(), tried: proof.tried!, ...(isPost ? { post: postText, target: normTarget(postTarget) } : {}) }));
+    const asks = updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => addAsk(all, folder, what, Date.now(), undefined, undefined, j.id, undefined, false, undefined, { why: proof.why!.trim().toLowerCase(), tried: proof.tried!, ...(urgent ? { urgent } : {}), ...(isPost ? { post: postText, target: normTarget(postTarget) } : {}) }));
     const rides = asks.find((a) => a.forJob === j.id);
+    const isManager = (f: string) => f === realpathSync(MANAGER_DIR);
     if (rides) {
-      console.log(`${j.id} is waiting on the owner: ${what}. The room already has its own question over its head ("${rides.question.slice(0, 80)}"), so the owner sees only that one; their answer goes to the room and puts the job back to work. Don't also ask them in chat. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
+      const held = waitsForList(rides, isManager) ? ` ${heldLine(rides.since ?? rides.createdAt)}` : '';
+      console.log(`${j.id} is waiting on the owner: ${what}. The room already has its own question over its head ("${rides.question.slice(0, 80)}"), so the owner sees only that one.${held} Their answer goes to the room and puts the job back to work. Don't also ask them in chat. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
+      break;
+    }
+    const mine = asks.find((a) => a.job === j.id);
+    if (mine && waitsForList(mine, isManager)) {
+      console.log(`${j.id} is waiting on the owner: ${what}. ${heldLine(mine.since ?? mine.createdAt)} Approve is typed into the room's chat and puts the job back to work. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
       break;
     }
     console.log(`${j.id} is waiting on the owner: ${what}. The owner sees it as an Approve / No button over the room's head; Approve is typed into the room's chat and puts the job back to work. Don't also ask them in chat. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);

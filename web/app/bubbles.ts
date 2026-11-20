@@ -26,6 +26,8 @@ export interface Speaker {
   anchor(): { x: number; y: number; foot?: number } | null;
 }
 
+const hhmm = (t: number) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
 export interface AskInfo {
   id: string;
   question: string;
@@ -35,6 +37,7 @@ export interface AskInfo {
   post?: string; // a public post's exact text: Approve lets only this go up, once
   target?: string; // where it goes (owner/repo#N, owner/repo, a page): Approve is for there only
   still?: string; // the SHA-256 of that file, when the office has a still frame of it to show
+  held?: number; // not urgent: comes up with the owner's list at this time; a small clock until then, answerable early
   media?: string; // the one file the post carries (its name and size): Approve lets only that file up, and the post can't go without it
   deploy?: { changes: string; proven: string; commits: string[] }; // a deploy: what changes, what was proven where, the commits going out
   hands?: boolean; // a step only the owner's hands can do: Done, I did it / Stuck
@@ -399,6 +402,12 @@ export class Bubbles {
         if (ask.deploy.commits.length) part(`Commits going out (${ask.deploy.commits.length}):`, ask.deploy.commits.join('\n'));
       }
     }
+    if (ask.held) {
+      const h = document.createElement('small');
+      h.className = 'tried';
+      h.textContent = `Not urgent: this comes with your ${hhmm(ask.held)} list. Answer now if you like.`;
+      q.append(document.createElement('br'), h);
+    }
     if (ask.tried) {
       const t = document.createElement('small');
       t.className = 'tried';
@@ -547,16 +556,17 @@ export class Bubbles {
     if (p.ask) badges.push('q');
     if (unread) badges.push('new');
     if (p.working) badges.push('work');
-    const shape = badges.join(' ') + (p.blocked ? `|${p.blocked}` : '');
+    const held = p.ask?.held;
+    const shape = badges.join(' ') + (p.blocked ? `|${p.blocked}` : '') + (held ? `|held${held}` : '');
     if (shape !== p.shape) {
       p.shape = shape;
       const kids = badges.map((b) => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = `badge ${b}`;
+        btn.className = `badge ${b}${b === 'q' && held ? ' held' : ''}`;
         if (b === 'work') btn.append(...[0, 1, 2].map(() => document.createElement('i'))); // three bouncing dots
-        else btn.textContent = b === 'wait' ? '✋' : b === 'q' ? '?' : '!';
-        const label = b === 'wait' ? `${p.speaker.name} is waiting for your OK (${p.blocked}): open their room` : b === 'q' ? `${p.speaker.name} has a question for you` : b === 'new' ? `New from ${p.speaker.name}: read it` : `${p.speaker.name} is working: open their room`;
+        else btn.textContent = b === 'wait' ? '✋' : b === 'q' ? (held ? '🕐' : '?') : '!';
+        const label = b === 'wait' ? `${p.speaker.name} is waiting for your OK (${p.blocked}): open their room` : b === 'q' && held ? `${p.speaker.name} has a question for your ${hhmm(held)} list: answer now if you like` : b === 'q' ? `${p.speaker.name} has a question for you` : b === 'new' ? `New from ${p.speaker.name}: read it` : `${p.speaker.name} is working: open their room`;
         btn.title = label;
         btn.setAttribute('aria-label', label);
         btn.addEventListener('click', (e) => {
@@ -571,7 +581,7 @@ export class Bubbles {
       });
       p.mark.replaceChildren(...kids);
     }
-    if (pop && (p.ask || unread || p.blocked)) {
+    if (pop && ((p.ask && !p.ask.held) || unread || p.blocked)) {
       p.mark.classList.remove('pop');
       void p.mark.offsetWidth; // restart the animation
       p.mark.classList.add('pop');

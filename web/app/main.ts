@@ -282,7 +282,8 @@ async function start(): Promise<void> {
       return 'error' in res ? res.error : null;
     }, (sha) => api.askStill(sha));
     // A sound for what's new since the last look: a question over a news chime, a finished job over both.
-    const askIds = Object.values(r.asks ?? {}).map((a) => a.id);
+    // A held question (a clock, not urgent) makes no sound: it comes with the owner's list.
+    const askIds = Object.values(r.asks ?? {}).filter((a) => !a.held).map((a) => a.id);
     // Stopped on a permission prompt in their room: a hand over their head until it's answered.
     const newlyBlocked = office.showBlocked(Object.fromEntries(Object.entries(waiting).map(([id, w]) => [id, w.text])));
     const newQuestion = askIds.some((id) => !asksSeen.has(id)) || newlyBlocked.length > 0;

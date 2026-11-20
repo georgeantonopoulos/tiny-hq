@@ -5,6 +5,7 @@
 // checks, typing into sessions only for those.
 
 import { stillOf } from '../team/stills.ts';
+import { listTimeAfter, visibleAsks } from '../team/ask-list.ts';
 import { execFile, execFileSync } from 'node:child_process';
 import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -1073,20 +1074,31 @@ async function typeIntoNow(s: { id: string; sessionId?: string; cwd: string }, l
 // with the button over that person's head; the office types their answer into
 // that session's own chat.
 const ASKS = asksPath(MANAGER_NOTES_DIR);
+// The manager's own folder (its questions are the owner's own line, never held for a list).
+const isManagerFolder = (p: string) => worksIn(p, MANAGER_DIR) || worksIn(p, realOr(MANAGER_DIR));
 function personFor(folder: string): { id: string; path: string } | undefined {
   if (worksIn(folder, MANAGER_DIR)) return { id: 'manager', path: MANAGER_DIR };
   const r = (floors.latest()?.rooms ?? []).find((x) => x.kind === 'project' && x.project && worksIn(folder, x.project.path));
   return r?.project ? { id: `lead:${r.id}`, path: r.project.path } : undefined;
 }
-function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string; still?: string }> {
-  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string; still?: string }> = {};
+function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string; still?: string; held?: number }> {
+  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string; still?: string; held?: number }> = {};
   // A "Trust and start" button for a folder that isn't a room on the floor (an archive project like
   // in the cupboard) shows over the manager's head, ahead of their own questions: otherwise the owner could never see it.
   const offFloorTrust = (a: Ask) => !!a.trust && !personFor(a.folder);
-  const shown = oldestPerFolder(loadAsks(ASKS)).sort((x, y) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask)));
-  for (const { ask, more } of shown) {
+  // A button that can wait comes up at the owner's 09:00 or 17:00 list (src/team/ask-list.ts). Before
+  // then it shows as a small clock over the room's head (no sound), answerable early.
+  // A room with a due question shows that one; its held ones only when nothing is due.
+  const all = loadAsks(ASKS);
+  const due = visibleAsks(all, Date.now(), isManagerFolder);
+  const byTrust = (x: { ask: Ask }, y: { ask: Ask }) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask));
+  const shown = [
+    ...oldestPerFolder(due).sort(byTrust),
+    ...oldestPerFolder(all.filter((a) => !due.includes(a))).map((x) => ({ ...x, held: listTimeAfter(x.ask.since ?? x.ask.createdAt) })),
+  ] as { ask: Ask; more: number; held?: number }[];
+  for (const { ask, more, held } of shown) {
     const who = personFor(ask.folder) ?? (offFloorTrust(ask) ? { id: 'manager' } : undefined);
-    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.media ? { media: `${ask.media.name} (${(ask.media.bytes / 1e6).toFixed(1)} MB)` } : {}), ...(ask.media && stillOf(DATA_DIR, ask.media.sha256) ? { still: ask.media.sha256 } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
+    if (who && !out[who.id]) out[who.id] = { ...(held ? { held } : {}), id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.media ? { media: `${ask.media.name} (${(ask.media.bytes / 1e6).toFixed(1)} MB)` } : {}), ...(ask.media && stillOf(DATA_DIR, ask.media.sha256) ? { still: ask.media.sha256 } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
   }
   return out;
 }

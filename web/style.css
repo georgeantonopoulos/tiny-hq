@@ -298,6 +298,7 @@ body.resizing { user-select: none; }
 }
 .mark .badge.new { background: linear-gradient(#ffd66b, #f2b544); }
 .mark .badge.q { background: linear-gradient(#9fe0ff, #5bb8e8); animation-delay: -0.4s; }
+.mark .badge.q.held { background: linear-gradient(#e6e2ee, #b9b2c8); font-size: 12px; animation: none; } /* waits for the 09:00/17:00 list: quiet, still tappable */
 .mark .badge.wait { background: linear-gradient(#ff9d8a, #e8604c); animation-delay: -0.8s; font-size: 16px; }
 .mark .badge:hover { filter: brightness(1.08); }
 .mark .badge:hover { animation-play-state: paused; translate: 0 -2px; }
