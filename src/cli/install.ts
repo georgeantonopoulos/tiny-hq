@@ -48,7 +48,7 @@ export const HOOKS: HookSpec[] = [
     id: 'room-questions',
     event: 'Stop',
     file: 'room-ask-guard.mjs',
-    what: "Questions as buttons: when a room's Claude asks you something in its chat instead of putting up a question button, it's sent back once to put it on a button, so you see a question mark over that room. Only in your rooms.",
+    what: "Questions as buttons: when a room's Claude asks you something in its chat instead of putting up a question button, it's sent back once to put it on a button, so you see a question mark over that room. A promise in a report (\"pictures coming\") is sent back too until it's on the room's job, so the job can't close without it. Only in your rooms.",
   },
   {
     id: 'screen-clicks',

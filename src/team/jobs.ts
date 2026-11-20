@@ -33,6 +33,30 @@ export interface Job {
   // no nudges until `holdUntil`, then the job simply carries on. No button for the owner.
   holdFor?: string;
   holdUntil?: number; // ms
+  // Things the room promised in a report ("pictures coming"): part of the job until delivered.
+  // `job done` is refused while one is open (src/cli/job.ts), so a promise can't quietly lapse
+  // when the job closes.
+  owed?: Owed[];
+}
+
+export interface Owed {
+  what: string;
+  at: number; // ms: when it was promised
+  delivered?: number; // ms
+  how?: string; // where it was delivered (a path, a message)
+}
+
+export const MAX_OWED = 20;
+export const openOwed = (job: Pick<Job, 'owed'>): Owed[] => (job.owed ?? []).filter((o) => !o.delivered);
+// Keeps at most MAX_OWED items, dropping the oldest delivered ones first, so an open promise is never
+// dropped to make room.
+export function trimOwed(list: Owed[]): Owed[] {
+  const out = [...list];
+  while (out.length > MAX_OWED) {
+    const i = out.findIndex((o) => o.delivered);
+    out.splice(i >= 0 ? i : 0, 1);
+  }
+  return out;
 }
 
 const ID = /^[a-z0-9][a-z0-9-]{0,40}$/;
@@ -63,6 +87,21 @@ export function validJob(j: unknown): Job | undefined {
     job.holdFor = clean(str('holdFor'), 300);
     job.holdUntil = num('holdUntil');
   }
+  const owed = (Array.isArray(o.owed) ? o.owed : [])
+    .map((x): Owed | undefined => {
+      if (!x || typeof x !== 'object') return undefined;
+      const r = x as Record<string, unknown>;
+      const what = typeof r.what === 'string' ? clean(r.what, 300) : '';
+      if (!what) return undefined;
+      const at = typeof r.at === 'number' && r.at > 0 ? r.at : Date.now();
+      const out: Owed = { what, at };
+      if (typeof r.delivered === 'number' && r.delivered > 0) out.delivered = r.delivered;
+      if (typeof r.how === 'string' && clean(r.how, 300)) out.how = clean(r.how, 300);
+      return out;
+    })
+    .filter((x): x is Owed => !!x);
+  owed.splice(0, owed.length, ...trimOwed(owed));
+  if (owed.length) job.owed = owed;
   return job;
 }
 
@@ -256,9 +295,18 @@ export function nudgeLine(job: Job, cli: string, brief = `~/.tiny-hq/manager/job
       `The only things you must never do: send an email (or a message to a person outside the office), or put anything on a public site (post, comment, reply, review, DM). An email stays a draft in their mail: tell the manager it's ready and the owner sends it when they like, never a button (a job about an email is done once the draft is saved). A post needs the owner's yes for that exact text: manager/ask --why post --text "<the exact text>" --target <owner/repo#N or page URL> (posts are button-only). ` +
       `Don't hand the owner a step you can do yourself: a sign-in their Chrome already has, an upload, a form or a console button is yours; a broken tool or connector goes to the manager as an office fault. ` +
       `A choice that changes what the owner gets (data source, design, approach): ${cli.replace(/job$/, 'ask')} "<question>" --why choice --tried "<what you compared>" --choices "<your pick>" "<other>". Small, reversible choices are yours: add them to their evening note (${cli.replace(/job$/, 'evening')} add "<what you decided, and why>"). If it's a public post, a payment, something that can't be undone, a password or 2-factor code you can't get past, or a step only their hands can do (a macOS System Settings switch: --why hands, with the exact steps), run: ${cli} wait ${job.id} "<the one thing the owner must do>" --why <${WHY_LIST}> --tried "<what you already tried>" (for a post add --text "<the exact text>" --target <owner/repo#N or page URL>: their Approve then lets exactly that go up there, once). ` +
+      owedLine(job, cli) +
       `When it's done, run: ${cli} done ${job.id} and report to the manager.`,
-    4000, // fixed text ~2.2k + title (120) + done (1200): never cut the rules or the closing "done" step
+    4800, // fixed text ~2.2k + title (120) + done (1200) + owed (~800): never cut the rules or the closing "done" step
   );
+}
+
+// What the room still owes on a job, for its nudge and the manager's list ("" when nothing).
+export function owedLine(job: Job, cli: string): string {
+  const open = openOwed(job);
+  if (!open.length) return '';
+  const shown = open.slice(0, 5).map((o) => `(${(job.owed ?? []).indexOf(o) + 1}) ${o.what.slice(0, 120)}`);
+  return `You promised and haven't delivered yet: ${shown.join('; ')}${open.length > 5 ? ` and ${open.length - 5} more (job show ${job.id})` : ''}. Deliver each, then run ${cli} delivered ${job.id} <number> "<where it is>"; the job can't be marked done before. `;
 }
 
 // The line for a job waiting on the owner: check whether they have done it.
@@ -277,6 +325,6 @@ export function describeJobs(jobs: Job[], roomName: (path: string) => string, no
   const open = jobs.filter((j) => j.status !== 'done');
   if (!open.length) return 'No open jobs.';
   return open
-    .map((j) => `- ${j.id} · ${roomName(j.room)} · ${j.title} · ${j.status === 'waiting' ? `WAITING ON OWNER: ${j.waitingFor ?? 'not said'}` : isHeld(j, now) ? `HOLDING until ${when(j.holdUntil!)}: waiting for ${j.holdFor}; not nudged, resumes by itself` : `active${j.nudgesToday && j.nudgeDay === localDay(new Date()) ? `, nudged ${j.nudgesToday}× today` : ''}`}\n  done when: ${j.done}`)
+    .map((j) => `- ${j.id} · ${roomName(j.room)} · ${j.title} · ${j.status === 'waiting' ? `WAITING ON OWNER: ${j.waitingFor ?? 'not said'}` : isHeld(j, now) ? `HOLDING until ${when(j.holdUntil!)}: waiting for ${j.holdFor}; not nudged, resumes by itself` : `active${j.nudgesToday && j.nudgeDay === localDay(new Date()) ? `, nudged ${j.nudgesToday}× today` : ''}`}\n  done when: ${j.done}${openOwed(j).length ? `\n  still owed: ${openOwed(j).map((o) => o.what).join('; ')}` : ''}`)
     .join('\n');
 }
