@@ -60,7 +60,7 @@ test('the evening note: one page of what did not need the owner, nothing when th
   const note = eveningNote(entries, [job({ status: 'done', updatedAt: at }), job({ id: 'old', status: 'done', updatedAt: 1 })], 100, at + 1, (f) => f.split('/').pop()!)!;
   assert.match(note.title, /^Evening note, 15 Nov: 1 job done, 1 decision, 1 merge$/);
   assert.match(note.markdown, /## Jobs finished\n\n- \*\*app\*\*: Ship it/);
-  assert.match(note.markdown, /## Merged by a room\n\n- \*\*site\*\*: Merged PR #12/);
+  assert.match(note.markdown, /## Merged after clean tests and review\n\n- \*\*site\*\*: Merged PR #12/);
   assert.equal(eveningNote(entries, [], at, at + 1, (f) => f), undefined, 'only what came since the last note');
   // Filed once a day at 19:00.
   assert.equal(eveningDue(0, new Date(2026, 10, 15, 18, 59)), undefined);
@@ -172,4 +172,15 @@ test('the first evening note carries every queued entry, but finished jobs from 
   assert.match(filed[0]!, /Kept the old icon/);
   assert.match(filed[0]!, /job new/);
   assert.doesNotMatch(filed[0]!, /job old/);
+});
+
+test('a sign-in button names the logins already checked (the command-line tool may be signed in all along)', () => {
+  const r = checkOnlyOwner('password', 'opened the Cloudflare dashboard, it wants a login', 'Sign in to Cloudflare?');
+  assert.match(r ?? '', /which existing logins/);
+  assert.match(r ?? '', /wrangler whoami/);
+  assert.match(r ?? '', /manager\/profiles/);
+  assert.equal(checkOnlyOwner('password', 'wrangler whoami: not signed in; manager/profiles cloudflare: none; no token in other rooms', 'Sign in to Cloudflare?'), undefined);
+  assert.match(checkOnlyOwner('hands', 'opened App Store Connect in Chrome', 'Log in to App Store Connect?') ?? '', /which existing logins/);
+  assert.equal(checkOnlyOwner('hands', 'opened Privacy & Security, Screen Recording pane is showing', 'Turn on Screen Recording for Terminal?'), undefined, 'a hands button that is not a sign-in is untouched');
+  assert.equal(checkOnlyOwner('choice', 'compared the cloud key and the local API', 'Which login flow?'), undefined, 'other reasons are untouched');
 });

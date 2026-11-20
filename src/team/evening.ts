@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import type { Job } from './jobs.ts';
 import type { Ask } from './asks.ts';
 
-export const KINDS = { decision: 'Decisions rooms made', merge: 'Merged by a room', step: 'Goal steps', expired: 'Buttons that came down unanswered (taken as "not now")', github: 'New on GitHub from other people', note: 'Other news' } as const;
+export const KINDS = { decision: 'Decisions rooms made', merge: 'Merged after clean tests and review', step: 'Goal steps', expired: 'Buttons that came down unanswered (taken as "not now")', github: 'New on GitHub from other people', note: 'Other news' } as const;
 export type Kind = keyof typeof KINDS;
 export interface Entry {
   at: number;

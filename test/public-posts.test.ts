@@ -524,6 +524,14 @@ test('public deploys need the owner\'s Approve for that project; previews of a l
   for (const c of ['netlify deploy --dir dist', 'npx gh-pages -d dist', 'wrangler pages deploy dist', 'surge dist', 'vercel --prod --prebuilt'])
     denies(D(c), /isn't committed|git ignores/);
   denies(D('vercel --prod && echo done'), /alongside other commands/);
+  // A Cloudflare deploy is named after its project, not the folder.
+  denies(D('wrangler pages deploy --project-name garden-site --branch main'), /deploy garden-site at [0-9a-f]{7} publicly/);
+  denies(D('wrangler pages deploy --project-name=garden-site'), /deploy garden-site at [0-9a-f]{7} publicly/);
+  writeFileSync(join(room, 'wrangler.jsonc'), '// site\n{ "name": "Garden-Site", "pages_build_output_dir": "." }');
+  git('add', '-A');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'wrangler');
+  denies(D('wrangler pages deploy'), /deploy garden-site at [0-9a-f]{7} publicly/);
+  git('reset', '-q', '--hard', head);
   for (const c of ['vercel ls', 'vercel env pull', 'vercel login', 'echo vercel --prod', 'netlify status', 'git push origin main'])
     assert.equal(D(c), undefined, c);
   // Once linked, a preview is protected and allowed; production still needs the pass.

@@ -137,7 +137,7 @@ if (args[0] === 'list') {
     process.exit(2);
   }
   // Only the owner's things reach the owner: a reason from the short list, and what was already tried.
-  const refused = checkOnlyOwner(proofArgs.why, proofArgs.tried);
+  const refused = checkOnlyOwner(proofArgs.why, proofArgs.tried, [question, ...(choices ?? [])].join(' | '));
   if (refused) {
     console.error(`No button for the owner.\n${refused}`);
     process.exit(2);

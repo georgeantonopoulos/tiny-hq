@@ -55,11 +55,56 @@ export const WHY_LIST = Object.keys(REASONS).join('|');
 export const NO_SEND_BUTTON =
   'An email is never a button: the owner sends their own emails, when they like. Leave it as a draft in their mail, tell the manager it is ready, and finish (a job about an email is done once the draft is saved). No --why send.';
 
-// undefined: fine. Otherwise the message to print, and the button is refused.
-export function checkOnlyOwner(why: string | undefined, tried: string | undefined): string | undefined {
+// Rooms merge their own PRs: once the tests pass and an independent review is clean, the room merges
+// and lists it in the evening note. Releases, store submissions and public deploys stay the owner's.
+// (Handing the owner a "ready for you to merge" for a clean PR is a click they gain nothing from.)
+// This one sentence is what rooms are told everywhere (the theoffice skill, goal steps, the
+// manager's rules); test/merge-rule.test.ts fails if a text that tells rooms about merging leaves it out.
+export const MERGE_RULE =
+  'Merging is yours: when your PR\'s tests pass and an independent review is clean (your validator subagent, and the Codex or CodeRabbit comments on the PR, each answered), merge it yourself and list it in the evening note (manager/evening add "<PR and what it does>" --kind merge); never put a Merge button up. Still the owner\'s: releases and store submissions, public deploys (including a merge that publishes a site by itself), and a repo whose own rules say a person merges.';
+
+// A Merge button (question or options about merging a PR or branch) is refused, unless the merge is
+// a release or public deploy (the owner's, as a post) or a command their settings refuse (permission).
+// Only what is asked counts: the question's "?" sentences (all of it if it has none) and the options.
+// A sentence of background that mentions a merge doesn't make the button a Merge button.
+// (A merge conflict to resolve, or an option named "Merge" with no PR or branch in sight, e.g. a
+// compositing Merge node, is not a merge of code.)
+const MERGE_WORD = /\bmerg(e|es|ing)\b(?! conflicts?)/i;
+const CODE_REF = /\bPRs?\b|\bpull request|#\d+|\bbranch(es)?\b|\b(main|master)\b/i;
+const PUBLIC_STEP = /\b(release|deploy|publish|app store|store submission|testflight|go(es)? (live|public)|live on)\b|\bputs? [^.?!|]{0,40}\blive\b/i;
+function askedPart(text: string): string {
+  const [question = '', ...options] = text.split(' | ');
+  const asked = question.match(/[^.?!]*\?/g);
+  return [asked ? asked.join(' ') : question, ...options].join(' | ');
+}
+export function mergeButton(why: string, text: string): string | undefined {
+  if (why === 'post' || why === 'permission' || why === 'password') return undefined;
+  if (!MERGE_WORD.test(askedPart(text)) || !CODE_REF.test(text) || PUBLIC_STEP.test(text)) return undefined;
+  return `No Merge button. ${MERGE_RULE} (Review not clean yet: fix what it found first. Merging would release or deploy something publicly: say so on a --why post button. Their settings refuse the merge command: --why permission, naming the exact command.)`;
+}
+
+// A sign-in button names the logins already checked: the owner shouldn't be asked to sign in to a
+// service while its command-line tool is already signed in on the Mac, or another room holds a key
+// for it. Every password button, and a hands button about signing in, must say in --tried which
+// existing logins were looked at.
+const SIGN_IN = /\b(sign(ed|ing)?[ -]?in|log(ged|ging)?[ -]?in|login|account|credentials?|api key|token|2fa|two[- ]factor|password|passkey|authori[sz]e|auth)\b/i;
+const LOGINS_CHECKED = /\bwhoami\b|\bauth (status|list)\b|\bprofiles?\b|\b(signed|logged) in\b|\bkeychain\b|\bapi[- ]?keys?\b|\btokens?\b|\.env\b|\bcredentials?\b|\bother rooms?\b/i;
+export const LOGIN_PLACES =
+  'Before asking the owner to sign in, look for a login the Mac or another room already has: the command-line tool\'s own sign-in (wrangler whoami, gh auth status, vercel whoami, gcloud auth list, eas whoami, firebase login:list), an API key or token another room uses (its .env or the macOS keychain: security find-generic-password -s <service>; ask the manager which room deploys or uploads there), and the other Chrome profiles (~/.tiny-hq/app/manager/profiles <site>). Use one if it works. If none does, name what you checked in --tried, e.g. --tried "wrangler whoami: not signed in; manager/profiles cloudflare: none; no Cloudflare token in other rooms".';
+export function loginsUnchecked(why: string, tried: string, text: string): string | undefined {
+  if (why !== 'password' && !(why === 'hands' && SIGN_IN.test(text))) return undefined;
+  if (LOGINS_CHECKED.test(tried)) return undefined;
+  return `--tried doesn't say which existing logins you checked. ${LOGIN_PLACES}`;
+}
+
+// undefined: fine. Otherwise the message to print, and the button is refused. `text` is the
+// button's question and its options joined by " | ", for the checks that read what is asked.
+export function checkOnlyOwner(why: string | undefined, tried: string | undefined, text = ''): string | undefined {
   const w = (why ?? '').trim().toLowerCase();
   if (w === 'send' || w === 'email') return NO_SEND_BUTTON;
+  const merge = mergeButton(w, text);
+  if (merge) return merge;
   if (!(w in REASONS)) return `${why ? `"${why}" is not something only the owner can do.` : 'Missing --why.'}\n${ONLY_OWNER_HELP}`;
   if (cleanLine(tried ?? '', 400).length < MIN_TRIED) return `Missing --tried: say what you already did or tried yourself before asking the owner.\n${ONLY_OWNER_HELP}`;
-  return undefined;
+  return loginsUnchecked(w, tried ?? '', text);
 }

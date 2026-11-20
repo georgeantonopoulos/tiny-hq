@@ -2,13 +2,15 @@
 // allowance has room (src/team/budget.ts). A goal is the owner's standing ask for that
 // room, so a step needs no button; it stays private and undoable (a branch, tests,
 // drafts) and stops at the same lines as every job: no email, nothing public, no
-// release, no payment, no merge to main without the owner.
+// release, no payment without the owner. A PR it opens it merges itself once tests and an
+// independent review pass (MERGE_RULE).
 //
 // The log (~/.tiny-hq/manager/goal-steps.jsonl) is one line per step started,
 // read by the picker (who's had a turn lately) and the scorecard.
 
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { MERGE_RULE } from './only-owner.ts';
 
 export interface Step {
   room: string; // the room's project folder
@@ -92,7 +94,7 @@ export function stepLine(goal: string, why: string, ask: string): string {
   return (
     `[Office: goal step] The owner's goal for this room: "${goal}". There's spare Claude allowance right now (${why}), so take the next useful step toward it on your own; the owner set the goal, so no need to ask them to start. ` +
     `First check your project notes and git so you don't redo or contradict earlier work, then pick the one step that helps the goal most and do it, in a worktree on its own branch. ` +
-    `Yours to do: read, investigate, test, fix, commit to that branch and push the branch. Not without the owner's yes: merging to main/master, releases or store submissions, sending any email, anything on a public site (posts, comments, issues, PR comments, reviews), paying, deleting data. ` +
+    `Yours to do: read, investigate, test, fix, commit to that branch, push it and open a PR. Not without the owner's yes: releases or store submissions, sending any email, anything on a public site (posts, comments, issues, PR comments, reviews), paying, deleting data. ${MERGE_RULE} ` +
     `If the next step needs their yes for money, public text or something that can't be undone, or is a choice that changes what they get (--why choice with --choices, your pick first), ask with ${ask} (--why and --tried) and stop; small, reversible choices are yours. Keep it to about an hour, then one line for the owner's evening note (no message to the manager): ${ask.replace(/ask$/, 'evening')} add "<what you did, what's next>" --kind step.`
   ).replace(/\s+/g, ' ');
 }

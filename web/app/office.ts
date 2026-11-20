@@ -332,7 +332,16 @@ export class Office {
     // Saved decor: paintings, plants, rugs... drawn into the floor layer, so it
     // stays under the people however and whenever they're added.
     const objects = ((this.floor as Floor & { objects?: SceneObject[] })?.objects ?? []).filter((o) => o.room === room.id);
-    for (const o of objects) drawObject(g, o, TILE);
+    for (const o of objects) {
+      drawObject(g, o, TILE);
+      // A painting or poster with a label gets a small brass plaque under it.
+      if ((o.kind === 'painting' || o.kind === 'poster') && o.label) {
+        const plaque = new PIXI.Text({ text: o.label, style: { fontFamily: 'ui-rounded, system-ui', fontSize: 7, fontWeight: '800', fill: 0xd8443c, align: 'center' } });
+        plaque.anchor.set(0.5, 0);
+        plaque.position.set((o.x + o.w / 2) * TILE, (o.y + o.h) * TILE + 1);
+        c.addChild(plaque);
+      }
+    }
 
     // Name on the back wall.
     const label = new PIXI.Text({
