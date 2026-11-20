@@ -37,6 +37,7 @@ export interface DaemonDeps {
   said?: () => Promise<Record<string, { text: string; at: string; images?: number }>>;
   // The i-th picture the person's last message points at (a path the office found in it), if any.
   saidImage?: (who: string, i: number) => string | undefined;
+  askStill?: (sha256: string) => string | undefined; // the still frame of an open post button's file
   // Person id -> what their blocked session is waiting for the owner on (permission or question).
   waiting?: () => Promise<Record<string, { kind: string; text: string }>>;
   // The manager's timetable: the scheduled tasks, and the owner switching one on or off.
@@ -63,7 +64,7 @@ export interface DaemonDeps {
   coffee?: { last: () => unknown; board: () => unknown; remove: (id: string) => boolean };
   // The office's microphone: what the owner said (the page's speech recognition), typed into the manager's chat.
   say?: (text: string, from?: From) => Promise<void>;
-  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; target?: string; media?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void>; ignore?: (id: string) => void };
+  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; target?: string; media?: string; still?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void>; ignore?: (id: string) => void };
   // the owner joins (or starts) the Claude Code session in a project's folder, or the manager's.
   terminal?: {
     open: (projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number, trust?: boolean) => Promise<{ termId: string; session: string; fresh: boolean }>;
@@ -319,10 +320,12 @@ export function createDaemon(deps: DaemonDeps): Server {
     }
     // A picture from someone's last message, for their bubble. Only a path the office itself
     // found in that message, only image files, at most 20 MB.
-    if (req.method === 'GET' && url.pathname === '/api/said-image' && deps.saidImage) {
+    const stillSha = url.searchParams.get('sha') ?? '';
+    if (req.method === 'GET' && ((url.pathname === '/api/said-image' && deps.saidImage) || (url.pathname === '/api/ask-still' && deps.askStill && /^[0-9a-f]{64}$/.test(stillSha)))) {
       const who = url.searchParams.get('who') ?? '';
       const i = Number(url.searchParams.get('i'));
-      const file = Number.isInteger(i) && i >= 0 && i < 4 ? deps.saidImage(who, i) : undefined;
+      // The still on a post button: only for a file an open button carries.
+      const file = url.pathname === '/api/ask-still' ? deps.askStill!(stillSha) : Number.isInteger(i) && i >= 0 && i < 4 ? deps.saidImage!(who, i) : undefined;
       const type = file ? IMAGE_MIME[(file.match(/\.([a-z]+)$/i)?.[1] ?? '').toLowerCase()] : undefined;
       if (!file || !type) return send(res, 404, { error: 'no such picture' });
       try {

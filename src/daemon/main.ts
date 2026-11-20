@@ -4,6 +4,7 @@
 // tick (every minute, see TICK_STEPS) runs the timetable, jobs, evening note and the office's own
 // checks, typing into sessions only for those.
 
+import { stillOf } from '../team/stills.ts';
 import { execFile, execFileSync } from 'node:child_process';
 import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -647,6 +648,8 @@ const server = createDaemon({
   port,
   // A picture from a person's last message, by its number (see saidImages).
   saidImage: (who: string, i: number) => saidImages.get(who)?.[i],
+  // The still frame of the file an open post button carries (src/team/stills.ts), by its SHA-256.
+  askStill: (sha: string) => (loadAsks(ASKS).some((a) => a.media?.sha256 === sha) ? stillOf(DATA_DIR, sha) : undefined),
   // Over Tailscale (config "remote"): the owner's account plus a paired device; 10 sign-in tries per 10 minutes.
   ...(config.remote ? { remote: { config: config.remote, port: port + 1, devices: new Devices(DEVICES_PATH), signIns: new RateLimit(10, 10 * 60_000), auditPath: REMOTE_AUDIT_PATH } } : {}),
   // The page opens the manager's terminal on this folder.
@@ -1075,15 +1078,15 @@ function personFor(folder: string): { id: string; path: string } | undefined {
   const r = (floors.latest()?.rooms ?? []).find((x) => x.kind === 'project' && x.project && worksIn(folder, x.project.path));
   return r?.project ? { id: `lead:${r.id}`, path: r.project.path } : undefined;
 }
-function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string }> {
-  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string }> = {};
+function openAsks(): Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string; still?: string }> {
+  const out: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; media?: string; still?: string }> = {};
   // A "Trust and start" button for a folder that isn't a room on the floor (an archive project like
   // in the cupboard) shows over the manager's head, ahead of their own questions: otherwise the owner could never see it.
   const offFloorTrust = (a: Ask) => !!a.trust && !personFor(a.folder);
   const shown = oldestPerFolder(loadAsks(ASKS)).sort((x, y) => Number(offFloorTrust(y.ask)) - Number(offFloorTrust(x.ask)));
   for (const { ask, more } of shown) {
     const who = personFor(ask.folder) ?? (offFloorTrust(ask) ? { id: 'manager' } : undefined);
-    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.media ? { media: `${ask.media.name} (${(ask.media.bytes / 1e6).toFixed(1)} MB)` } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
+    if (who && !out[who.id]) out[who.id] = { id: ask.id, question: ask.question, ...(more ? { more } : {}), ...(ask.options ? { options: ask.options } : {}), ...(ask.tried ? { tried: ask.tried } : {}), ...(isPassword(ask) ? { password: true } : {}), ...(isHands(ask) ? { hands: true } : {}), ...(ask.post ? { post: ask.post } : {}), ...(ask.media ? { media: `${ask.media.name} (${(ask.media.bytes / 1e6).toFixed(1)} MB)` } : {}), ...(ask.media && stillOf(DATA_DIR, ask.media.sha256) ? { still: ask.media.sha256 } : {}), ...(ask.post ? { target: ask.target ?? postTargetGuess(ask) ?? '' } : {}), ...(ask.deploy ? { deploy: ask.deploy } : {}) };
   }
   return out;
 }

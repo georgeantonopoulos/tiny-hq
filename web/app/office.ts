@@ -920,9 +920,10 @@ export class Office {
   }
 
   // Questions people need the owner to answer: a "?" over each one's head.
-  showAsks(asks: Record<string, AskInfo>, answer: (askId: string, answer: Answer) => Promise<string | null>): void {
+  showAsks(asks: Record<string, AskInfo>, answer: (askId: string, answer: Answer) => Promise<string | null>, still?: (sha: string) => Promise<string | undefined>): void {
     if (!this.bubbles) return;
     this.bubbles.onAnswer = answer;
+    if (still) this.bubbles.loadStill = still;
     for (const id of this.bubbles.askIds()) if (!asks[id]) this.bubbles.clearAsk(id);
     for (const [id, a] of Object.entries(asks)) {
       const p = this.people.get(id);

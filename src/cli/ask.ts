@@ -11,6 +11,7 @@
 //   ask cancel <id>               (one question by its id, from ask list; --room <folder> cancel: the manager's own question over that room)
 
 import { normTarget } from '../team/posts.ts';
+import { makeStill } from '../team/stills.ts';
 import { execFileSync } from 'node:child_process';
 // @ts-expect-error a plain-JS hook module, no type declarations
 import { versionOf } from '../../hooks/public-post-guard.mjs';
@@ -173,6 +174,7 @@ if (args[0] === 'list') {
   // A post with a file: the button shows the file, and the owner's Approve lets only those bytes up
   // with that text, and the text can't go out without them.
   let media: { name: string; sha256: string; bytes: number } | undefined;
+  let stillMade = false;
   if (mediaFile !== undefined) {
     if (why !== 'post' || !/^https?:\/\//i.test(normTarget(postTarget))) {
       console.error('--media is for a post on a web page: ask "<what and where>" --why post --tried "<...>" --text "<the exact text>" --target <the page URL> --media <the file>.');
@@ -183,6 +185,8 @@ if (args[0] === 'list') {
       console.error(`--media ${mediaFile}: not a readable file (up to 512 MB). Give the path of the one file to post with the text.`);
       process.exit(2);
     }
+    // A still frame on the button, so the owner sees which picture or video it is.
+    stillMade = !!makeStill(resolve(process.cwd(), mediaFile), media.sha256, DATA_DIR);
   }
   // A deploy Approve is for one exact version: the text names the
   // project and the commit, the folder must be at that commit with everything committed, and the
@@ -211,4 +215,5 @@ if (args[0] === 'list') {
       ? `The owner now sees a question mark over your head; tapping it shows your question with ${choices.length} buttons: ${choices.map((c) => `"${c}"`).join(', ')}. Their pick will arrive in this chat as "The owner chose: ..."; stop here and wait for it.`
       : 'The owner now sees a question mark over your head; tapping it shows your question with Approve / No. Their answer will arrive in this chat as a message from them; stop here and wait for it.',
   );
+  if (media) console.log(stillMade ? `The button shows a still frame of ${media.name}, so the owner sees which file goes up with the text.` : `No still frame could be made of ${media.name}: the button names the file only. If it is a picture or video, check the path.`);
 }

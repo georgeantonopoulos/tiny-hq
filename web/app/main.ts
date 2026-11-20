@@ -280,7 +280,7 @@ async function start(): Promise<void> {
     office.showAsks(r.asks, async (askId, answer) => {
       const res = await api.answer(askId, answer);
       return 'error' in res ? res.error : null;
-    });
+    }, (sha) => api.askStill(sha));
     // A sound for what's new since the last look: a question over a news chime, a finished job over both.
     const askIds = Object.values(r.asks ?? {}).map((a) => a.id);
     // Stopped on a permission prompt in their room: a hand over their head until it's answered.
