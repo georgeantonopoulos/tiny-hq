@@ -12,6 +12,7 @@ export interface DeskReport {
   at: number;
   read?: number;
   folder: string; // '' for the top of the desk folder, else 'Security' or 'Security/Atlas'
+  link?: string; // the report as its own page, signed by the office (good for 12 hours)
 }
 
 export interface DeskTree {
@@ -133,16 +134,24 @@ export class Desk {
   }
   private readonly opened = new Set<string>(); // folders the owner opened, kept open when they come back
 
+  // A report opens as its own designed page in a new tab, through the signed link
+  // the office put on it. Opening it marks it read on the office's side.
   private row(rep: DeskReport): HTMLElement {
-    const b = document.createElement('button');
-    b.type = 'button';
+    const b = document.createElement('a');
+    if (rep.link) b.href = rep.link;
+    b.target = '_blank';
+    b.rel = 'noopener noreferrer';
     b.className = `desk-row${rep.read ? '' : ' unread'}`;
     const h = document.createElement('h3');
     h.textContent = rep.title;
     const m = document.createElement('p');
     m.textContent = `${rep.read ? '' : 'New · '}${rep.from ? `from ${rep.from} · ` : ''}${when(rep.at)}`;
     b.append(h, m);
-    b.onclick = () => void this.open(rep.id);
+    b.onclick = () => {
+      b.classList.remove('unread');
+      m.textContent = m.textContent!.replace(/^New · /, '');
+      setTimeout(() => this.onRead?.(), 1500); // the tab has asked for it by then: the count drops
+    };
     return b;
   }
 
@@ -208,22 +217,13 @@ export class Desk {
     this.el.scrollTop = 0;
   }
 
+  // A link straight to one report (…/#desk=<id>): this tab goes to the report's own page.
   async open(id: string): Promise<void> {
-    this.el.classList.remove('hidden');
-    const r = await this.api.deskReport(id);
-    if ('error' in r) {
-      this.body.replaceChildren(line(`Couldn't open it: ${r.error}`));
-      return;
-    }
-    this.back.hidden = false;
-    this.title.textContent = r.title;
-    this.meta.textContent = `${r.folder ? `${r.folder} · ` : ''}${r.from ? `from ${r.from} · ` : ''}${when(r.at)}`;
-    const page = document.createElement('article');
-    page.className = 'report';
-    page.innerHTML = r.html; // made by the office from Markdown, everything escaped (src/team/desk.ts)
-    this.body.replaceChildren(page);
-    this.el.scrollTop = 0;
-    this.onRead?.();
+    const r = await this.api.desk();
+    const link = 'error' in r ? undefined : r.reports.find((x) => x.id === id)?.link;
+    if (link) return location.assign(link);
+    await this.show();
+    this.body.prepend(line("Couldn't find that report: here's the desk."));
   }
 }
 

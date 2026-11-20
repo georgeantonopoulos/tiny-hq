@@ -6,10 +6,13 @@
 //   job go <id>                                       (The owner did their part: back on)
 //   job show <id>                                     (the job and its brief)
 //   job note <id> "<what happened>"                   (a dated Progress line in the brief)
-//   job done <id>
+//   job owe <id> "<what you promised>"                (a promise in a report: part of the job until delivered)
+//   job delivered <id> <number> "<where it is>"
+//   job done <id>                                     (refused while a promise is open)
 //   job remove <id>
 // Writes ~/.tiny-hq/manager/jobs.json.
 
+import { heldLine, waitsForList } from '../team/ask-list.ts';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { MANAGER_DIR, MANAGER_NOTES_DIR } from '../paths.ts';
@@ -17,7 +20,7 @@ import { checkOnlyOwner, takeOnlyOwner } from '../team/only-owner.ts';
 import { addAsk, asksPath, updateAsks } from '../team/asks.ts';
 import { normTarget } from '../team/posts.ts';
 import { holdWatch, holdWatchId, loadSchedule, saveSchedule, schedulePath } from '../team/schedule.ts';
-import { briefPath, briefTemplate, CHECK_EVERY, describeJobs, emptySections, jobsPath, loadJobs, parseUntil, updateJobs, validJob, type Job } from '../team/jobs.ts';
+import { briefPath, briefTemplate, CHECK_EVERY, MAX_OWED, openOwed, trimOwed, describeJobs, emptySections, jobsPath, loadJobs, parseUntil, updateJobs, validJob, type Job } from '../team/jobs.ts';
 
 const path = jobsPath(MANAGER_NOTES_DIR);
 const [cmd, ...rest] = process.argv.slice(2);
@@ -55,7 +58,7 @@ switch (cmd) {
       fail(`No such folder: ${folder}`);
     }
     const old = jobs.find((x) => x.id === id);
-    const j = validJob({ id, room, title, done, status: 'active', createdAt: old?.createdAt ?? Date.now(), updatedAt: Date.now() });
+    const j = validJob({ id, room, title, done, status: 'active', createdAt: old?.createdAt ?? Date.now(), updatedAt: Date.now(), owed: old?.owed });
     if (!j) fail('Not added: check the id (lowercase-with-dashes), the folder, a title and a --done line.');
     put(j!);
     const bp = briefPath(MANAGER_NOTES_DIR, j!.id);
@@ -82,11 +85,13 @@ switch (cmd) {
     };
     const postText = flag('--text');
     const postTarget = flag('--target');
+    const urgent = flag('--urgent'); // shown at once, not at the owner's 09:00 / 17:00 list (src/team/ask-list.ts)
     const j = find(words[0]);
     const what = words.slice(1).join(' ').trim();
-    if (!what) fail('usage: job wait <id> "<the one thing the owner must do>" --why <reason> --tried "<what was tried>"');
+    if (!what) fail('usage: job wait <id> "<the one thing the owner must do>" --why <reason> --tried "<what was tried>" [--urgent "<why it can\'t wait for the 09:00 / 17:00 list>"]');
+    if (urgent !== undefined && urgent.trim().length < 8) fail('--urgent needs the reason it can\'t wait for the owner\'s 09:00 / 17:00 list: --urgent "<why it can\'t wait>".');
     // Only the owner's things reach the owner (src/team/only-owner.ts).
-    const refused = checkOnlyOwner(proof.why, proof.tried);
+    const refused = checkOnlyOwner(proof.why, proof.tried, what);
     if (refused) fail(`Not waiting on the owner: ${j.id} stays active.\n${refused}`);
     const isPost = proof.why!.trim().toLowerCase() === 'post';
     if (isPost && (!postText?.trim() || !normTarget(postTarget)))
@@ -101,10 +106,17 @@ switch (cmd) {
     } catch {
       /* keep as written */
     }
-    const asks = updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => addAsk(all, folder, what, Date.now(), undefined, undefined, j.id, undefined, false, undefined, { why: proof.why!.trim().toLowerCase(), tried: proof.tried!, ...(isPost ? { post: postText, target: normTarget(postTarget) } : {}) }));
+    const asks = updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => addAsk(all, folder, what, Date.now(), undefined, undefined, j.id, undefined, false, undefined, { why: proof.why!.trim().toLowerCase(), tried: proof.tried!, ...(urgent ? { urgent } : {}), ...(isPost ? { post: postText, target: normTarget(postTarget) } : {}) }));
     const rides = asks.find((a) => a.forJob === j.id);
+    const isManager = (f: string) => f === realpathSync(MANAGER_DIR);
     if (rides) {
-      console.log(`${j.id} is waiting on the owner: ${what}. The room already has its own question over its head ("${rides.question.slice(0, 80)}"), so the owner sees only that one; their answer goes to the room and puts the job back to work. Don't also ask them in chat. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
+      const held = waitsForList(rides, isManager) ? ` ${heldLine(rides.since ?? rides.createdAt)}` : '';
+      console.log(`${j.id} is waiting on the owner: ${what}. The room already has its own question over its head ("${rides.question.slice(0, 80)}"), so the owner sees only that one.${held} Their answer goes to the room and puts the job back to work. Don't also ask them in chat. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
+      break;
+    }
+    const mine = asks.find((a) => a.job === j.id);
+    if (mine && waitsForList(mine, isManager)) {
+      console.log(`${j.id} is waiting on the owner: ${what}. ${heldLine(mine.since ?? mine.createdAt)} Approve is typed into the room's chat and puts the job back to work. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
       break;
     }
     console.log(`${j.id} is waiting on the owner: ${what}. The owner sees it as an Approve / No button over the room's head; Approve is typed into the room's chat and puts the job back to work. Don't also ask them in chat. The office checks ${CHECK_EVERY} whether it's done; when it is: job go ${j.id}`);
@@ -134,8 +146,39 @@ switch (cmd) {
     console.log(`${j.id} is active again.`);
     break;
   }
+  case 'owe': {
+    const j = find(rest[0]);
+    const what = rest.slice(1).join(' ').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!what) fail('usage: job owe <id> "<what you promised>"');
+    if (openOwed(j).some((o) => o.what.toLowerCase() === what.toLowerCase())) {
+      console.log(`Already owed on ${j.id}: ${what}`);
+      break;
+    }
+    if (openOwed(j).length >= MAX_OWED) fail(`${j.id} already has ${MAX_OWED} undelivered promises on it: deliver some first.`);
+    const before = j.owed ?? [];
+    const owed = trimOwed([...before, { what, at: Date.now() }]);
+    put({ ...j, owed, updatedAt: Date.now(), ...(j.status === 'done' ? { status: 'active' as const } : {}) });
+    console.log(`Owed on ${j.id} (${owed.length}): ${what}. The job can't be marked done until you deliver it and run: job delivered ${j.id} ${owed.length} "<where it is>"`);
+    if (owed.length < before.length + 1) console.log(`Old delivered items were cleared, so the numbers changed. Still owed: ${owed.map((o, i) => (o.delivered ? '' : `(${i + 1}) ${o.what.slice(0, 80)}`)).filter(Boolean).join('; ')}`);
+    break;
+  }
+  case 'delivered': {
+    const j = find(rest[0]);
+    const n = Number(rest[1]);
+    const item = Number.isInteger(n) && n >= 1 ? j.owed?.[n - 1] : undefined;
+    if (!item) fail(`usage: job delivered <id> <number> "<where it is>"\n${(j.owed ?? []).map((o, i) => `  ${i + 1}. ${o.delivered ? '(delivered) ' : ''}${o.what}`).join('\n') || '  nothing owed'}`);
+    const how = rest.slice(2).join(' ').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!how) fail('Say where it is (a file path, the message you sent, a link): job delivered <id> <number> "<where it is>"');
+    put({ ...j, owed: (j.owed ?? []).map((o) => (o === item ? { ...o, delivered: Date.now(), how } : o)), updatedAt: Date.now() });
+    const left = openOwed(j).length - (item!.delivered ? 0 : 1);
+    console.log(`Delivered on ${j.id}: ${item!.what}.${left ? ` Still owed: ${left}.` : ' Nothing else owed.'}`);
+    break;
+  }
   case 'done': {
     const j = find(rest[0]);
+    const owedNow = openOwed(j);
+    if (owedNow.length)
+      fail(`Not done: ${j.id} still owes what was promised:\n${owedNow.map((o) => `  ${(j.owed ?? []).indexOf(o) + 1}. ${o.what}`).join('\n')}\nDeliver each, run job delivered ${j.id} <number> "<where it is>", then job done ${j.id}.`);
     const { waitingFor: _w, holdFor: _hf, holdUntil: _hu, ...fin } = j;
     put({ ...fin, status: 'done', updatedAt: Date.now() });
     updateAsks(asksPath(MANAGER_NOTES_DIR), (all) => all.filter((a) => a.job !== fin.id));
@@ -178,5 +221,5 @@ switch (cmd) {
     console.log(`Removed ${rest[0]}.`);
     break;
   default:
-    fail('usage: job list | add ... | show <id> | note <id> "<what>" | wait <id> "<what>" --why <reason> --tried "<what>" | hold <id> "<what>" --until <time> | go <id> | done <id> | remove <id>');
+    fail('usage: job list | add ... | show <id> | note <id> "<what>" | wait <id> "<what>" --why <reason> --tried "<what>" | hold <id> "<what>" --until <time> | go <id> | owe <id> "<what>" | delivered <id> <n> "<where>" | done <id> | remove <id>');
 }

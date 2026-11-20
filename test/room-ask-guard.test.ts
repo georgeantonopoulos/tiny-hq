@@ -83,3 +83,37 @@ test('the reply Claude Code hands the hook counts even when the chat file does n
   writeFileSync(t3, [user, button].join('\n'));
   assert.equal(run(data, room, t3, [], 'Did it flicker? (also on the button)'), '', 'a button this turn still counts');
 });
+
+// A refused button followed by the same question in chat used to count as asked; so did the words
+// "manager/ask" quoted in a note. A merge left waiting on the owner with no "?" is a question too.
+test('a refused, help or quoted manager/ask is not a button; a line that leaves something waiting on the owner counts', () => {
+  const data = mkdtempSync(join(tmpdir(), 'rag-'));
+  mkdirSync(join(data, 'tags'));
+  const room = '/Users/someone/Dev/notes';
+  writeFileSync(tagFile(room, data), 'tag');
+  const user = line({ type: 'user', message: { content: 'carry on' } });
+  const call = (id: string, command: string) => line({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const result = (id: string, content: string) => line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content }] } });
+  const q = 'Should I run it on the live vault?';
+  const write = (name: string, rows: string[]) => {
+    const t = join(data, name);
+    writeFileSync(t, [user, ...rows].join('\n'));
+    return t;
+  };
+  const cases: [string, string[], boolean][] = [
+    ['refused', [call('a', '~/.tiny-hq/app/manager/ask "Merge PR 21?" --why choice'), result('a', 'No button for the owner.\nNo Merge button.')], true],
+    ['refused wait', [call('f', '~/.tiny-hq/app/manager/job wait x "Run it?" --why choice'), result('f', 'Not waiting on the owner: x stays active.')], true],
+    ['help', [call('b', '~/.tiny-hq/app/manager/ask --help | head'), result('b', 'usage')], true],
+    ['quoted', [call('c', '~/.tiny-hq/app/manager/evening add "merged (manager/ask refuses Merge buttons)"'), result('c', 'Added')], true],
+    ['errored', [call('d', '~/.tiny-hq/app/manager/ask "Run it?" --why irreversible'), line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'd', is_error: true, content: 'Exit code 2' }] } })], true],
+    ['went up', [call('e', '~/.tiny-hq/app/manager/ask "Run it?" --why irreversible --tried "x"'), result('e', 'The owner now sees a question mark over your head')], false],
+  ];
+  for (const [name, rows, sentBack] of cases) {
+    const out = run(data, room, write(`${name}.jsonl`, rows), [], q);
+    if (sentBack) assert.match(out, /"decision":"block"/, name);
+    else assert.equal(out, '', name);
+  }
+  const waits = 'The only thing left on #16 is your merge, which puts the new title live on the site.';
+  assert.match(run(data, room, write('waits.jsonl', []), [], waits), /"decision":"block"/);
+  assert.equal(run(data, room, write('nothing.jsonl', []), [], 'Done. Nothing is waiting on you.'), '');
+});

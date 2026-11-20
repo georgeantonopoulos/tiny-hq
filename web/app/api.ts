@@ -44,6 +44,21 @@ export class Api {
     }
   }
 
+  // The still frame of the file a post button carries, as a page-local URL. One fetch per
+  // file: the still is named by the file's fingerprint, so it never changes.
+  private readonly stills = new Map<string, Promise<string | undefined>>();
+  askStill(sha: string): Promise<string | undefined> {
+    let got = this.stills.get(sha);
+    if (!got) {
+      got = fetch(`/api/ask-still?sha=${encodeURIComponent(sha)}`, { headers: this.headers() })
+        .then(async (r) => (r.ok ? URL.createObjectURL(await r.blob()) : undefined))
+        .catch(() => undefined);
+      got.then((u) => u === undefined && this.stills.delete(sha));
+      this.stills.set(sha, got);
+    }
+    return got;
+  }
+
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return { authorization: `Bearer ${this.token}`, ...extra };
   }
@@ -122,12 +137,12 @@ export class Api {
 
   // Who has a running Claude session: "manager" for the manager, "lead:<room>" per project.
   // ...and the last thing each said (the manager's speech bubble).
-  async sessions(): Promise<{ sessions: Record<string, 'busy' | 'idle'>; models: Record<string, string>; said: Record<string, { text: string; at: string; to?: string; images?: number }>; waiting: Record<string, { kind: string; text: string }>; asks: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string; media?: string; deploy?: { changes: string; proven: string; commits: string[] } }>; lastDone?: number; deskUnread: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } }> {
+  async sessions(): Promise<{ sessions: Record<string, 'busy' | 'idle'>; models: Record<string, string>; said: Record<string, { text: string; at: string; to?: string; images?: number }>; waiting: Record<string, { kind: string; text: string }>; asks: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string; media?: string; still?: string; deploy?: { changes: string; proven: string; commits: string[] }; held?: number }>; lastDone?: number; deskUnread: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] }; build?: string }> {
     const r = await fetch('/api/sessions', { headers: this.headers() });
     if (r.status === 401 || r.status === 403) throw new AuthError(`sessions: ${r.status}`);
     if (!r.ok) throw new Error(`sessions: ${r.status}`); // the page keeps what it last knew
-    const body = (await r.json()) as { sessions: Record<string, 'busy' | 'idle'>; models?: Record<string, string>; said?: Record<string, { text: string; at: string; to?: string; images?: number }>; waiting?: Record<string, { kind: string; text: string }>; asks?: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string; media?: string }>; lastDone?: number; deskUnread?: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] } };
-    return { sessions: body.sessions, models: body.models ?? {}, said: body.said ?? {}, waiting: body.waiting ?? {}, asks: body.asks ?? {}, ...(body.lastDone ? { lastDone: body.lastDone } : {}), deskUnread: body.deskUnread ?? 0, ...(body.coffee ? { coffee: body.coffee } : {}) };
+    const body = (await r.json()) as { sessions: Record<string, 'busy' | 'idle'>; models?: Record<string, string>; said?: Record<string, { text: string; at: string; to?: string; images?: number }>; waiting?: Record<string, { kind: string; text: string }>; asks?: Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; post?: string; target?: string; media?: string; still?: string }>; lastDone?: number; deskUnread?: number; coffee?: { at: number; who: { id: string; name: string; line: string }[] }; build?: string };
+    return { sessions: body.sessions, models: body.models ?? {}, said: body.said ?? {}, waiting: body.waiting ?? {}, asks: body.asks ?? {}, ...(body.lastDone ? { lastDone: body.lastDone } : {}), deskUnread: body.deskUnread ?? 0, ...(body.coffee ? { coffee: body.coffee } : {}), ...(body.build ? { build: body.build } : {}) };
   }
 
   // The coffee room's board: what the rooms learned and shared.
@@ -156,16 +171,6 @@ export class Api {
       return { error: "couldn't reach the Mac" };
     }
   }
-  async deskReport(id: string): Promise<(import('./desk.ts').DeskReport & { html: string }) | { error: string }> {
-    try {
-      const r = await fetch(`/api/desk/${encodeURIComponent(id)}`, { headers: this.headers() });
-      if (!r.ok) return { error: r.status === 404 ? 'that report is gone' : `refused (${r.status})` };
-      return (await r.json()) as import('./desk.ts').DeskReport & { html: string };
-    } catch {
-      return { error: "couldn't reach the Mac" };
-    }
-  }
-
   // The owner clicks Action on a whiteboard suggestion: the manager gets it to hand out.
   async boardAction(room: string, next: string): Promise<{ ok: true } | { error: string }> {
     const r = await fetch('/api/board/action', { method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ room, next }) }).catch(() => null);

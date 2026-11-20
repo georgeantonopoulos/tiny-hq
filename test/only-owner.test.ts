@@ -13,7 +13,7 @@ import { validAsk } from '../src/team/asks.ts';
 test('only the owner: a reason from the short list and a real attempt, nothing else', () => {
   assert.deepEqual(Object.keys(REASONS).sort(), ['camera', 'choice', 'hands', 'irreversible', 'password', 'pay', 'permission', 'post']);
   assert.match(checkOnlyOwner('send', 'Drafted it, subject "Testers"')!, /never a button/);
-  assert.equal(checkOnlyOwner('PASSWORD', 'Opened pypi.org in their Chrome: signed out, password box'), undefined);
+  assert.equal(checkOnlyOwner('PASSWORD', 'Opened pypi.org in their Chrome: signed out, password box; no PyPI token in other rooms'), undefined);
   assert.match(checkOnlyOwner(undefined, 'tried lots of things')!, /Missing --why/);
   assert.match(checkOnlyOwner('login', 'tried lots of things')!, /not something only the owner can do/);
   assert.match(checkOnlyOwner('reconnect', 'x')!, /office fault/);
@@ -71,11 +71,11 @@ test('job wait refuses without proof and leaves the job active', () => {
   assert.equal(bare.code, 2);
   assert.match(bare.out, /stays active/);
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).jobs[0].status, 'active');
-  const ok = run('job', dir, 'wait', 'pypi', 'Type your PyPI password', '--why', 'password', '--tried', 'Opened pypi.org in Chrome: signed out, password box');
+  const ok = run('job', dir, 'wait', 'pypi', 'Type your PyPI password', '--why', 'password', '--tried', 'Opened pypi.org in Chrome: signed out, password box; no PyPI token in other rooms');
   assert.equal(ok.code, 0, ok.out);
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).jobs[0].status, 'waiting');
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).jobs[0].waitingFor, 'Type your PyPI password');
-  assert.equal(asks(dir)[0]!.tried, 'Opened pypi.org in Chrome: signed out, password box');
+  assert.equal(asks(dir)[0]!.tried, 'Opened pypi.org in Chrome: signed out, password box; no PyPI token in other rooms');
 });
 
 // A post approved on a job-wait button used to give no pass, so the guard refused it and the owner

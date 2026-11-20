@@ -2,7 +2,8 @@
 // their types by Node on the way out. Only files inside web/ and the PixiJS
 // browser bundle can be served; nothing else on disk is reachable.
 
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { extname, join, sep } from 'node:path';
 import type { ServerResponse } from 'node:http';
@@ -42,6 +43,23 @@ export const SECURITY_HEADERS: Record<string, string> = {
 };
 
 const cache = new Map<string, { mtime: number; body: string }>();
+
+// A fingerprint of the page's own files (names, sizes, change times). An open office page that sees it
+// change reloads itself, so a tab left open across an update never runs old code against a newer
+// office (an open tab calling a route the office no longer has would show every report as gone).
+let built = { at: 0, id: '' };
+export function webBuild(now = Date.now()): string {
+  if (built.id && now - built.at < 10_000) return built.id;
+  const h = createHash('sha256');
+  for (const e of readdirSync(WEB_ROOT, { recursive: true, withFileTypes: true }).sort((a, b) => join(a.parentPath, a.name).localeCompare(join(b.parentPath, b.name)))) {
+    if (!e.isFile() || !/\.(ts|js|mjs|html|css)$/.test(e.name)) continue;
+    const f = join(e.parentPath, e.name);
+    const s = statSync(f);
+    h.update(`${f}:${s.size}:${s.mtimeMs}\n`);
+  }
+  built = { at: now, id: h.digest('hex').slice(0, 16) };
+  return built.id;
+}
 
 function load(file: string): string {
   const mtime = statSync(file).mtimeMs;

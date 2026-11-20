@@ -298,6 +298,7 @@ body.resizing { user-select: none; }
 }
 .mark .badge.new { background: linear-gradient(#ffd66b, #f2b544); }
 .mark .badge.q { background: linear-gradient(#9fe0ff, #5bb8e8); animation-delay: -0.4s; }
+.mark .badge.q.held { background: linear-gradient(#e6e2ee, #b9b2c8); font-size: 12px; animation: none; } /* waits for the 09:00/17:00 list: quiet, still tappable */
 .mark .badge.wait { background: linear-gradient(#ff9d8a, #e8604c); animation-delay: -0.8s; font-size: 16px; }
 .mark .badge:hover { filter: brightness(1.08); }
 .mark .badge:hover { animation-play-state: paused; translate: 0 -2px; }
@@ -353,7 +354,7 @@ body.resizing { user-select: none; }
 .desk-sheet { width: min(760px, 100%); }
 .desk-sheet header #desk-back, .desk-sheet header #desk-close { font-size: 18px; line-height: 1; padding: 2px 8px; }
 .desk-sheet header h2 { overflow-wrap: anywhere; }
-.desk-row { display: block; width: 100%; text-align: left; padding: 12px 0 12px 14px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; position: relative; font: inherit; }
+.desk-row { display: block; width: 100%; text-align: left; padding: 12px 0 12px 14px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); cursor: pointer; position: relative; font: inherit; text-decoration: none; box-sizing: border-box; }
 .desk-row:last-child { border-bottom: 0; }
 .desk-row h3 { margin: 0; font-size: 15px; }
 .desk-row p { margin: 3px 0 0; font-size: 12px; color: var(--muted); }
@@ -396,6 +397,7 @@ body.resizing { user-select: none; }
 .coffee-board .tip-x { flex: none; padding: 0 8px; font-size: 16px; line-height: 1.2; }
 
 /* A post's exact text on its button. */
+.post-still { display: block; max-width: 100%; max-height: 240px; margin: 6px 0 0; border-radius: 4px; border: 1px solid #8884; object-fit: contain; background: #0002; }
 .post-text { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: #8881; white-space: pre-wrap; font-size: 13px; }
 
 /* Pictures a message points at: thumbnails under the text, tap for full size. */

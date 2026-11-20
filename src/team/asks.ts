@@ -27,6 +27,8 @@ export interface Ask {
   media?: { name: string; sha256: string; bytes: number }; // --why post --media: the one file the post carries; the pass lets only it up, and the post can't go without it
   target?: string; // --why post: where it goes (owner/repo#N, owner/repo, or a page URL); the pass is only for there
   deploy?: { changes: string; proven: string; commits: string[] }; // a deploy's button: what changes, what was proven where, the commits since the last approved deploy
+  urgent?: string; // --urgent "<why it can't wait>": shown at once instead of at the owner's 09:00 / 17:00 list (src/team/ask-list.ts)
+  since?: number; // when this same question was first asked: asking again doesn't push it to a later list
 }
 
 export const MAX_OPTIONS = 6;
@@ -89,6 +91,8 @@ export function validAsk(a: unknown): Ask | undefined {
     ...(typeof o.target === 'string' && o.why === 'post' && normTarget(o.target) ? { target: normTarget(o.target) } : {}),
     ...(validDeploy(o.deploy) && o.why === 'post' ? { deploy: validDeploy(o.deploy) } : {}),
     ...(validMedia(o.media) && o.why === 'post' ? { media: validMedia(o.media) } : {}),
+    ...(typeof o.urgent === 'string' && clean(o.urgent, 200) ? { urgent: clean(o.urgent, 200) } : {}),
+    ...(typeof o.since === 'number' && o.since > 0 && o.since <= (typeof o.createdAt === 'number' ? o.createdAt : Date.now()) ? { since: o.since } : {}),
     ...(o.askedFor === true && typeof o.sessionId === 'string' ? { askedFor: true as const } : {}),
     ...(validTrust(o.trust) && typeof o.job !== 'string' && !validOptions(o.options) ? { trust: validTrust(o.trust) } : {}),
   };
@@ -123,7 +127,16 @@ export function oneQuestionPerJob(asks: Ask[]): Ask[] {
   }
   pairs.sort((x, y) => y.score - x.score || x.job.createdAt - y.job.createdAt || x.own.createdAt - y.own.createdAt);
   for (const p of pairs) if (!ride.has(p.own.id) && !carried.has(p.job.job!)) (ride.set(p.own.id, p.job.job!), carried.add(p.job.job!));
-  return asks.filter((a) => !(a.job && carried.has(a.job))).map((a) => (ride.has(a.id) && a.forJob !== ride.get(a.id) ? { ...a, forJob: ride.get(a.id) } : a));
+  // The room's button carries the job's urgency too (job wait --urgent shows at once, not at the list).
+  const urgentOf = new Map(asks.filter((a) => a.job && a.urgent).map((a) => [a.job!, a.urgent!]));
+  return asks
+    .filter((a) => !(a.job && carried.has(a.job)))
+    .map((a) => {
+      const jobId = ride.get(a.id);
+      if (!jobId) return a;
+      const urgent = a.urgent ?? urgentOf.get(jobId);
+      return a.forJob !== jobId || urgent !== a.urgent ? { ...a, forJob: jobId, ...(urgent ? { urgent } : {}) } : a;
+    });
 }
 
 export function loadAsks(path: string): Ask[] {
@@ -162,10 +175,13 @@ export const MAX_ASKS_PER_FOLDER = 5;
 // A new ask joins the folder's open ones. Only the same question again (or a new
 // `job wait` for the same job) replaces its older copy; past five the oldest goes.
 // (It used to replace every ask from the folder: the second question wiped the first.)
-export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string; media?: Ask['media']; deploy?: Ask['deploy'] }, from?: string): Ask[] {
-  const a = validAsk({ id: id.padEnd(6, '0'), folder, ...(from ? { from } : {}), question, createdAt: now, sessionId, job, options, ...(askedFor ? { askedFor: true } : {}), ...(trust ? { trust } : {}), ...(proof ?? {}) });
-  if (!a) return asks;
-  const same = (x: Ask) => x.folder === folder && (x.question === a.question || (!!a.job && x.job === a.job));
+export function addAsk(asks: Ask[], folder: string, question: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10), sessionId?: string, job?: string, options?: string[], askedFor = false, trust?: { name: string; task: string }, proof?: { why: string; tried: string; post?: string; target?: string; media?: Ask['media']; deploy?: Ask['deploy']; urgent?: string }, from?: string): Ask[] {
+  const fresh = validAsk({ id: id.padEnd(6, '0'), folder, ...(from ? { from } : {}), question, createdAt: now, sessionId, job, options, ...(askedFor ? { askedFor: true } : {}), ...(trust ? { trust } : {}), ...(proof ?? {}) });
+  if (!fresh) return asks;
+  const same = (x: Ask) => x.folder === folder && (x.question === fresh.question || (!!fresh.job && x.job === fresh.job));
+  // Asking the same again keeps its first time, so a waiting button isn't pushed to a later list.
+  const old = asks.find(same);
+  const a: Ask = old ? { ...fresh, since: Math.min(old.since ?? old.createdAt, now) } : fresh;
   const mine = [...asks.filter((x) => x.folder === folder && !same(x)), a].slice(-MAX_ASKS_PER_FOLDER);
   return oneQuestionPerJob([...asks.filter((x) => x.folder !== folder), ...mine]);
 }

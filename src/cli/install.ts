@@ -1,5 +1,5 @@
 // What Tiny HQ adds to the owner's Mac outside its own folder, each only with their yes, and how
-// each comes off again: six Claude Code hooks (in ~/.claude/settings.json), the theoffice skill
+// each comes off again: seven Claude Code hooks (in ~/.claude/settings.json), the theoffice skill
 // (a link in ~/.claude/skills) and two login items (launchd agents). Every hook command carries the
 // marker `# tiny-hq` so uninstall removes exactly what was added and nothing of the owner's.
 // What was added is also recorded in <dataDir>/installed.json.
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 export const MARK = '# tiny-hq';
 
 export interface HookSpec {
-  id: 'name-tag' | 'waiting' | 'public-posts' | 'room-questions' | 'screen-clicks' | 'camera';
+  id: 'name-tag' | 'waiting' | 'public-posts' | 'room-questions' | 'screen-clicks' | 'camera' | 'network';
   event: 'SessionStart' | 'PermissionRequest' | 'PreToolUse' | 'PostToolUse' | 'Stop';
   matcher?: string;
   also?: { event: HookSpec['event']; matcher?: string }[]; // the same script on more events, under the same yes
@@ -48,7 +48,7 @@ export const HOOKS: HookSpec[] = [
     id: 'room-questions',
     event: 'Stop',
     file: 'room-ask-guard.mjs',
-    what: "Questions as buttons: when a room's Claude asks you something in its chat instead of putting up a question button, it's sent back once to put it on a button, so you see a question mark over that room. Only in your rooms.",
+    what: "Questions as buttons: when a room's Claude asks you something in its chat instead of putting up a question button, it's sent back once to put it on a button, so you see a question mark over that room. A promise in a report (\"pictures coming\") is sent back too until it's on the room's job, so the job can't close without it. Only in your rooms.",
   },
   {
     id: 'screen-clicks',
@@ -63,6 +63,13 @@ export const HOOKS: HookSpec[] = [
     matcher: 'Bash',
     file: 'camera-guard.mjs',
     what: 'Camera and microphone guard: any session about to turn on your Mac\'s camera or microphone (ffmpeg, imagesnap, sox, Photo Booth, capture code in a script) stops and asks you first on a button; your Approve lets that one capture run.',
+  },
+  {
+    id: 'network',
+    event: 'PreToolUse',
+    matcher: 'Bash|Write|Edit|MultiEdit|NotebookEdit',
+    file: 'network-guard.mjs',
+    what: "Network guard: no session changes, imports or connects a VPN or network profile, or changes your routes, DNS or network settings; it puts the change to you on a button and you make it yourself. Looking at settings is never held up.",
   },
 ];
 

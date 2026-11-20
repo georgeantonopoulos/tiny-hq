@@ -26,6 +26,8 @@ export interface Speaker {
   anchor(): { x: number; y: number; foot?: number } | null;
 }
 
+const hhmm = (t: number) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
 export interface AskInfo {
   id: string;
   question: string;
@@ -34,6 +36,8 @@ export interface AskInfo {
   options?: string[]; // multiple choice; otherwise Approve / No
   post?: string; // a public post's exact text: Approve lets only this go up, once
   target?: string; // where it goes (owner/repo#N, owner/repo, a page): Approve is for there only
+  still?: string; // the SHA-256 of that file, when the office has a still frame of it to show
+  held?: number; // not urgent: comes up with the owner's list at this time; a small clock until then, answerable early
   media?: string; // the one file the post carries (its name and size): Approve lets only that file up, and the post can't go without it
   deploy?: { changes: string; proven: string; commits: string[] }; // a deploy: what changes, what was proven where, the commits going out
   hands?: boolean; // a step only the owner's hands can do: Done, I did it / Stuck
@@ -109,6 +113,7 @@ export class Bubbles {
   // Pictures their latest message points at: how many, for which message, and how to fetch one.
   private pictures = new Map<string, { at: string; n: number }>();
   loadPicture?: (who: string, i: number) => Promise<string | undefined>;
+  loadStill?: (sha: string) => Promise<string | undefined>; // a post button's still frame
   // One loaded copy of each picture of a person's current message, reused when the bubble reopens and
   // released (revoked) once their message changes, so pictures never pile up in the page's memory.
   private picUrls = new Map<string, Promise<string | undefined>>();
@@ -206,7 +211,7 @@ export class Bubbles {
     // Answered from this page: a check that left before the answer landed can still list it. Ignore that.
     if (this.answered.has(ask.id)) return;
     const p = this.person(speaker);
-    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.hands === ask.hands && p.ask.post === ask.post && p.ask.target === ask.target && p.ask.media === ask.media && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
+    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.hands === ask.hands && p.ask.post === ask.post && p.ask.target === ask.target && p.ask.media === ask.media && p.ask.still === ask.still && p.ask.held === ask.held && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
     if (same) return;
     this.endHappening(speaker.id);
     const isNew = p.ask?.id !== ask.id;
@@ -366,6 +371,19 @@ export class Bubbles {
         m.className = 'tried';
         m.textContent = `With this file attached (only this file, and the post can't go without it): ${ask.media}`;
         q.append(m);
+        // What the file shows: a button that only names the file lets the wrong one be approved.
+        if (ask.still && this.loadStill) {
+          const img = document.createElement('img');
+          img.className = 'post-still';
+          img.alt = `Still frame of ${ask.media}`;
+          q.append(img);
+          void this.loadStill(ask.still).then((src) => (src ? (img.src = src) : img.remove()));
+        } else {
+          const none = document.createElement('small');
+          none.className = 'tried';
+          none.textContent = '(No still frame of this file: check its name before you approve.)';
+          q.append(document.createElement('br'), none);
+        }
       }
       // A deploy: what changes for people, what was proven on which device, and the
       // exact commits going out since the last approved deploy.
@@ -383,6 +401,12 @@ export class Bubbles {
         part('Proven (seen or heard, on which device):', ask.deploy.proven);
         if (ask.deploy.commits.length) part(`Commits going out (${ask.deploy.commits.length}):`, ask.deploy.commits.join('\n'));
       }
+    }
+    if (ask.held) {
+      const h = document.createElement('small');
+      h.className = 'tried';
+      h.textContent = `Not urgent: this comes with your ${hhmm(ask.held)} list. Answer now if you like.`;
+      q.append(document.createElement('br'), h);
     }
     if (ask.tried) {
       const t = document.createElement('small');
@@ -532,16 +556,17 @@ export class Bubbles {
     if (p.ask) badges.push('q');
     if (unread) badges.push('new');
     if (p.working) badges.push('work');
-    const shape = badges.join(' ') + (p.blocked ? `|${p.blocked}` : '');
+    const held = p.ask?.held;
+    const shape = badges.join(' ') + (p.blocked ? `|${p.blocked}` : '') + (held ? `|held${held}` : '');
     if (shape !== p.shape) {
       p.shape = shape;
       const kids = badges.map((b) => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = `badge ${b}`;
+        btn.className = `badge ${b}${b === 'q' && held ? ' held' : ''}`;
         if (b === 'work') btn.append(...[0, 1, 2].map(() => document.createElement('i'))); // three bouncing dots
-        else btn.textContent = b === 'wait' ? '✋' : b === 'q' ? '?' : '!';
-        const label = b === 'wait' ? `${p.speaker.name} is waiting for your OK (${p.blocked}): open their room` : b === 'q' ? `${p.speaker.name} has a question for you` : b === 'new' ? `New from ${p.speaker.name}: read it` : `${p.speaker.name} is working: open their room`;
+        else btn.textContent = b === 'wait' ? '✋' : b === 'q' ? (held ? '🕐' : '?') : '!';
+        const label = b === 'wait' ? `${p.speaker.name} is waiting for your OK (${p.blocked}): open their room` : b === 'q' && held ? `${p.speaker.name} has a question for your ${hhmm(held)} list: answer now if you like` : b === 'q' ? `${p.speaker.name} has a question for you` : b === 'new' ? `New from ${p.speaker.name}: read it` : `${p.speaker.name} is working: open their room`;
         btn.title = label;
         btn.setAttribute('aria-label', label);
         btn.addEventListener('click', (e) => {
@@ -556,7 +581,7 @@ export class Bubbles {
       });
       p.mark.replaceChildren(...kids);
     }
-    if (pop && (p.ask || unread || p.blocked)) {
+    if (pop && ((p.ask && !p.ask.held) || unread || p.blocked)) {
       p.mark.classList.remove('pop');
       void p.mark.offsetWidth; // restart the animation
       p.mark.classList.add('pop');

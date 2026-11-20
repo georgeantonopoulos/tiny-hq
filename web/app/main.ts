@@ -260,12 +260,24 @@ async function start(): Promise<void> {
     }
   }
   let coffeeSeen = 0;
+  let pageBuild = '';
+  const isTyping = (): boolean => {
+    const a = document.activeElement;
+    return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || (a as HTMLElement).isContentEditable);
+  };
   async function pollOnce(): Promise<void> {
     const r = await api.sessions().catch((err: unknown) => {
       if (err instanceof AuthError) throw err;
       return null;
     });
     if (!r) return;
+    // The office was updated since this page loaded: reload it, so it never runs old code against
+    // the new office (an old tab could show every desk report as gone). Not while the owner is
+    // typing; then on the next poll after they stop.
+    if (r.build) {
+      if (!pageBuild) pageBuild = r.build;
+      else if (r.build !== pageBuild && !isTyping()) return location.reload();
+    }
     sessions = r.sessions;
     waiting = r.waiting;
     office.showSessions(sessions);
@@ -280,9 +292,10 @@ async function start(): Promise<void> {
     office.showAsks(r.asks, async (askId, answer) => {
       const res = await api.answer(askId, answer);
       return 'error' in res ? res.error : null;
-    });
+    }, (sha) => api.askStill(sha));
     // A sound for what's new since the last look: a question over a news chime, a finished job over both.
-    const askIds = Object.values(r.asks ?? {}).map((a) => a.id);
+    // A held question (a clock, not urgent) makes no sound: it comes with the owner's list.
+    const askIds = Object.values(r.asks ?? {}).filter((a) => !a.held).map((a) => a.id);
     // Stopped on a permission prompt in their room: a hand over their head until it's answered.
     const newlyBlocked = office.showBlocked(Object.fromEntries(Object.entries(waiting).map(([id, w]) => [id, w.text])));
     const newQuestion = askIds.some((id) => !asksSeen.has(id)) || newlyBlocked.length > 0;

@@ -516,7 +516,7 @@ function remoteRepo(cwd) {
 // one Approve per exact commit, nothing uncommitted.
 const DEPLOY_TOOLS = new Set(['vercel', 'netlify', 'gh-pages', 'firebase', 'surge', 'wrangler', 'fly', 'flyctl']);
 // Options these tools read a value for (`--token abc deploy`: "abc" is not the subcommand).
-const DEPLOY_VALUE_FLAGS = new Set(['--token', '-t', '--scope', '-S', '--team', '-T', '--cwd', '--local-config', '-A', '--global-config', '-Q', '--meta', '-m', '--env', '-e', '--build-env', '-b', '--regions', '--archive', '--target', '--name', '-n', '--project', '-P', '--site', '-s', '--auth', '-a', '--app', '--dir', '-d', '--alias', '--config', '-c', '--only', '--message', '--branch', '--domain', '--functions', '--filter', '--context']);
+const DEPLOY_VALUE_FLAGS = new Set(['--token', '-t', '--scope', '-S', '--team', '-T', '--cwd', '--local-config', '-A', '--global-config', '-Q', '--meta', '-m', '--env', '-e', '--build-env', '-b', '--regions', '--archive', '--target', '--name', '-n', '--project', '--project-name', '-P', '--site', '-s', '--auth', '-a', '--app', '--dir', '-d', '--alias', '--config', '-c', '--only', '--message', '--branch', '--domain', '--functions', '--filter', '--context']);
 function projectName(cwd) {
   const root = String(cwd ?? '').replace(/\/\.claude\/worktrees\/[^/]+.*$/, '');
   try {
@@ -526,6 +526,20 @@ function projectName(cwd) {
     /* not linked to vercel here */
   }
   return basename(root);
+}
+// The project name in a wrangler config, if the folder has one.
+function wranglerName(cwd) {
+  for (const f of ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']) {
+    let text;
+    try {
+      text = readFileSync(join(String(cwd ?? '.'), f), 'utf8');
+    } catch {
+      continue;
+    }
+    const m = f.endsWith('.toml') ? /^\s*name\s*=\s*["']([^"']+)["']/m.exec(text) : /"name"\s*:\s*"([^"]+)"/.exec(text);
+    if (m) return m[1];
+  }
+  return undefined;
 }
 const vercelLinked = (cwd) => {
   try {
@@ -575,8 +589,8 @@ function deployAt(seg, i, cwd) {
   };
   const named = (() => {
     for (let j = 0; j < args.length; j++) {
-      if (['--name', '--project', '-n', '--site', '-s'].includes(args[j]) && args[j + 1]) return args[j + 1];
-      const m = /^--(name|project|site)=(.+)$/.exec(args[j]);
+      if (['--name', '--project', '--project-name', '-n', '--site', '-s'].includes(args[j]) && args[j + 1]) return args[j + 1];
+      const m = /^--(name|project|project-name|site)=(.+)$/.exec(args[j]);
       if (m) return m[2];
     }
     return undefined;
@@ -618,7 +632,9 @@ function deployAt(seg, i, cwd) {
   if (tool === 'gh-pages') return { why: 'a GitHub Pages deploy', name, dir: here, upload: valueOf('--dist', '-d') };
   if (tool === 'firebase') return words[0] === 'deploy' || words[0] === 'hosting:channel:deploy' ? { why: 'a Firebase deploy', name, dir: here } : undefined;
   if (tool === 'surge') return words[0] === 'list' || words[0] === 'login' || words[0] === 'whoami' ? undefined : { why: 'a Surge deploy', name, dir: here, upload: valueOf('--project', '-p') ?? words[0] };
-  if (tool === 'wrangler') return (words[0] === 'deploy' || words[0] === 'publish' || (words[0] === 'pages' && ['deploy', 'publish'].includes(words[1]))) ? { why: 'a Cloudflare deploy', name, dir: here, upload: words[0] === 'pages' ? words[2] : undefined } : undefined;
+  // Cloudflare names a deploy after its project (--project-name, else the wrangler config's "name"),
+  // not the folder, so the owner's button asks about the project the deploy really goes to.
+  if (tool === 'wrangler') return (words[0] === 'deploy' || words[0] === 'publish' || (words[0] === 'pages' && ['deploy', 'publish'].includes(words[1]))) ? { why: 'a Cloudflare deploy', name: named ? name : String(wranglerName(here) ?? name).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 100), dir: here, upload: words[0] === 'pages' ? words[2] : undefined } : undefined;
   if (tool === 'fly' || tool === 'flyctl') return words[0] === 'deploy' ? { why: 'a Fly deploy', name, dir: here } : undefined;
   return undefined;
 }

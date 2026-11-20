@@ -14,7 +14,7 @@
 // folders were flat <dataDir>/desk/<id>.md files; `copyFlatReports` copies them into the tree and
 // leaves the originals where they were, so nothing is lost and old ids keep opening.
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 
@@ -121,11 +121,23 @@ function scan(root: string, depth = 4): { files: string[]; folders: string[] } {
       if (st.isDirectory() && d > 0) {
         folders.push(r);
         walk(join(dir, n), r, d - 1);
-      } else if (st.isFile() && /\.md$/i.test(n)) files.push(r);
+      } else if (st.isFile() && REPORT_FILE.test(n)) files.push(r);
     }
   };
   walk(root, '', depth);
   return { files, folders: folders.sort((a, b) => a.localeCompare(b)) };
+}
+
+// A report is Markdown (the office designs the page) or a whole .html page a room made itself.
+const REPORT_FILE = /\.(md|html?)$/i;
+const isHtml = (file: string) => /\.html?$/i.test(file);
+// A report kept only in the office: <dataDir>/desk/<id>.md or .html.
+function flatFile(dataDir: string, id: string): string | undefined {
+  for (const ext of ['md', 'html']) {
+    const f = join(deskDir(dataDir), `${id}.${ext}`);
+    if (existsSync(f)) return f;
+  }
+  return undefined;
 }
 
 const idForPath = (path: string) => createHash('sha1').update(path).digest('hex').slice(0, 12);
@@ -163,10 +175,10 @@ export function listDesk(dataDir: string): { root: string; folders: string[]; re
     try {
       at = statSync(join(root, f)).mtimeMs;
     } catch {}
-    out.push({ id: idForPath(f), title: basename(f).replace(/\.md$/i, ''), from: '', at, read: at, path: f, folder: folderOf(f) });
+    out.push({ id: idForPath(f), title: basename(f).replace(REPORT_FILE, ''), from: '', at, read: at, path: f, folder: folderOf(f) });
   }
   // Reports still only in the office (the synced folder wasn't there when they were filed).
-  for (const r of index) if (!r.path && existsSync(join(deskDir(dataDir), `${r.id}.md`))) out.push({ ...r, folder: '' });
+  for (const r of index) if (!r.path && flatFile(dataDir, r.id)) out.push({ ...r, folder: '' });
   // Re-read just before saving, so a report another process filed meanwhile isn't dropped.
   if (moved.size) saveIndex(dataDir, loadIndex(dataDir).map((x) => (moved.has(x.id) ? { ...x, path: moved.get(x.id) } : x)));
   return { root, folders, reports: out.sort((a, b) => b.at - a.at) };
@@ -174,8 +186,8 @@ export function listDesk(dataDir: string): { root: string; folders: string[]; re
 
 export const listReports = (dataDir: string): DeskEntry[] => listDesk(dataDir).reports;
 
-// Where a new report's file goes: <folder>/<title> (<date>).md, never over another file.
-function placeFor(root: string, folder: string, title: string, at: number, id: string): string {
+// Where a new report's file goes: <folder>/<title> (<date>).md (or .html), never over another file.
+function placeFor(root: string, folder: string, title: string, at: number, id: string, ext = 'md'): string {
   const f =
     folder
       .split('/')
@@ -183,11 +195,13 @@ function placeFor(root: string, folder: string, title: string, at: number, id: s
       .filter(Boolean)
       .join('/') || 'Research and answers';
   const name = safeName(title, 100) || 'Report';
-  const path = `${f}/${name} (${ymd(at)}).md`;
-  return existsSync(join(root, path)) ? `${f}/${name} (${ymd(at)}, ${id}).md` : path;
+  const path = `${f}/${name} (${ymd(at)}).${ext}`;
+  return existsSync(join(root, path)) ? `${f}/${name} (${ymd(at)}, ${id}).${ext}` : path;
 }
 
-export function fileReport(dataDir: string, title: string, markdown: string, from: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10).padEnd(8, '0'), folder?: string): Report {
+// `html` true: the report is a whole page a room made itself (charts and all), shown sandboxed.
+export function fileReport(dataDir: string, title: string, markdown: string, from: string, now = Date.now(), id = Math.random().toString(36).slice(2, 10).padEnd(8, '0'), folder?: string, html = false): Report {
+  const ext = html ? 'html' : 'md';
   const t = oneLine(title, 140);
   if (!t) throw new Error('a report needs a title');
   if (!markdown.trim()) throw new Error('the report is empty');
@@ -197,14 +211,14 @@ export function fileReport(dataDir: string, title: string, markdown: string, fro
   const r: Report = { id, title: t, from: who, at: now };
   try {
     if (!existsSync(dirname(root))) throw new Error('the synced drive is not there');
-    const path = placeFor(root, folder?.trim() || folderFor(t, who), t, now, id);
+    const path = placeFor(root, folder?.trim() || folderFor(t, who), t, now, id, ext);
     mkdirSync(dirname(join(root, path)), { recursive: true, mode: 0o700 });
     writeFileSync(join(root, path), markdown, { mode: 0o600 });
     r.path = path;
   } catch {
     // The synced drive isn't there (not running, or unplugged): keep it in the office; copyFlatReports moves it over later.
     mkdirSync(deskDir(dataDir), { recursive: true, mode: 0o700 });
-    writeFileSync(join(deskDir(dataDir), `${id}.md`), markdown, { mode: 0o600 });
+    writeFileSync(join(deskDir(dataDir), `${id}.${ext}`), markdown, { mode: 0o600 });
   }
   saveIndex(dataDir, [r, ...loadIndex(dataDir).filter((x) => x.id !== id)].slice(0, 2000));
   return r;
@@ -220,10 +234,10 @@ export function copyFlatReports(dataDir: string): number {
   let n = 0;
   for (const r of index) {
     if (r.path) continue;
-    const src = join(deskDir(dataDir), `${r.id}.md`);
-    if (!existsSync(src)) continue;
+    const src = flatFile(dataDir, r.id);
+    if (!src) continue;
     try {
-      const path = placeFor(root, folderFor(r.title, r.from), r.title, r.at, r.id);
+      const path = placeFor(root, folderFor(r.title, r.from), r.title, r.at, r.id, isHtml(src) ? 'html' : 'md');
       mkdirSync(dirname(join(root, path)), { recursive: true, mode: 0o700 });
       copyFileSync(src, join(root, path));
       r.path = path;
@@ -263,8 +277,7 @@ export function moveDesk(dataDir: string, to: string): number {
 function fileOf(dataDir: string, r: Report): string | undefined {
   try {
     if (!r.path) {
-      const flat = join(deskDir(dataDir), `${r.id}.md`);
-      return existsSync(flat) ? flat : undefined;
+      return flatFile(dataDir, r.id);
     }
     const root = deskRoot(dataDir);
     const full = join(root, r.path);
@@ -277,22 +290,103 @@ function fileOf(dataDir: string, r: Report): string | undefined {
 }
 
 // One report as a page, marked read the first time the owner opens it.
-export function openReport(dataDir: string, id: string, now = Date.now()): (DeskEntry & { html: string }) | undefined {
+// `mark` false only looks (desk add checking the office can open what it filed): the owner's unread stays.
+export function openReport(dataDir: string, id: string, now = Date.now(), mark = true): (DeskEntry & { html: string }) | undefined {
   if (!ID.test(id)) return undefined;
   const r = listDesk(dataDir).reports.find((x) => x.id === id);
   if (!r) return undefined;
   const file = fileOf(dataDir, r);
   if (!file) return undefined;
   const index = loadIndex(dataDir);
-  if (index.some((x) => x.id === id && !x.read)) saveIndex(dataDir, index.map((x) => (x.id === id ? { ...x, read: now } : x)));
-  return { ...r, read: r.read ?? now, html: renderMarkdown(readFileSync(file, 'utf8')) };
+  if (mark && index.some((x) => x.id === id && !x.read)) saveIndex(dataDir, index.map((x) => (x.id === id ? { ...x, read: now } : x)));
+  const html = isHtml(file) ? '<p>This report is its own page: open it from the desk, it opens in a new tab.</p>' : renderMarkdown(readFileSync(file, 'utf8'));
+  return { ...r, read: r.read ?? (mark ? now : undefined), html };
 }
+
+// One report as a whole page for its own browser tab, so a report reads as a finished document
+// rather than a panel inside the office. Markdown goes into the office's one designed template,
+// so a room writes short Markdown and pays nothing for the looks. A room's own .html page comes back
+// as it is, with `sandboxed` set: the office serves it in a sandbox with no way to reach the office
+// or the internet. Marks the report read.
+export function reportPage(dataDir: string, id: string, now = Date.now(), mark = true): { html: string; sandboxed: boolean } | undefined {
+  const r = openReport(dataDir, id, now, mark);
+  if (!r) return undefined;
+  const file = fileOf(dataDir, r);
+  if (!file) return undefined;
+  if (isHtml(file)) return { html: readFileSync(file, 'utf8'), sandboxed: true };
+  return { html: pageFor(r, renderMarkdown(readFileSync(file, 'utf8'))), sandboxed: false };
+}
+
+// ---- A signed link to one report, so a plain new tab can open it (no token in a header) ----
+
+const LINK_MS = 12 * 3_600_000;
+const sign = (secret: string, id: string, exp: number) => createHmac('sha256', secret).update(`desk:${id}:${exp}`).digest('hex').slice(0, 32);
+export const reportLink = (secret: string, id: string, now = Date.now()) => {
+  const e = now + LINK_MS;
+  return `/desk/${id}?e=${e}&k=${sign(secret, id, e)}`;
+};
+export function linkValid(secret: string, id: string, e: string | null, k: string | null, now = Date.now()): boolean {
+  const exp = Number(e);
+  if (!ID.test(id) || !Number.isFinite(exp) || exp < now || exp > now + LINK_MS || !k || !/^[0-9a-f]{32}$/.test(k)) return false;
+  return timingSafeEqual(Buffer.from(k), Buffer.from(sign(secret, id, exp)));
+}
+
+// The office's one report template: light and dark, readable on the phone, prints cleanly. Nothing
+// loads from outside: the page's rules allow only its own styles.
+function pageFor(r: DeskEntry, body: string): string {
+  const when = new Date(r.at).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const meta = [r.folder, r.from ? `from ${r.from}` : '', when].filter(Boolean).map(esc).join(' · ');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="referrer" content="no-referrer"><title>${esc(r.title)}</title><style>${PAGE_CSS}</style></head><body><main><header><p class="kicker">On your desk</p><h1 class="title">${esc(r.title)}</h1><p class="meta">${meta}</p></header><article>${body}</article></main></body></html>`;
+}
+
+const PAGE_CSS = `
+:root{--bg:#f6f4ef;--paper:#fffdf8;--ink:#1f2328;--soft:#5d636b;--line:#e3ded3;--accent:#2f6f5e;--accent-soft:#e3efe9;--code:#f1ede4;--bar:#2f6f5e;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#15171a;--paper:#1c1f23;--ink:#e8e6e1;--soft:#9aa0a6;--line:#2e3238;--accent:#7cc4ad;--accent-soft:#1f302b;--code:#262a2f;--bar:#5fae95;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
+main{max-width:820px;margin:0 auto;padding:max(28px,env(safe-area-inset-top)) 20px 64px}
+header{padding:28px 32px 22px;background:var(--paper);border:1px solid var(--line);border-radius:16px 16px 0 0;border-bottom:3px solid var(--accent)}
+.kicker{margin:0 0 6px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);font-weight:600}
+h1.title{margin:0;font-size:clamp(24px,4.5vw,34px);line-height:1.2;letter-spacing:-.01em}
+.meta{margin:10px 0 0;color:var(--soft);font-size:14px}
+article{background:var(--paper);border:1px solid var(--line);border-top:0;border-radius:0 0 16px 16px;padding:8px 32px 32px;overflow-wrap:anywhere}
+article>h1:first-child{display:none}
+h1,h2,h3,h4{line-height:1.25;letter-spacing:-.005em}
+article h1{font-size:26px;margin:32px 0 10px}
+article h2{font-size:21px;margin:34px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+article h3{font-size:17px;margin:26px 0 8px;color:var(--accent)}
+article h4{font-size:15px;margin:20px 0 6px;color:var(--soft);text-transform:uppercase;letter-spacing:.06em}
+p,ul,ol{margin:12px 0}
+li{margin:4px 0}
+li::marker{color:var(--accent)}
+strong{font-weight:650}
+a{color:var(--accent);text-underline-offset:2px}
+hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+code{font:13.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:1px 5px;border-radius:5px}
+pre{background:var(--code);padding:14px 16px;border-radius:10px;overflow-x:auto}
+pre code{padding:0;background:none}
+blockquote{margin:18px 0;padding:12px 16px;background:var(--accent-soft);border-left:4px solid var(--accent);border-radius:0 10px 10px 0}
+.table{overflow-x:auto;margin:16px 0;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th{text-align:left;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--soft);background:var(--code);font-weight:600}
+th,td{padding:9px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.num{font-weight:600}
+.bars{margin:18px 0;display:grid;gap:8px}
+.bar{display:grid;grid-template-columns:minmax(80px,32%) 1fr auto;gap:12px;align-items:center;font-size:14.5px}
+.bar .track{height:14px;background:var(--code);border-radius:7px;overflow:hidden}
+.bar .fill{display:block;height:100%;background:var(--bar);border-radius:7px}
+.bar .val{font-variant-numeric:tabular-nums;font-weight:600;min-width:3ch;text-align:right}
+@media (max-width:560px){main{padding:12px 10px 40px}header{padding:20px 18px 16px}article{padding:4px 18px 24px}.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;order:3}}
+@media print{body{background:#fff}main{max-width:none;padding:0}header,article{border:0}}
+`;
 
 // Asked on every status poll, so it reads the index and checks only the unread files, rather than
 // walking the whole synced folder. A file the owner put there themselves is never unread.
 export function unreadCount(dataDir: string): number {
   const root = deskRoot(dataDir);
-  return loadIndex(dataDir).filter((r) => !r.read && existsSync(r.path ? join(root, r.path) : join(deskDir(dataDir), `${r.id}.md`))).length;
+  return loadIndex(dataDir).filter((r) => !r.read && (r.path ? existsSync(join(root, r.path)) : flatFile(dataDir, r.id))).length;
 }
 
 // ---- Markdown to HTML: headings, paragraphs, lists, tables, quotes, code, bold, italics, links ----
@@ -309,6 +403,8 @@ function inline(text: string): string {
   return s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => codes[Number(i)]!);
 }
 
+// A table cell that is just a number, an amount or a percentage (bold or not).
+const NUMBER = /^\**[-+−]?[£$€]?\s?\d[\d,]*(\.\d+)?\s?(%|[kKmM]|£|€)?\**$/;
 const isRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
 const cells = (l: string) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
 
@@ -318,6 +414,19 @@ export function renderMarkdown(md: string): string {
   let i = 0;
   while (i < lines.length) {
     const l = lines[i]!;
+    if (/^```bars\s*$/.test(l)) {
+      // A bar chart from plain lines "Label: 1,200" (a room gets a chart for a few words of Markdown).
+      const items: { label: string; text: string; n: number }[] = [];
+      for (i++; i < lines.length && !/^```/.test(lines[i]!); i++) {
+        const m = /^\s*(.+?)\s*[:|]\s*(.+?)\s*$/.exec(lines[i]!);
+        const n = m && /\d/.test(m[2]!) ? Number(m[2]!.replace(/[^\d.-]/g, '')) : NaN;
+        if (m && Number.isFinite(n)) items.push({ label: m[1]!, text: m[2]!, n: Math.abs(n) });
+      }
+      i++;
+      const max = Math.max(...items.map((x) => x.n), 0) || 1;
+      out.push(`<div class="bars">${items.map((x) => `<div class="bar"><span>${inline(x.label)}</span><span class="track"><span class="fill" style="width:${Math.max(1, Math.round((x.n / max) * 100))}%"></span></span><span class="val">${esc(x.text)}</span></div>`).join('')}</div>`);
+      continue;
+    }
     if (/^```/.test(l)) {
       const body: string[] = [];
       for (i++; i < lines.length && !/^```/.test(lines[i]!); i++) body.push(lines[i]!);
@@ -340,7 +449,10 @@ export function renderMarkdown(md: string): string {
       const head = cells(l);
       const rows: string[][] = [];
       for (i += 2; i < lines.length && isRow(lines[i]!); i++) rows.push(cells(lines[i]!));
-      out.push(`<div class="table"><table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      // A column of numbers lines up on the right, so amounts read at a glance.
+      const numCol = head.map((_, c) => rows.some((r) => r[c]) && rows.every((r) => !r[c] || NUMBER.test(r[c]!)));
+      const cls = (c: number) => (numCol[c] ? ' class="num"' : '');
+      out.push(`<div class="table"><table><thead><tr>${head.map((c, n) => `<th${cls(n)}>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, n) => `<td${cls(n)}>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
       continue;
     }
     if (/^\s*([-*+]|\d+[.)])\s+/.test(l)) {

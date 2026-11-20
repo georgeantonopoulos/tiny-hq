@@ -19,6 +19,7 @@ import { createReadStream, mkdirSync, openSync, readdirSync, statSync, unlinkSyn
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { tokenMatches } from './token.ts';
+import { linkValid, reportLink } from '../team/desk.ts';
 import { serveStatic } from './web.ts';
 import { audit, type Devices, type RateLimit, type RemoteConfig } from './remote.ts';
 import type { Terminal } from '../terminal/sessions.ts';
@@ -37,6 +38,7 @@ export interface DaemonDeps {
   said?: () => Promise<Record<string, { text: string; at: string; images?: number }>>;
   // The i-th picture the person's last message points at (a path the office found in it), if any.
   saidImage?: (who: string, i: number) => string | undefined;
+  askStill?: (sha256: string) => string | undefined; // the still frame of an open post button's file
   // Person id -> what their blocked session is waiting for the owner on (permission or question).
   waiting?: () => Promise<Record<string, { kind: string; text: string }>>;
   // The manager's timetable: the scheduled tasks, and the owner switching one on or off.
@@ -58,12 +60,14 @@ export interface DaemonDeps {
   // The office's written happenings (the Haiku writer's pool; see src/office/gags.ts).
   gags?: () => unknown;
   // The owner's desk: reports they asked for (src/team/desk.ts). `open` marks one read.
-  desk?: { list: () => unknown; open: (id: string) => unknown | undefined; unread: () => number };
+  // `page` is one report as a whole page for its own tab (src/team/desk.ts reportPage).
+  desk?: { list: () => { reports: { id: string }[] }; page: (id: string, peek?: boolean) => { html: string; sandboxed: boolean } | undefined; open: (id: string) => unknown | undefined; unread: () => number };
+  build?: () => string; // changes when the office page's own files change: an open page reloads itself
   // The coffee room (src/team/coffee.ts): the last break (who said what) and the board.
   coffee?: { last: () => unknown; board: () => unknown; remove: (id: string) => boolean };
   // The office's microphone: what the owner said (the page's speech recognition), typed into the manager's chat.
   say?: (text: string, from?: From) => Promise<void>;
-  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; target?: string; media?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void>; ignore?: (id: string) => void };
+  asks?: { list: () => Promise<Record<string, { id: string; question: string; more?: number; options?: string[]; tried?: string; password?: boolean; hands?: boolean; post?: string; target?: string; media?: string; still?: string; deploy?: { changes: string; proven: string; commits: string[] } }>>; answer: (id: string, answer: { yes: boolean } | { choice: number } | { signIn: true }, from?: From) => Promise<void>; ignore?: (id: string) => void };
   // the owner joins (or starts) the Claude Code session in a project's folder, or the manager's.
   terminal?: {
     open: (projectPath: string, mode: 'join' | 'new' | 'resume', cols: number, rows: number, trust?: boolean) => Promise<{ termId: string; session: string; fresh: boolean }>;
@@ -220,6 +224,22 @@ export function createDaemon(deps: DaemonDeps): Server {
       return send(res, 200, { token: key, device: true });
     }
 
+    // A desk report in its own tab: a new tab can't send the token, so the desk list hands out a
+    // link signed with it, good for 12 hours. Over Tailscale it still needs the owner's own login,
+    // checked above. The page loads
+    // nothing from anywhere; a room's own .html page runs sandboxed, cut off from the office.
+    const deskPage = /^\/desk\/([a-z0-9]{8,16})$/.exec(url.pathname);
+    if (deskPage && req.method === 'GET' && deps.desk) {
+      const id = deskPage[1]!;
+      const page = linkValid(deps.token, id, url.searchParams.get('e'), url.searchParams.get('k')) ? deps.desk.page(id, url.searchParams.get('peek') === '1') : undefined; // peek: desk add checking, leaves it unread
+      const csp = page?.sandboxed
+        ? "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:"
+        : "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+      res.writeHead(page ? 200 : 404, { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': csp, 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' });
+      res.end(page ? page.html : '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Report</title><p style="font:16px system-ui;padding:24px">This link has run out or the report has moved. Open it again from the desk in the office.</p>');
+      return;
+    }
+
     const auth = req.headers.authorization;
     const given = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
     let device: ReturnType<Devices['check']>;
@@ -285,8 +305,11 @@ export function createDaemon(deps: DaemonDeps): Server {
       return deps.coffee.remove(coffeeM[1]!) ? send(res, 200, { ok: true }) : send(res, 404, { error: 'that tip is already gone' });
     }
     if (req.method === 'GET' && url.pathname === '/api/desk' && deps.desk) {
-      return send(res, 200, deps.desk.list());
+      const d = deps.desk.list();
+      return send(res, 200, { ...d, reports: d.reports.map((r) => ({ ...r, link: reportLink(deps.token, r.id) })) });
     }
+    // The in-office reader. Office pages opened before an update may still call it; without it they
+    // would say every report is gone until reloaded. Keep it.
     const deskM = /^\/api\/desk\/([a-z0-9]{8,16})$/.exec(url.pathname);
     if (deskM && req.method === 'GET' && deps.desk) {
       const r = deps.desk.open(deskM[1]!);
@@ -319,10 +342,12 @@ export function createDaemon(deps: DaemonDeps): Server {
     }
     // A picture from someone's last message, for their bubble. Only a path the office itself
     // found in that message, only image files, at most 20 MB.
-    if (req.method === 'GET' && url.pathname === '/api/said-image' && deps.saidImage) {
+    const stillSha = url.searchParams.get('sha') ?? '';
+    if (req.method === 'GET' && ((url.pathname === '/api/said-image' && deps.saidImage) || (url.pathname === '/api/ask-still' && deps.askStill && /^[0-9a-f]{64}$/.test(stillSha)))) {
       const who = url.searchParams.get('who') ?? '';
       const i = Number(url.searchParams.get('i'));
-      const file = Number.isInteger(i) && i >= 0 && i < 4 ? deps.saidImage(who, i) : undefined;
+      // The still on a post button: only for a file an open button carries.
+      const file = url.pathname === '/api/ask-still' ? deps.askStill!(stillSha) : Number.isInteger(i) && i >= 0 && i < 4 ? deps.saidImage!(who, i) : undefined;
       const type = file ? IMAGE_MIME[(file.match(/\.([a-z]+)$/i)?.[1] ?? '').toLowerCase()] : undefined;
       if (!file || !type) return send(res, 404, { error: 'no such picture' });
       try {
@@ -343,7 +368,7 @@ export function createDaemon(deps: DaemonDeps): Server {
       const lastDone = deps.lastDone?.();
       const deskUnread = deps.desk?.unread();
       const coffee = deps.coffee?.last();
-      return send(res, 200, { sessions, said, ...(models ? { models } : {}), ...(asks ? { asks } : {}), ...(waiting ? { waiting } : {}), ...(lastDone ? { lastDone } : {}), ...(deskUnread !== undefined ? { deskUnread } : {}), ...(coffee ? { coffee } : {}) });
+      return send(res, 200, { sessions, said, ...(models ? { models } : {}), ...(asks ? { asks } : {}), ...(waiting ? { waiting } : {}), ...(lastDone ? { lastDone } : {}), ...(deskUnread !== undefined ? { deskUnread } : {}), ...(coffee ? { coffee } : {}), ...(deps.build ? { build: deps.build() } : {}) });
     }
     if (deps.boardAction && req.method === 'POST' && url.pathname === '/api/board/action') {
       let b: { room?: unknown; next?: unknown };

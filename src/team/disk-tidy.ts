@@ -23,6 +23,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync, statfsSync, writeFileSync, lstatSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { sampleIfDue, whatGrew } from './disk-growth.ts';
 
 export const LOW_GB = 30; // start clearing under this much free space
 export const ENOUGH_GB = 80; // stop once this much is free again
@@ -290,13 +291,13 @@ export async function busyFolders(): Promise<string[]> {
 }
 
 /** What the manager hears when the tidy can't get free space back over LOW_GB. */
-export function shortText(free: number, kept: Candidate[]): string {
+export function shortText(free: number, kept: Candidate[], grew = ''): string {
   const big = kept
     .filter((c) => (c.bytes ?? 0) >= GB)
     .sort((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0))
     .slice(0, 3)
     .map((c) => `${gb(c.bytes ?? 0)} ${c.path.replace(homedir(), '~')} (${c.keep})`);
-  return `Disk low: ${gb(free)} free and the office can't clear more on its own.${big.length ? ` Biggest builds it kept: ${big.join('; ')}.` : ''} Something else is filling it; look before it hits zero.`;
+  return `Disk low: ${gb(free)} free (the office wants ${LOW_GB} GB) and it can't clear more on its own.${grew ? ` ${grew}` : ''}${big.length ? ` Biggest builds it kept (as du counts them; clones free less): ${big.join('; ')}.` : ''}${grew ? '' : ' Something else is filling it; look before it hits zero.'}`;
 }
 
 let lastLook = 0;
@@ -308,6 +309,7 @@ const breathe = () => new Promise<void>((ok) => setImmediate(ok));
 // that found nothing to clear used to write only to the log, and the disk could fill unnoticed.
 export async function tidyDiskIfLow(dataDir: string, projects: string[], now = Date.now(), tell: (text: string) => unknown = () => undefined): Promise<TidyLog | undefined> {
   const before = freeBytes();
+  void sampleIfDue(dataDir, before, now).catch((e) => console.log(`disk sizes: ${e}`)); // daily, whatever the free space
   if (before >= LOW_GB * GB) {
     lastTold = 0; // back over the line: the next drop is news again
     return undefined;
@@ -340,7 +342,7 @@ export async function tidyDiskIfLow(dataDir: string, projects: string[], now = D
       lastTold = now;
       const kept = cands.filter((c) => c.keep);
       for (const c of kept) if ((c.bytes ?? 0) === 0) c.bytes = await sizeOfLater(c.path);
-      await tell(shortText(after, kept));
+      await tell(shortText(after, kept, await whatGrew(dataDir, after, now).catch(() => '')));
     }
     return entry;
   } finally {
@@ -351,6 +353,6 @@ export async function tidyDiskIfLow(dataDir: string, projects: string[], now = D
 function finish(dataDir: string, now: number, before: number, cleared: { path: string; bytes: number }[]): TidyLog {
   const entry = { at: now, freeBefore: before, freeAfter: freeBytes(), cleared };
   addTidyLog(tidyLogPath(dataDir), entry);
-  console.log(`disk: cleared ${cleared.length} idle build folders, ${gb(before)} → ${gb(entry.freeAfter)} free`);
+  console.log(`disk: cleared ${cleared.length} idle build folders, ${gb(before)} → ${gb(entry.freeAfter)} free (${gb(entry.freeAfter - before)} actually freed)`);
   return entry;
 }

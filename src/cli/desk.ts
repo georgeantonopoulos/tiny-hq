@@ -1,20 +1,21 @@
 // The owner's desk (src/team/desk.ts): put a report there for them to read as a page. Each report is a
 // real file in a folder for what it is, inside the synced desk folder.
-//   desk add "<title>" <report.md | -> [--from "<your name>"] [--folder "<folder>"]
+//   desk add "<title>" <report.md | report.html | -> [--from "<your name>"] [--folder "<folder>"]
 //   desk list
 //   desk where [<absolute folder>]   (show, or set, the synced folder; reports filed so far are copied in)
 
 import { readFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { DATA_DIR } from '../paths.ts';
-import { deskRoot, moveDesk, fileReport, folderFor, listDesk } from '../team/desk.ts';
+import { officeOpens } from '../team/desk-check.ts';
+import { deskRoot, fileReport, folderFor, listDesk, moveDesk } from '../team/desk.ts';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const fail = (m: string): never => {
   console.error(m);
   process.exit(1);
 };
-const usage = 'usage: desk add "<title>" <report.md | -> [--from "<your name>"] [--folder "<folder>"] | desk list | desk where [<folder>]';
+const usage = 'usage: desk add "<title>" <report.md | report.html | -> [--from "<your name>"] [--folder "<folder>"] | desk list | desk where [<folder>]';
 const opt = (name: string): string | undefined => {
   const at = rest.indexOf(name);
   return at >= 0 ? (rest.splice(at, 2)[1] ?? '') : undefined;
@@ -47,8 +48,11 @@ if (cmd === 'list') {
     fail(`couldn't read ${file}: ${err instanceof Error ? err.message : err}`);
   }
   try {
-    const r = fileReport(DATA_DIR, title!, md, from, undefined, undefined, folder);
+    // A .html file is a page the room made itself (charts); anything else is Markdown the office designs.
+    const r = fileReport(DATA_DIR, title!, md, from, undefined, undefined, folder, /\.html?$/i.test(file!));
     const where = r.path ? `in "${r.path.slice(0, r.path.lastIndexOf('/'))}"` : `(kept in the office until the synced folder is back; it goes in "${folder || folderFor(r.title, r.from)}")`;
+    const why = await officeOpens(r.id);
+    if (why) fail(`NOT CONFIRMED ON THE OWNER'S DESK: "${r.title}" (${r.id}) was filed ${where}, but the office couldn't open it: ${why}. Don't tell the owner it's there; tell the manager this line.`);
     console.log(`On the owner's desk: "${r.title}" (${r.id}) ${where}. They'll see it marked unread on the floor; tell them in one line that it's there.`);
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
