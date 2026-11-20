@@ -211,7 +211,7 @@ export class Bubbles {
     // Answered from this page: a check that left before the answer landed can still list it. Ignore that.
     if (this.answered.has(ask.id)) return;
     const p = this.person(speaker);
-    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.hands === ask.hands && p.ask.post === ask.post && p.ask.target === ask.target && p.ask.media === ask.media && p.ask.still === ask.still && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
+    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.hands === ask.hands && p.ask.post === ask.post && p.ask.target === ask.target && p.ask.media === ask.media && p.ask.still === ask.still && p.ask.held === ask.held && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
     if (same) return;
     this.endHappening(speaker.id);
     const isNew = p.ask?.id !== ask.id;

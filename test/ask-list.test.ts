@@ -86,3 +86,8 @@ test("a job wait marked urgent keeps its urgency when it rides on the room's own
   assert.equal(asks[0]!.urgent, 'the client demo is at 10:00');
   assert.equal(waitsForList(asks[0]!, () => false), false);
 });
+
+test('an open page updates a held button when its list time comes', () => {
+  const src = readFileSync(new URL('../web/app/bubbles.ts', import.meta.url), 'utf8');
+  assert.match(src, /const same = [^\n]*p\.ask\.held === ask\.held/, 'held → due must count as a change');
+});
