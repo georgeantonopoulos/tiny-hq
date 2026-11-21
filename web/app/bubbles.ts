@@ -79,6 +79,12 @@ const OLD_DISMISSED_KEY = 'cm-bubbles-dismissed'; // before markers: person id -
 const CHARS_PER_SEC = 55;
 const MAX_MESSAGE = 6000;
 
+// Nothing the owner sees changed. `held` counts: at list time the same question stops being held,
+// and an open page must turn its 🕐 into a "?".
+export function sameAsk(a: AskInfo, b: AskInfo): boolean {
+  return a.id === b.id && a.question === b.question && a.more === b.more && (a.options ?? []).join('\n') === (b.options ?? []).join('\n') && a.tried === b.tried && a.password === b.password && a.hands === b.hands && a.post === b.post && a.target === b.target && a.media === b.media && a.still === b.still && a.held === b.held && JSON.stringify(a.deploy) === JSON.stringify(b.deploy);
+}
+
 export class Bubbles {
   onAnswer?: (askId: string, answer: Answer) => Promise<string | null>; // null: done; string: what went wrong
 
@@ -211,10 +217,10 @@ export class Bubbles {
     // Answered from this page: a check that left before the answer landed can still list it. Ignore that.
     if (this.answered.has(ask.id)) return;
     const p = this.person(speaker);
-    const same = p.ask && p.ask.id === ask.id && p.ask.question === ask.question && p.ask.more === ask.more && (p.ask.options ?? []).join('\n') === (ask.options ?? []).join('\n') && p.ask.tried === ask.tried && p.ask.password === ask.password && p.ask.hands === ask.hands && p.ask.post === ask.post && p.ask.target === ask.target && p.ask.media === ask.media && p.ask.still === ask.still && p.ask.held === ask.held && JSON.stringify(p.ask.deploy) === JSON.stringify(ask.deploy);
-    if (same) return;
+    if (p.ask && sameAsk(p.ask, ask)) return;
     this.endHappening(speaker.id);
-    const isNew = p.ask?.id !== ask.id;
+    // A held question coming due at list time pops like a new one (its 🕐 turns into a "?").
+    const isNew = p.ask?.id !== ask.id || (!!p.ask?.held && !ask.held);
     p.ask = ask;
     if (this.panel?.id === speaker.id && this.panel.mode === 'ask' && this.panel.key !== ask.id) {
       // A different question replaced the one on screen: show the new one (unless they're mid-answer).

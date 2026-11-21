@@ -87,7 +87,12 @@ test("a job wait marked urgent keeps its urgency when it rides on the room's own
   assert.equal(waitsForList(asks[0]!, () => false), false);
 });
 
-test('an open page updates a held button when its list time comes', () => {
-  const src = readFileSync(new URL('../web/app/bubbles.ts', import.meta.url), 'utf8');
-  assert.match(src, /const same = [^\n]*p\.ask\.held === ask\.held/, 'held → due must count as a change');
+test('an open page turns a held 🕐 into a "?" when its list time comes', async () => {
+  const { sameAsk } = await import('../web/app/bubbles.ts');
+  const held = { id: 'aaaaaaaa', question: 'Which logo?', held: 1_000 } as Parameters<typeof sameAsk>[0];
+  assert.equal(sameAsk(held, { ...held }), true);
+  assert.equal(sameAsk(held, { ...held, held: undefined }), false, 'coming due is a change the page must draw');
+  const bubbles = readFileSync(new URL('../web/app/bubbles.ts', import.meta.url), 'utf8');
+  assert.match(bubbles, /if \(p\.ask && sameAsk\(p\.ask, ask\)\) return;/);
+  assert.match(bubbles, /const isNew = p\.ask\?\.id !== ask\.id \|\| \(!!p\.ask\?\.held && !ask\.held\)/, 'coming due pops like a new question');
 });

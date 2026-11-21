@@ -8,6 +8,8 @@ import { Person, type Point } from './people.ts';
 import { drawObject } from './decor.ts';
 import { drawProp, effect, type Effect } from './antics.ts';
 import type { Anim, Prop } from './whimsy.ts';
+import { gap, pickScene, REST, type AmbientContext, type Scene } from './ambience.ts';
+import { drawSign, LAYER, OUTSIDE, scene, type Sign } from './ambient-fx.ts';
 import { Bubbles, type Answer, type AskInfo, type Speaker } from './bubbles.ts';
 import type { SceneObject } from '../../src/office/scene.ts';
 import { buildFloorPlan } from './floorplan.ts';
@@ -179,6 +181,14 @@ export class Office {
   private sparks: { g: Graphics; vx: number; vy: number; life: number }[] = [];
   private fx: Effect[] = []; // happenings' moves playing out
   private props = new Map<string, { g: Graphics; until: number }>(); // person id -> a happening's prop beside them
+  // The Tiny HQ sign over the front door, and the free little scenes around the building (ambience.ts).
+  private sign?: Sign;
+  private plan?: ReturnType<typeof buildFloorPlan>;
+  private ground?: Container; // floor-level scenes (robot vacuum, tumbleweed), under the rooms
+  private sky?: Container; // scenes that fly over everything
+  private ambientIn = 2000; // ms until the next scene
+  private lastScene?: Scene;
+  private restUntil = new Map<Scene, number>();
   // The camera: glides to whoever's busy or talking, then back to the whole floor.
   private cam: { x: number; y: number; s: number; until: number } | null = null;
   private lastTouch = 0; // the owner panned or zoomed: the camera leaves them alone for a while
@@ -227,6 +237,8 @@ export class Office {
     this.th = isNight() ? NIGHT : DAY;
     const th = this.th;
     document.documentElement.dataset.light = th.night ? 'night' : 'day';
+    this.sign?.destroy();
+    this.sign = undefined;
     this.world.removeChildren().forEach((c) => c.destroy({ children: true }));
     this.people.clear();
     this.away.clear();
@@ -254,15 +266,24 @@ export class Office {
       ...(corridorOverride !== undefined ? { corridorOverride } : {}),
     });
     this.world.addChild(base);
+    this.plan = plan;
+    this.sign = drawSign(floor.width * TILE, (floor.door.x + 1) * TILE, th.night, floor.names?.office);
+    this.world.addChild(this.sign.c);
+    this.ground = new PIXI.Container();
+    this.world.addChild(this.ground);
 
     for (const room of floor.rooms) this.world.addChild(this.drawRoom(room, handlers));
     this.hallway = new PIXI.Container();
     this.world.addChild(this.hallway);
+    this.sky = new PIXI.Container();
+    this.sky.eventMode = 'none';
+    this.ground.eventMode = 'none';
 
     for (const agent of floor.agents) {
       if (agent.id !== 'manager') continue;
       this.manager = this.drawManager(agent.x * TILE, agent.y * TILE, agent.palette, handlers);
     }
+    this.world.addChild(this.sky);
     this.fit();
     // Everyone was drawn afresh: markers and bubbles follow the new figures.
     this.bubbles?.rebind((id) => {
@@ -1053,15 +1074,59 @@ export class Office {
         }
       }
     }
+    this.sign?.tick(dt, this.t);
+    this.ambience(dt);
     this.bubbles?.tick(dt);
+  }
+
+  // The next free little scene around the building, when its time comes (ambience.ts picks it).
+  private ambience(dt: number): void {
+    if (!this.floor || !this.plan) return;
+    this.ambientIn -= dt;
+    if (this.ambientIn > 0) return;
+    const people = [...this.people.values()];
+    const ctx: AmbientContext = {
+      night: this.th.night,
+      busy: people.filter((p) => p.typing).length,
+      people: people.length,
+      hasGarden: this.plan.zones.some((z) => z.kind === 'atrium' || z.kind === 'planter_strip'),
+      hasHalls: this.plan.grid.some((row) => row.includes('hall')),
+    };
+    this.ambientIn = gap(ctx, Math.random);
+    const now = performance.now();
+    const kind = pickScene(ctx, Math.random, this.lastScene, (s) => (this.restUntil.get(s) ?? 0) <= now);
+    if (kind) this.playScene(kind, ctx.night);
+  }
+
+  // Plays one scene now (also handy from the console: office.playScene('roomba')).
+  playScene(kind: Scene, night = this.th.night): boolean {
+    if (!this.floor || !this.plan) return false;
+    const played = () => {
+      this.lastScene = kind;
+      this.restUntil.set(kind, performance.now() + REST[kind]);
+    };
+    if (kind === 'neonflicker') {
+      if (!this.sign) return false;
+      this.sign.flicker();
+      played();
+      return true;
+    }
+    const e = scene(kind, { W: this.floor.width * TILE, H: this.floor.height * TILE, night, plan: this.plan, doorCx: (this.floor.door.x + 1) * TILE, ...(this.sign ? { sign: this.sign } : {}) }, Math.random);
+    const layer = LAYER[kind] === 'ground' ? this.ground : this.sky;
+    if (!e || !layer || layer.destroyed) return false;
+    played();
+    layer.addChild(e.c);
+    e.step(0);
+    this.fx.push(e);
+    return true;
   }
 
   // Where fit() puts the camera, without moving it.
   private fitView(): { x: number; y: number; s: number } {
     const W = this.floor!.width * TILE;
-    const H = this.floor!.height * TILE;
+    const H = this.floor!.height * TILE + OUTSIDE; // the pavement and the sign sit above the front wall
     const s = Math.min(this.app.screen.width / (W + 40), this.app.screen.height / (H + 40), 1.4);
-    return { x: (this.app.screen.width - W * s) / 2, y: (this.app.screen.height - H * s) / 2, s };
+    return { x: (this.app.screen.width - W * s) / 2, y: (this.app.screen.height - H * s) / 2 + OUTSIDE * s, s };
   }
 
   // The floor's space changed (terminal opened, dragged or closed): resize and refit.
@@ -1074,11 +1139,11 @@ export class Office {
   fit(): void {
     if (!this.floor) return;
     const W = this.floor.width * TILE;
-    const H = this.floor.height * TILE;
+    const H = this.floor.height * TILE + OUTSIDE; // the pavement and the sign sit above the front wall
     const s = Math.min(this.app.screen.width / (W + 40), this.app.screen.height / (H + 40), 1.4);
     this.world.scale.set(s);
     this.fitScale = s;
-    this.world.position.set((this.app.screen.width - W * s) / 2, (this.app.screen.height - H * s) / 2);
+    this.world.position.set((this.app.screen.width - W * s) / 2, (this.app.screen.height - H * s) / 2 + OUTSIDE * s);
     // The current zoom, readable from the page (handy for checks; no data in it).
     (this.app.canvas.parentElement as HTMLElement | null)?.setAttribute('data-zoom', s.toFixed(2));
   }
