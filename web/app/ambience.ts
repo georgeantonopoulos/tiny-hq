@@ -138,3 +138,8 @@ export function corridorRows(grid: TileKind[][], min = 6): { y: number; x0: numb
   });
   return runs;
 }
+
+// The sign's lettering: the office name in capitals, word gaps doubled.
+export function signWord(name: string): string {
+  return (name.trim() || 'Tiny HQ').toUpperCase().replace(/\s+/g, '  ');
+}

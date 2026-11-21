@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { corridorRows, gap, pickScene, SCENES, seeded, wander, weights, type AmbientContext, type Scene } from '../web/app/ambience.ts';
+import { readFileSync } from 'node:fs';
+import { corridorRows, gap, pickScene, SCENES, seeded, signWord, wander, weights, type AmbientContext, type Scene } from '../web/app/ambience.ts';
 import type { TileKind } from '../web/app/floorplan.ts';
 
 const day: AmbientContext = { night: false, busy: 1, people: 4, hasGarden: true, hasHalls: true };
@@ -70,4 +71,12 @@ test('tumbleweed rows skip the front row and short runs', () => {
   const rows = corridorRows(grid, 6);
   assert.deepEqual(rows.map((r) => r.y), [3, 5]);
   assert.ok(rows.every((r) => r.x1 - r.x0 + 1 >= 6));
+});
+
+test('the sign over the door spells the office name', () => {
+  assert.equal(signWord('Tiny HQ'), 'TINY  HQ');
+  assert.equal(signWord('Acme  Studio '), 'ACME  STUDIO');
+  assert.equal(signWord('  '), 'TINY  HQ');
+  const office = readFileSync(new URL('../web/app/office.ts', import.meta.url), 'utf8');
+  assert.match(office, /drawSign\(.*, floor\.names\?\.office\)/, 'the page passes the configured name to the sign');
 });

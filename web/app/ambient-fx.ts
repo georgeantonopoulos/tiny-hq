@@ -2,7 +2,7 @@
 // building (which scene and when: ambience.ts). Flat pixel style like the rest of the office.
 
 import type { Effect } from './antics.ts';
-import { corridorRows, wander, type Scene } from './ambience.ts';
+import { corridorRows, signWord, wander, type Scene } from './ambience.ts';
 import type { FloorPlan, FloorZone } from './floorplan.ts';
 
 type Container = import('pixi.js').Container;
@@ -30,7 +30,7 @@ export interface Sign {
 
 // The pavement in front of the building and the sign over the door. `W`: the building's width;
 // `doorCx`: the middle of the front door, in world pixels.
-export function drawSign(W: number, doorCx: number, night: boolean): Sign {
+export function drawSign(W: number, doorCx: number, night: boolean, name = 'Tiny HQ'): Sign {
   const c = new PIXI.Container();
   const ground = new PIXI.Graphics();
   // Pavement: slabs along the front wall, a kerb, and a path up to the door.
@@ -76,8 +76,8 @@ export function drawSign(W: number, doorCx: number, night: boolean): Sign {
   const bulbG = new PIXI.Graphics();
   sc.addChild(bulbG);
 
-  // TINY HQ, one letter at a time so a single letter can flicker at night.
-  const word = 'TINY  HQ';
+  // The office's name, one letter at a time so a single letter can flicker at night.
+  const word = signWord(name);
   const style = { fontFamily: 'ui-rounded, "SF Pro Rounded", system-ui, sans-serif', fontSize: 25, fontWeight: '900' as const, fill: CREAM };
   const letters: Text[] = [];
   const halo = new PIXI.Container();
@@ -97,11 +97,15 @@ export function drawSign(W: number, doorCx: number, night: boolean): Sign {
     letters.push(t);
     x += t.width + 3;
   }
-  const textW = x - 3;
+  // A long name shrinks to fit inside the frame.
+  const fit = Math.min(1, (bw - 28) / Math.max(1, x - 3));
+  const textW = (x - 3) * fit;
   const textX = doorCx - textW / 2;
-  const textY = by + 6;
-  halo.position.set(textX, textY);
-  front.position.set(textX, textY);
+  const textY = by + 6 + (1 - fit) * 12;
+  for (const g of [halo, front]) {
+    g.scale.set(fit);
+    g.position.set(textX, textY);
+  }
   const blur = new PIXI.BlurFilter({ strength: 5, quality: 3 });
   halo.filters = [blur];
   halo.alpha = night ? 0.95 : 0.35;

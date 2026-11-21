@@ -267,7 +267,7 @@ export class Office {
     });
     this.world.addChild(base);
     this.plan = plan;
-    this.sign = drawSign(floor.width * TILE, (floor.door.x + 1) * TILE, th.night);
+    this.sign = drawSign(floor.width * TILE, (floor.door.x + 1) * TILE, th.night, floor.names?.office);
     this.world.addChild(this.sign.c);
     this.ground = new PIXI.Container();
     this.world.addChild(this.ground);
