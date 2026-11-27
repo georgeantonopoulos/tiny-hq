@@ -67,6 +67,10 @@ test('the evening note: one page of what did not need the owner, nothing when th
   assert.match(bad.markdown, /🙋 \| Needs you \| \*\*game\*\*: Pick a colour scheme/);
   assert.match(bad.markdown, /🔥 \| Broke \| \*\*server\*\*: The test server crashed twice/);
   assert.match(bad.title, /🙋 1 · 🚀 0 · 🔥 1$/);
+  // An open button with no job counts as needing the owner; one a waiting job rides on counts once.
+  const asked = eveningNote([{ at, kind: 'decision', folder: '/d/shop', text: 'Closed two stale issues' }], [job({ id: 'w', room: '/d/game', status: 'waiting', waitingFor: 'Pick a colour scheme' })], 100, at + 1, (f) => f.split('/').pop()!, 100, [ask({ folder: '/d/site', question: 'Post the release note?' }), ask({ id: 'bbbbbbbb', folder: '/d/game', question: 'Pick a colour scheme', forJob: 'w' })])!;
+  assert.match(asked.markdown, /🙋 \| Needs you \| \*\*game\*\*: Pick a colour scheme · \*\*site\*\*: Post the release note\?\n/);
+  assert.match(asked.title, /🙋 2 · /);
   assert.equal(eveningNote(entries, [], at, at + 1, (f) => f), undefined, 'only what came since the last note');
   // Filed once a day at 19:00.
   assert.equal(eveningDue(0, new Date(2026, 10, 15, 18, 59)), undefined);

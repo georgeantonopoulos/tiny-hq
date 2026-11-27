@@ -80,12 +80,18 @@ const EMOJI: Record<Kind, string> = { decision: '🧭', merge: '🔀', step: '�
 const short = (s: string) => clean(s, 70) + (clean(s, 999).length > 70 ? '…' : '');
 const pick = (items: string[], none: string) => (items.length ? items.slice(0, 2).join(' · ') + (items.length > 2 ? ` · +${items.length - 2} more` : '') : none);
 
-export function eveningNote(entries: Entry[], jobs: Job[], since: number, now: number, roomName: (folder: string) => string, entriesSince = since): { title: string; markdown: string } | undefined {
+export function eveningNote(entries: Entry[], jobs: Job[], since: number, now: number, roomName: (folder: string) => string, entriesSince = since, asks: Ask[] = []): { title: string; markdown: string } | undefined {
   const fresh = entries.filter((e) => e.at > entriesSince && e.at <= now);
   const done = jobs.filter((j) => j.status === 'done' && j.updatedAt > since && j.updatedAt <= now);
   if (!fresh.length && !done.length) return undefined;
   const day = new Date(now).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  const waiting = jobs.filter((j) => j.status === 'waiting').map((j) => `**${roomName(j.room)}**: ${short(j.waitingFor ?? j.title)}`);
+  const waitingJobs = jobs.filter((j) => j.status === 'waiting');
+  const ids = new Set(waitingJobs.map((j) => j.id));
+  // Open buttons count too; one that a waiting job rides on is already in the list once.
+  const waiting = [
+    ...waitingJobs.map((j) => `**${roomName(j.room)}**: ${short(j.waitingFor ?? j.title)}`),
+    ...asks.filter((a) => !(a.job && ids.has(a.job)) && !(a.forJob && ids.has(a.forJob))).map((a) => `**${roomName(a.folder)}**: ${short(a.question)}`),
+  ];
   const shipped = [...done.map((j) => `**${roomName(j.room)}**: ${short(j.title)}`), ...fresh.filter((e) => e.kind === 'merge').map((e) => `**${roomName(e.folder)}**: ${short(e.text)}`)];
   // Only what a room said broke (--kind broke): guessing from words flagged "breaking" and "lost a bid".
   const broke = fresh.filter((e) => e.kind === 'broke').map((e) => `**${roomName(e.folder)}**: ${short(e.text)}`);
@@ -131,13 +137,13 @@ export function expiredLine(ask: Ask): string {
 // Files today's note if it's due. Marked filed only once the page is on the desk (or there was
 // nothing to say), so a failed write is tried again next tick with the same entries instead of
 // losing the day.
-export function fileEvening(notesDir: string, entriesPath: string, jobs: Job[], now: number, roomName: (folder: string) => string, file: (title: string, markdown: string) => void): string | undefined {
+export function fileEvening(notesDir: string, entriesPath: string, jobs: Job[], now: number, roomName: (folder: string) => string, file: (title: string, markdown: string) => void, asks: Ask[] = []): string | undefined {
   const due = eveningDue(lastFiled(notesDir), new Date(now));
   if (due === undefined) return undefined;
   // The first note (nothing filed yet) carries every entry queued, even if the first 19:00 was
   // missed (asleep, say); finished jobs still go back one day only, not to the beginning.
   const last = lastFiled(notesDir);
-  const note = eveningNote(loadEntries(entriesPath), jobs, last || due - 86_400_000, now, roomName, last || 0);
+  const note = eveningNote(loadEntries(entriesPath), jobs, last || due - 86_400_000, now, roomName, last || 0, asks);
   if (!note) {
     markFiled(notesDir, now);
     return 'evening note: nothing to say today, no page';
