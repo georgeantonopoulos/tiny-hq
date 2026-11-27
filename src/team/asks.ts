@@ -273,6 +273,8 @@ export function wantsAction(ask: Ask, answer: Answer): boolean {
 // types into the manager's chat say so in the line ("on your whiteboard", "(They clicked …").
 const OFFICE_LINE = /^\s*(<pasted_content|<task-notification|<cross-session-message|<system-reminder|<command-|<local-command|<bash-|\[Request interrupted|\[Office[: ]|\[Scheduled: |The owner: (yes|no|done|sign in)\b|The owner chose: |The owner: (action this|bring back|don't action|drop job)|The owner (set|cleared) the goal|Job [a-z0-9-]+: read )/;
 const OFFICE_ANYWHERE = /on your whiteboard|\(They (clicked|picked|tapped|typed) /;
+// A chat summary left by compaction is never the owner's typed answer.
+const COMPACTED = /^\s*This session is being continued from a previous conversation/;
 
 // What the owner typed into a session's chat after `since` (ms), from its transcript lines, if anything.
 // Otherwise an owner who answers by chatting in the room leaves the button up, out of date.
@@ -305,17 +307,20 @@ export function typedLinesSince(lines: string[], since: number): string[] {
   const out: string[] = [];
   for (const line of lines) {
     if (!line.includes('"user"')) continue;
-    let d: { type?: string; isMeta?: boolean; isSidechain?: boolean; timestamp?: string; origin?: { kind?: string }; message?: { content?: unknown } };
+    let d: { type?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; isVisibleInTranscriptOnly?: boolean; timestamp?: string; origin?: { kind?: string }; message?: { content?: unknown } };
     try {
       d = JSON.parse(line);
     } catch {
       continue;
     }
     if (d.type !== 'user' || d.isMeta || d.isSidechain || !(Date.parse(d.timestamp ?? '') > since)) continue;
+    // Claude Code's summary of a chat that ran out of room is filed as a user line: never the owner.
+    // Read as a typed answer, a summary naming a PR took down that room's open button.
+    if (d.isCompactSummary || d.isVisibleInTranscriptOnly) continue;
     if (d.origin?.kind && d.origin.kind !== 'human') continue; // task notifications and the like
     const c = d.message?.content;
     const text = typeof c === 'string' ? c : Array.isArray(c) ? c.filter((x) => x && (x as { type?: string }).type === 'text').map((x) => (x as { text?: string }).text ?? '').join('') : '';
-    if (text.trim() && !OFFICE_LINE.test(text) && !OFFICE_ANYWHERE.test(text)) out.push(text.trim());
+    if (text.trim() && !OFFICE_LINE.test(text) && !COMPACTED.test(text) && !OFFICE_ANYWHERE.test(text)) out.push(text.trim());
   }
   return out;
 }

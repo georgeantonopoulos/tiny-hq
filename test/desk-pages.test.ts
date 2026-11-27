@@ -107,6 +107,10 @@ test('the desk opens each report in a new tab through its link', () => {
 test('an open office page reloads itself when the office is updated', () => {
   const main = readFileSync(new URL('../web/app/main.ts', import.meta.url), 'utf8');
   assert.match(main, /r\.build !== pageBuild && !isTyping\(\)\) return location\.reload\(\)/);
+  // Focus alone never holds back a reload (only text in the field), and coming back to the tab
+  // checks at once (a stale tab keeps running old code).
+  assert.match(main, /return \(a as HTMLInputElement\)\.value\.trim\(\) !== ''/);
+  assert.match(main, /if \(document\.hidden\) quietCatchUp = true;\n(?:\s*\/\/.*\n)*\s*else void poll\(\)/);
   assert.match(readFileSync(new URL('../src/daemon/main.ts', import.meta.url), 'utf8'), /build: \(\) => webBuild\(\)/);
 });
 

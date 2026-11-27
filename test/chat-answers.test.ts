@@ -16,6 +16,18 @@ test("The owner's own reply in the room's chat counts as answering its question"
   assert.match(typedSince([user('The owner (spoken, through the office mic): merge it', '2026-11-10T10:05:00Z')], asked)!, /merge it/);
 });
 
+// A room's chat summary (Claude Code compacting a long chat) was read as the owner typing, and
+// took down open buttons whose question it happened to mention.
+test("a chat summary after compaction is never the owner's answer", () => {
+  const summary = 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation. Merge PR #58 yes';
+  const lines = [
+    user(summary, '2026-11-24T22:00:00Z', { isCompactSummary: true, isVisibleInTranscriptOnly: true }),
+    user(summary, '2026-11-24T22:01:00Z'), // the same text without the flags is still an office line
+  ];
+  assert.equal(typedSince(lines, Date.parse('2026-11-24T21:00:00Z')), undefined);
+  assert.equal(typedSince([...lines, user('merge it', '2026-11-24T22:05:00Z')], Date.parse('2026-11-24T21:00:00Z')), 'merge it');
+});
+
 test("the office's own lines, notifications and earlier messages don't count", () => {
   const lines = [
     user('merge it', '2026-11-10T09:59:00Z'), // before the question

@@ -1,6 +1,7 @@
 // The evening note (src/team/evening.ts): what a room decided or did that the owner hears about
 // tonight, on their desk, instead of a button or a message now.
-//   evening add "<what you decided or did, and why>" [--kind decision|merge|step|note]   (default: decision)
+//   evening add "<what you decided or did, and why>" [--kind decision|merge|step|broke|note]   (default: decision)
+//     --kind broke: something that broke and isn't fixed yet; it goes in the note's 🔥 tile
 //   evening list      (what goes in tonight's note so far)
 
 import { realpathSync } from 'node:fs';

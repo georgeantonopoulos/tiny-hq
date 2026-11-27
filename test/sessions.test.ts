@@ -188,3 +188,20 @@ test("a long-attached screen stays ready after its switch to full screen scrolls
   trackScreen(st, 'bye\x1b[?1049l');
   assert.equal(st.up, false, 'leaving full screen is seen too');
 });
+
+test('a session Claude Code reports "waiting" on a dialog is busy and blocked on the owner', async () => {
+  const { readWaiting } = await import('../src/terminal/sessions.ts');
+  const s = readWaiting({ id: 'f5fac309', sessionId: 'x', cwd: '/p', status: 'waiting', state: 'blocked', waitingFor: 'input needed' });
+  assert.equal(s.status, 'busy');
+  assert.equal(s.state, 'blocked');
+  assert.equal((s as { dialog?: string }).dialog, 'input needed');
+  const idle = readWaiting({ id: 'c15925ee', sessionId: 'y', cwd: '/p', status: 'idle', state: 'blocked' });
+  assert.equal(idle.status, 'idle');
+  assert.equal((idle as { dialog?: string }).dialog, undefined);
+});
+
+test('Tiny HQ reads the dialog flag: a ? over the room, and never stopped', () => {
+  const main = readFileSync(join(import.meta.dirname, '..', 'src', 'daemon', 'main.ts'), 'utf8');
+  assert.match(main, /s\.dialog && \(!read \|\| read\.kind === 'unknown'\)/);
+  assert.match(main, /asking\.has\(s\.sessionId\) \|\|\s*!!s\.dialog/);
+});

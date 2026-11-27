@@ -99,25 +99,32 @@ export function replyOf(hook, turn) {
   return given && given !== '(quiet)' ? given : lastReply(turn);
 }
 
-// A question put to the owner: a sentence ending in "?" that asks them something ("Shall I…?",
-// "Want me to…?", "OK to…?"), or any question the reply ends on ("Sound good?"). Also a line that
-// leaves something waiting on them with no question mark ("The only thing left on #16 is your
-// merge"): that is a question too, just without the mark.
-// An aside to camera in italics with no "you" in it doesn't count, nor code.
+// A question put to the owner: the reply ends on one ("Shall I…?", "Sound good?"), or ends on a
+// line that leaves something waiting on them with no question mark ("The only thing left on #16 is
+// your merge"). Only the last sentence counts: a report that asked something earlier and then
+// answered it is not sent back. An aside to camera in italics with no "you" in it doesn't count,
+// nor code.
 const ASKS_HIM = /\b(you|your|shall i|should i|shall we|should we|want me|can i|may i|ok to|okay to|good to go|owner|boss)\b/i;
 const WAITS_ON_THEM =
   /\b(?:waiting (?:on|for) (?:you|your|the owner)|waits (?:on|for) (?:you|your|the owner)|(?:over|up) to you\b|(?:needs|need|awaiting|pending) (?:your|the owner'?s) (?:merge|call|go-?ahead|approval|yes|ok|okay|decision|sign-?off|click|review|answer|pick)|(?:only thing|all that'?s|what'?s) left[^.!?\n]*\b(?:you|your|the owner'?s)\b|your (?:merge|go-?ahead|approval|sign-?off) (?:is|puts|will|would))/i;
 const NOT_WAITING = /\b(nothing|no one|nobody|not|no longer|never|none)\b|n't\b/i; // "Nothing is waiting on you"
+// Lines after a question that don't answer it: list items, table rows, rules, sign-offs ("— Sam").
+const TRAILER = /^(?:[-*+•]\s|\d+[.)]\s|[a-z][.)]\s|\||[-=_*]{3,}$|[—–-]{1,2}\s*\S{1,40}$|>)/i;
+// What may close a question: brackets, quotes, emphasis, emoji, spaces.
+const CLOSERS = /[\s)\]}"'’”*_~\p{Extended_Pictographic}\uFE0F\u200D]+$/u;
 export function questionsOwner(reply) {
   const plain = reply
+    .replace(/```[\s\S]*?(?:```|$)/g, '') // code blocks, closed or not
     .replace(/`[^`]*`/g, '')
     .replace(/(?<![*\w])\*(?!\*)([^*\n]+)\*(?![*\w])/g, (m, inner) => (ASKS_HIM.test(inner) ? inner : '')) // *aside*
     .replace(/\*\*/g, '');
-  const sentences = plain.match(/[^.!?\n]*[.!?]+/g)?.map((s) => s.trim()).filter(Boolean) ?? [];
-  const tail = plain.trim();
-  if (tail.endsWith('?')) return true;
-  if ((plain.match(/[^.!?\n]+[.!?]*/g) ?? []).some((s) => WAITS_ON_THEM.test(s) && !NOT_WAITING.test(s))) return true;
-  return sentences.some((s) => s.endsWith('?') && ASKS_HIM.test(s));
+  // What follows the question doesn't hide it: options listed under it, a table, a sign-off.
+  const lines = plain.split('\n').map((s) => s.trim()).filter(Boolean);
+  while (lines.length > 1 && TRAILER.test(lines[lines.length - 1])) lines.pop();
+  // A sentence ends at a stop followed by a space ("example.com" is one word).
+  const last = (lines.pop() ?? '').replace(CLOSERS, '').split(/(?<=[.!?])\s+/).pop() ?? '';
+  if (/\?[!?]*$/.test(last.replace(CLOSERS, ''))) return true;
+  return WAITS_ON_THEM.test(last) && !NOT_WAITING.test(last);
 }
 
 // The last 4 MB of the chat: a long-running chat (the manager's especially) can run to hundreds of MB.
@@ -154,45 +161,6 @@ export const REASON =
 // The manager's version: no evening-note escape hatch, the owner's question goes on a button.
 export const MANAGER_REASON =
   'Question check (the office): your reply asks the owner a question in chat (or leaves something waiting on them). A question to them is a button: run ~/.tiny-hq/app/manager/ask "<the question>" --why <post|pay|irreversible|choice|permission|hands|camera|password> --tried "<what you tried>" (add --choices "<a>" "<b>" for options), then reply again without the question. If it was only rhetorical, say it as a statement.';
-
-// A promise in a report ("pictures coming", "I'll send the screenshots") becomes part of the room's
-// open job: `manager/job owe <id> "<what>"`, and the job can't be marked done until it's delivered.
-// Otherwise a promise made in passing is easily forgotten and the job closes without it.
-// Read in the reply the owner reads and in every message sent this turn (reports to the manager go by SendMessage).
-const PROMISE =
-  /\b(?:(?:i'?ll|i will|we'?ll|we will) (?:send|share|post|attach|follow up with|get you|bring you|drop you)|(?:coming|to follow) (?:shortly|soon|later|tomorrow|tonight)|(?:are|is) (?:on (?:the|its|their) way|to follow)|(?:pictures?|screenshots?|images?|photos?|videos?|clips?|renders?|recordings?|numbers|results|figures|the (?:report|file|link|write-?up|draft))(?: are| is)? (?:coming|to follow|on (?:the|its|their) way|next)|i'?ll (?:report|come|get) back (?:to you |to the manager )?with)\b/i;
-export function promises(text) {
-  const plain = String(text ?? '').replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
-  return (plain.match(/[^.!?\n]+[.!?]?/g) ?? []).map((x) => x.trim()).filter((x) => x && PROMISE.test(x));
-}
-// Messages this turn sent to the manager or another room.
-export function sentThisTurn(turn) {
-  const out = [];
-  for (const d of turn) {
-    if (d.type !== 'assistant' || !Array.isArray(d.message?.content)) continue;
-    for (const x of d.message.content) if (x?.type === 'tool_use' && x.name === 'SendMessage' && typeof x.input?.message === 'string') out.push(x.input.message);
-  }
-  return out;
-}
-// Did the turn put the promise on the job (or say it was delivered)?
-export const ranOwe = (turn) =>
-  turn.some((d) => d.type === 'assistant' && Array.isArray(d.message?.content) && d.message.content.some((x) => x?.type === 'tool_use' && x.name === 'Bash' && /manager\/job\s+(owe|delivered)\b/.test(String(x.input?.command ?? ''))));
-// The room's open job, if it has one (the newest).
-export function openJobOf(dir, data = DATA) {
-  const roots = new Set([roomFolder(dir)]);
-  try {
-    roots.add(roomFolder(realpathSync(dir)));
-  } catch {}
-  try {
-    const jobs = JSON.parse(readFileSync(join(data, 'manager', 'jobs.json'), 'utf8'))?.jobs ?? [];
-    const mine = jobs.filter((j) => j && j.status !== 'done' && typeof j.room === 'string' && roots.has(roomFolder(j.room)));
-    return mine.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
-  } catch {
-    return undefined;
-  }
-}
-export const promiseReason = (job, said) =>
-  `Promise check (the office): you promised something this turn ("${said.slice(0, 160)}"). A promise is part of your job ${job.id} until it's delivered: run ~/.tiny-hq/app/manager/job owe ${job.id} "<what you promised>" (one per thing), and once it's done, ~/.tiny-hq/app/manager/job delivered ${job.id} <number> "<where it is>". The job can't be marked done before. Already delivered? Run job owe, then job delivered, now. Then finish your reply.`;
 
 const NOTE = join(DATA, 'room-ask-guard.json');
 function sentBack(transcript, key) {
@@ -237,15 +205,7 @@ if (isMain) {
       const key = JSON.stringify(turn[0] ?? null).slice(0, 300);
       if (reply && questionsOwner(reply) && !askedWithButton(thisTurn(lines, true)) && !sentBack(hook.transcript_path, key)) {
         process.stdout.write(JSON.stringify({ decision: 'block', reason: manager ? MANAGER_REASON : REASON }));
-        return;
       }
-      if (manager) return; // the manager's own promises are not a room's job
-      const wide = thisTurn(lines, true);
-      const said = [...promises(reply), ...sentThisTurn(wide).flatMap(promises)];
-      if (!said.length || ranOwe(wide)) return;
-      const job = openJobOf(dir);
-      if (!job || sentBack(`${hook.transcript_path}#promise`, key)) return;
-      process.stdout.write(JSON.stringify({ decision: 'block', reason: promiseReason(job, said[0]) }));
     } catch {
       // never stand in anyone's way over a hook problem
     }

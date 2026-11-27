@@ -58,9 +58,19 @@ test('the evening note: one page of what did not need the owner, nothing when th
   assert.equal(entries.length, 2);
   assert.equal(entries[0]!.text, 'Kept the old icon: the new one blurs at 16px');
   const note = eveningNote(entries, [job({ status: 'done', updatedAt: at }), job({ id: 'old', status: 'done', updatedAt: 1 })], 100, at + 1, (f) => f.split('/').pop()!)!;
-  assert.match(note.title, /^Evening note, 15 Nov: 1 job done, 1 decision, 1 merge$/);
-  assert.match(note.markdown, /## Jobs finished\n\n- \*\*app\*\*: Ship it/);
-  assert.match(note.markdown, /## Merged after clean tests and review\n\n- \*\*site\*\*: Merged PR #12/);
+  assert.match(note.title, /^Evening note, 15 Nov: 🙋 0 · 🚀 2 · 🔥 0$/);
+  // Three tiles up top (needs you, shipped, broke), the rest folded away.
+  assert.match(note.markdown, /```tiles\n🙋 \| Needs you \| Nothing\..*\n🚀 \| Shipped \| \*\*app\*\*: Ship it · \*\*site\*\*: Merged PR #12.*\n🔥 \| Broke \| Nothing broke/);
+  assert.match(note.markdown, /```fold 📂 The rest \(3 things[^\n]*\n[\s\S]*### ✅ Jobs finished\n\n- \*\*app\*\*: Ship it/);
+  assert.match(note.markdown, /### 🔀 Merged after clean tests and review\n\n- \*\*site\*\*: Merged PR #12/);
+  const bad = eveningNote([{ at, kind: 'broke', folder: '/d/server', text: 'The test server crashed twice' }, { at, kind: 'decision', folder: '/d/shop', text: 'Closed two stale issues' }], [job({ id: 'w', room: '/d/game', status: 'waiting', waitingFor: 'Pick a colour scheme' })], 100, at + 1, (f) => f.split('/').pop()!)!;
+  assert.match(bad.markdown, /🙋 \| Needs you \| \*\*game\*\*: Pick a colour scheme/);
+  assert.match(bad.markdown, /🔥 \| Broke \| \*\*server\*\*: The test server crashed twice/);
+  assert.match(bad.title, /🙋 1 · 🚀 0 · 🔥 1$/);
+  // An open button with no job counts as needing the owner; one a waiting job rides on counts once.
+  const asked = eveningNote([{ at, kind: 'decision', folder: '/d/shop', text: 'Closed two stale issues' }], [job({ id: 'w', room: '/d/game', status: 'waiting', waitingFor: 'Pick a colour scheme' })], 100, at + 1, (f) => f.split('/').pop()!, 100, [ask({ folder: '/d/site', question: 'Post the release note?' }), ask({ id: 'bbbbbbbb', folder: '/d/game', question: 'Pick a colour scheme', forJob: 'w' })])!;
+  assert.match(asked.markdown, /🙋 \| Needs you \| \*\*game\*\*: Pick a colour scheme · \*\*site\*\*: Post the release note\?\n/);
+  assert.match(asked.title, /🙋 2 · /);
   assert.equal(eveningNote(entries, [], at, at + 1, (f) => f), undefined, 'only what came since the last note');
   // Filed once a day at 19:00.
   assert.equal(eveningDue(0, new Date(2026, 10, 15, 18, 59)), undefined);

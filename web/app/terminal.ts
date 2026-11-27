@@ -4,10 +4,10 @@
 // Every worker the owner opened gets a tab; the tabs and the active one are
 // remembered, so the page comes back on the session they were last in.
 
+import { isPath, linksOnRow } from './term-links.ts';
 import { isRemote, type Api } from './api.ts';
 import { phoneTyping } from './phone-typing.ts';
 import { tabColours } from './tab-colours.ts';
-import { linksOnRow } from './term-links.ts';
 import { dropMouseModeSet, mouseHeld, watchMouseHeld, type MouseMode } from './mouse-hold.ts';
 
 interface XTerm {
@@ -52,6 +52,7 @@ export class TerminalPanel {
   private readonly onLayout: () => void;
   private readonly tabsEl = document.getElementById('term-tabs')!;
   colourFor: (projectPath: string) => string | undefined = () => undefined; // the person's shirt on the floor
+  onOpenTab: (projectPath: string | undefined, colour: string | undefined) => void = () => undefined; // the floor marks that room
   private tabs: Tab[] = [];
   private active?: string; // projectPath of the selected tab
   private openingPath?: string; // the tab whose open is in flight
@@ -108,10 +109,14 @@ export class TerminalPanel {
     watchMouseHeld();
     xterm.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => dropMouseModeSet(params, xterm.modes.mouseTrackingMode, mouseHeld()));
     // Web addresses in the chat open in a new tab when tapped or clicked (copying one out of the chat
-    // is hard on a phone), including ones that wrap onto the next line.
+    // is hard on a phone), including ones that wrap onto the next line. A file or folder path opens
+    // Finder there, on the Mac.
+    const api = this.api;
     xterm.registerLinkProvider({
       provideLinks(y, cb) {
-        const links = linksOnRow(xterm.buffer.active, y).map((l) => ({ ...l, activate: () => window.open(l.text, '_blank', 'noopener,noreferrer') }));
+        const links = linksOnRow(xterm.buffer.active, y)
+          .filter((l) => !isPath(l.text) || !isRemote())
+          .map((l) => ({ ...l, activate: () => (isPath(l.text) ? void api.reveal(l.text) : window.open(l.text, '_blank', 'noopener,noreferrer')) }));
         cb(links.length ? links : undefined);
       },
     });
@@ -416,6 +421,8 @@ export class TerminalPanel {
       }),
     );
     this.tabsEl.classList.toggle('hidden', !this.tabs.length);
+    const i = this.tabs.findIndex((t) => t.projectPath === this.active);
+    this.onOpenTab(i < 0 ? undefined : this.active, colours[i]);
   }
 
   private loadTabs(): void {

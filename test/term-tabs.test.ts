@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 // Each chat tab gets a colour in line with the office, so the owner can tell them apart.
 test('chat tabs wear their person colour from the floor', () => {
   const css = readFileSync(new URL('../web/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\.term-tab \{ --who: [^;]+; border-top: 3px solid var\(--who\); \}/);
+  assert.match(css, /\.term-tab \{ --who: [^;]+;[^}]*border-top: 3px solid color-mix\(in srgb, var\(--who\)/, 'a faint stripe of colour on every tab');
+  assert.match(css, /\.term-tab\[aria-selected="true"\] \{[^}]*border-top: 4px solid var\(--who\);[^}]*background: color-mix\(in srgb, var\(--who\)[^}]*font-weight: 700/, 'the open tab is filled with its colour and bold');
   const main = readFileSync(new URL('../web/app/main.ts', import.meta.url), 'utf8');
   assert.match(main, /terminal\.colourFor = /);
   assert.match(main, /lead\?\.palette\.shirt/);

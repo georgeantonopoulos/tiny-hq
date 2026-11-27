@@ -63,6 +63,14 @@ test('rhetorical asides and statements are not questions to them', () => {
     assert.equal(questionsOwner(q), true, q);
 });
 
+// Only the reply's last sentence counts: a report that asked something earlier and answered it isn't sent back.
+test('a question in the middle of a report, or a plain report, is not sent back', () => {
+  for (const ok of ['Want me to start Rex? I started him anyway; he is on the build.', 'Merged #12. Tests pass. The page shows the new title.', 'Is the build green? Yes: 412 tests pass.', 'Shipped to example.com.', 'Ran it:\n```\nwhy?\n```', 'Merged #12.\n- tests pass\n- lint clean'])
+    assert.equal(questionsOwner(ok), false, ok);
+  for (const q of ['Merged #12. Tests pass.\n\nWant me to post the notes?', 'Which one do you want?\n1. A\n2. B', 'Done. (Want me to post it?)', 'Done. Want me to "post it?"', 'Done. Want me to post it? 🙂', 'Shall I go?!', 'Want me to post it?\n\n— Rex', 'Should I merge?\n\n| a | b |', 'Want me to run this?\n```\nnpm test\n```', 'Want me to run it?\n- tests\n- lint', 'Shipped. The only thing left on #16 is your merge, which puts the title live on example.com.'])
+    assert.equal(questionsOwner(q), true, q);
+});
+
 test('the turn, the reply and the button are read from the transcript', () => {
   const lines = [user('a'), said('old'), user('b'), ran('manager/ask "x"'), result(), said('first'), said('final words')].map((r) => JSON.stringify(r));
   const turn = thisTurn(lines);

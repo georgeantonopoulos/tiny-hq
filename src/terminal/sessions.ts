@@ -27,6 +27,17 @@ export interface BackgroundSession {
   status?: string; // idle | busy
   state?: string; // working | blocked | done (done = its last reply finished; the session is still running)
   servers?: boolean; // its turn is over and only background shells it left running (dev servers) keep it "busy"; the office shows it idle
+  waitingFor?: string; // Claude Code's own words for an open dialog, e.g. "input needed"
+  dialog?: string; // a question or permission dialog is open on its screen: it waits on the owner (set from status "waiting")
+}
+
+// Since Claude Code 2.1.332 a session with a question or permission dialog open has status
+// "waiting" and says why in waitingFor. Read only as idle|busy, a room asking the owner would show
+// no question mark and could be stopped as quiet. Read it as busy (it is mid-turn: nothing may type
+// into it or stop it) and blocked on the owner.
+export function readWaiting<T extends BackgroundSession>(s: T): T {
+  if (s.status !== 'waiting') return s;
+  return { ...s, status: 'busy', state: 'blocked', dialog: s.waitingFor || 'needs an answer' };
 }
 
 // Claude Code calls a session "busy" while a background shell it started is still running, even
@@ -42,8 +53,24 @@ export function ownStatus(pid: number | undefined, dir = SESSIONS_DIR): string |
     return undefined;
   }
 }
-export function serversOnly<T extends BackgroundSession>(s: T, own = ownStatus(s.pid)): T {
-  return s.status === 'busy' && s.state !== 'working' && own === 'shell' ? { ...s, status: 'idle', servers: true } : s;
+// When Claude Code last changed that status (ms), from the same file.
+export function ownStatusSince(pid: number | undefined, dir = SESSIONS_DIR): number | undefined {
+  if (!pid) return undefined;
+  try {
+    const o = JSON.parse(readFileSync(join(dir, `${pid}.json`), 'utf8')) as { statusUpdatedAt?: unknown };
+    return typeof o.statusUpdatedAt === 'number' ? o.statusUpdatedAt : undefined;
+  } catch {
+    return undefined;
+  }
+}
+// "working" can also stick after a turn ends on a background wait (a loop waiting for a GitHub
+// review can read "working" for days while its own file says "shell"). Once "shell" has held this
+// long, show it idle too. A new turn flips the file to "busy" within seconds, so the wait keeps a real turn busy.
+export const SHELL_SETTLED_MS = 10 * 60_000;
+export function serversOnly<T extends BackgroundSession>(s: T, own = ownStatus(s.pid), since = ownStatusSince(s.pid), now = Date.now()): T {
+  if (s.status !== 'busy' || own !== 'shell') return s;
+  const settled = s.state !== 'working' || (since !== undefined && now - since >= SHELL_SETTLED_MS);
+  return settled ? { ...s, status: 'idle', servers: true } : s;
 }
 
 // node-pty ships ready-built for macOS, but its helper loses the "may run" bit
@@ -215,7 +242,7 @@ export async function listSessions(): Promise<BackgroundSession[]> {
   const out = await run(['agents', '--json'], process.env.HOME ?? '/');
   const rows = JSON.parse(out) as BackgroundSession[] | { sessions?: BackgroundSession[] };
   const list = Array.isArray(rows) ? rows : (rows.sessions ?? []);
-  return list.filter((s) => typeof s.id === 'string' && SHORT_ID.test(s.id) && typeof s.cwd === 'string').map((s) => serversOnly(s));
+  return list.filter((s) => typeof s.id === 'string' && SHORT_ID.test(s.id) && typeof s.cwd === 'string').map((s) => serversOnly(readWaiting(s)));
 }
 
 // Every background session whose process is running, with its folder resolved.

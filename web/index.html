@@ -28,6 +28,7 @@
       <div class="brand"><span class="logo" aria-hidden="true"></span> <span id="office-name">Tiny HQ</span></div>
       <div class="status" id="status">Opening up…</div>
       <div class="usage" id="usage" aria-label="Claude and Codex usage"></div>
+      <button class="sound-btn awake-btn" id="awake" type="button" aria-label="Keep the Mac awake" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 6.5h8v3.5a3.5 3.5 0 0 1-3.5 3.5h-1A3.5 3.5 0 0 1 3 10z" /><path d="M11 7.5h1a1.75 1.75 0 0 1 0 3.5h-1.2" /><path class="steam" d="M5.5 4.5c0-1 1-1 1-2M8.5 4.5c0-1 1-1 1-2" /></svg></button>
       <button class="sound-btn" id="sound" type="button" aria-label="Office sounds" aria-pressed="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path class="spk" d="M2.5 6h2.5l3-2.5v9L5 10H2.5z" /><path class="waves" d="M10.5 5.5a3.5 3.5 0 0 1 0 5M12.5 3.5a6.3 6.3 0 0 1 0 9" /><path class="slash" d="M10.5 5.5l4 5M14.5 5.5l-4 5" /></svg></button>
       <button class="mic" id="mic" type="button" aria-label="Talk to the manager" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" /><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5V15M5.5 15h5" /></svg></button>
       <button class="ghost" id="refresh" title="Re-scan projects">Re-scan</button>
@@ -53,6 +54,7 @@
             <div class="board-body" id="desk-body"></div>
           </div>
         </div>
+        <nav class="dock" id="dock" aria-label="Quick links" hidden></nav>
         <div class="hint">Drag to move · scroll to zoom · click a room to open its Claude</div>
       </section>
       <div class="term-panel hidden" id="term-panel" role="dialog" aria-labelledby="term-title">
