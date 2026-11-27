@@ -1,3 +1,5 @@
+import { onReveal } from './bubbles.ts';
+import { renderLinks } from './quick-links.ts';
 import type { Room } from '../../src/office/layout.ts';
 import { Api, AuthError, forgetToken, isRemote, takeToken } from './api.ts';
 import { Office, ago } from './office.ts';
@@ -8,6 +10,7 @@ import { Desk } from './desk.ts';
 import { renderUsage, wireMic } from './topbar.ts';
 import { startHappenings, type Gag } from './whimsy.ts';
 import { Sound, wireSoundSwitch } from './sound.ts';
+import { wireAwakeSwitch } from './awake.ts';
 import { darker, lookFor, paintCanvas, personPixels } from './sprites.ts';
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
@@ -34,6 +37,8 @@ async function start(): Promise<void> {
   const token = await takeToken();
   if (!token) return showLocked();
   const api = new Api(token);
+  // A path in a bubble or on a button opens Finder there.
+  onReveal((path) => void api.reveal(path));
   const office = new Office();
   const terminal = new TerminalPanel(api, () => requestAnimationFrame(() => office.relayout()));
   // Each tab wears its person's colour from the floor (The manager's blue, each lead's shirt).
@@ -42,6 +47,12 @@ async function start(): Promise<void> {
     if (!f) return undefined;
     if (path === managerPath) return f.agents.find((a) => a.id === 'manager')?.palette.shirt;
     return f.rooms.find((r) => r.project?.path === path)?.lead?.palette.shirt;
+  };
+  // The room whose chat tab is open gets a ring in the tab's colour on the floor.
+  terminal.onOpenTab = (path, colour) => {
+    const f = office.current;
+    const id = !path || !f ? undefined : path === managerPath ? f.rooms.find((r) => r.kind === 'manager')?.id : f.rooms.find((r) => r.project?.path === path)?.id;
+    office.showOpenTab(id, colour);
   };
   const card = $('card');
   let managerPath = '';
@@ -242,12 +253,16 @@ async function start(): Promise<void> {
   // Office sounds: quiet chimes for news, questions and finished jobs (src: sound.ts).
   const sound = new Sound();
   wireSoundSwitch($('sound') as HTMLButtonElement, sound);
+  wireAwakeSwitch($('awake') as HTMLButtonElement, (on) => api.awake(on));
   const asksSeen = new Set<string>(); // every question ever seen: one that comes back never chimes twice
   let lastDone = 0; // the latest job finish seen
   // Back from a hidden tab: catch up silently (what changed meanwhile may be hours old).
   let quietCatchUp = false;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) quietCatchUp = true;
+    // Back on the tab: check at once, so an office update reloads the page before the owner clicks
+    // anything (a tab left in the background otherwise keeps running old code for a while).
+    else void poll().catch(() => undefined);
   });
   let polling = false;
   async function poll(): Promise<void> {
@@ -261,9 +276,13 @@ async function start(): Promise<void> {
   }
   let coffeeSeen = 0;
   let pageBuild = '';
+  // Only a field with text in it holds back a reload: focus alone stays on the chat box after a
+  // line is sent, so the page would keep running old code indefinitely.
   const isTyping = (): boolean => {
-    const a = document.activeElement;
-    return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || (a as HTMLElement).isContentEditable);
+    const a = document.activeElement as HTMLElement | null;
+    if (!a) return false;
+    if (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') return (a as HTMLInputElement).value.trim() !== '';
+    return a.isContentEditable && (a.textContent ?? '').trim() !== '';
   };
   async function pollOnce(): Promise<void> {
     const r = await api.sessions().catch((err: unknown) => {
@@ -341,12 +360,20 @@ async function start(): Promise<void> {
   // The one microphone: the browser turns speech into text, and the words go to the manager.
   wireMic($('mic') as HTMLButtonElement, (text) => api.say(text), (text) => ($('status').textContent = text), (on) => sound.play(on ? 'micOn' : 'micOff'));
   window.addEventListener('resize', () => office.fit());
+  // Each room's flair (written by Tiny HQ for each project); re-read every 10 minutes, and a
+  // change redraws the floor where it is.
+  office.setFlair(await api.flair());
+  setInterval(() => void api.flair().then((f) => office.setFlair(f)), 10 * 60_000);
   await load(false);
   terminal.restore(); // back in the session the owner was last in
   const lines = MANAGER_LINES(office.current?.names?.owner ?? 'friend');
   office.say(lines[Math.floor(Math.random() * lines.length)]!, 6000);
   void poll().catch(fail);
   setInterval(() => void poll().catch(fail), 5_000);
+  // The quick links along the bottom of the floor; re-read every 10 minutes (icons arrive late).
+  const links = () => void api.links().then((l) => renderLinks($('dock'), l, location.hostname, (n) => api.launchLink(n)));
+  links();
+  setInterval(links, 10 * 60_000);
   // Little happenings on the floor, never over anything real; Haiku's written ones re-read hourly.
   let gags: Gag[] = [];
   const readGags = () => void api.gags().then((g) => (gags = g));

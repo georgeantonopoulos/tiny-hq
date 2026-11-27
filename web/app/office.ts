@@ -14,6 +14,8 @@ import { Bubbles, type Answer, type AskInfo, type Speaker } from './bubbles.ts';
 import type { SceneObject } from '../../src/office/scene.ts';
 import { buildFloorPlan } from './floorplan.ts';
 import { drawFloorBase } from './hallway.ts';
+import { drawFlair, type FlairArt } from './flair.ts';
+import type { Flair } from './flair-kit.ts';
 
 type Graphics = import('pixi.js').Graphics;
 type Container = import('pixi.js').Container;
@@ -180,6 +182,9 @@ export class Office {
   private away = new Map<string, Room>(); // person id -> the room they're standing in, while visiting
   private sparks: { g: Graphics; vx: number; vy: number; life: number }[] = [];
   private fx: Effect[] = []; // happenings' moves playing out
+  // Each room's flair (flair-kit.ts), by project folder, and the drawn ones looping on the floor.
+  private flair = new Map<string, Flair>();
+  private flairArt: FlairArt[] = [];
   private props = new Map<string, { g: Graphics; until: number }>(); // person id -> a happening's prop beside them
   // The Tiny HQ sign over the front door, and the free little scenes around the building (ambience.ts).
   private sign?: Sign;
@@ -193,6 +198,9 @@ export class Office {
   private cam: { x: number; y: number; s: number; until: number } | null = null;
   private lastTouch = 0; // the owner panned or zoomed: the camera leaves them alone for a while
   private t = 0;
+  // The room whose chat tab is open: a ring in the tab's colour and a "Chat open" tag.
+  private tabMark?: Container;
+  private tabFor?: { id: string; colour: string };
   private th: Theme = isNight() ? NIGHT : DAY;
   private wallColour = this.th.wall;
   private edgeColour = this.th.edge;
@@ -213,18 +221,30 @@ export class Office {
     document.addEventListener('visibilitychange', () => (document.hidden ? this.app.ticker.stop() : this.app.ticker.start()));
     // Day turns to night (and back): redraw in the other light.
     setInterval(() => {
-      if (!this.floor || !this.handlers || isNight() === this.th.night) return;
-      // Keep where the owner was looking, and who was typing.
-      const view = { x: this.world.x, y: this.world.y, s: this.world.scale.x };
-      const typing = [...this.people].filter(([, p]) => p.typing).map(([id]) => id);
-      this.render(this.floor, this.handlers);
-      this.world.scale.set(view.s);
-      this.world.position.set(view.x, view.y);
-      for (const id of typing) {
-        const p = this.people.get(id);
-        if (p) p.typing = true;
-      }
+      if (isNight() !== this.th.night) this.redraw();
     }, 60_000);
+  }
+
+  // Draws the floor again where it is, keeping where the owner was looking and who was typing.
+  private redraw(): void {
+    if (!this.floor || !this.handlers) return;
+    const view = { x: this.world.x, y: this.world.y, s: this.world.scale.x };
+    const typing = [...this.people].filter(([, p]) => p.typing).map(([id]) => id);
+    this.render(this.floor, this.handlers);
+    this.world.scale.set(view.s);
+    this.world.position.set(view.x, view.y);
+    for (const id of typing) {
+      const p = this.people.get(id);
+      if (p) p.typing = true;
+    }
+  }
+
+  // The rooms' flair, by project folder; a change redraws the floor.
+  setFlair(map: Record<string, Flair>): void {
+    const next = new Map(Object.entries(map));
+    if (JSON.stringify([...next]) === JSON.stringify([...this.flair])) return;
+    this.flair = next;
+    this.redraw();
   }
 
   get current(): Floor | undefined {
@@ -245,6 +265,8 @@ export class Office {
     this.pills.clear();
     this.screens.clear();
     this.sparks = [];
+    this.flairArt = [];
+
     // Hallways and common areas: stone pavers and carpet runners along the walking routes, with
     // furnished nooks filling the space the rooms leave empty (honours saved decor).
     const theme = (floor as Floor & { theme?: { corridor?: string; wall?: string; background?: string } }).theme ?? {};
@@ -284,6 +306,8 @@ export class Office {
       this.manager = this.drawManager(agent.x * TILE, agent.y * TILE, agent.palette, handlers);
     }
     this.world.addChild(this.sky);
+    this.tabMark = undefined;
+    this.drawTabMark();
     this.fit();
     // Everyone was drawn afresh: markers and bubbles follow the new figures.
     this.bubbles?.rebind((id) => {
@@ -304,6 +328,9 @@ export class Office {
     const w = room.w * TILE;
     const h = room.h * TILE;
     const g = new PIXI.Graphics();
+    // The room's flair tints it, unless the owner's saved decor already colours it.
+    const flair = room.kind === 'project' && room.project ? this.flair.get(room.project.path) : undefined;
+    if (flair && (flair.floor || flair.wall) && !room.style?.floor && !room.style?.wall) room = { ...room, style: { ...(flair.floor ? { floor: flair.floor } : {}), ...(flair.wall ? { wall: flair.wall } : {}) } };
     const styleFloor = room.style?.floor && /^#[0-9a-f]{6}$/i.test(room.style.floor) ? dim(parseInt(room.style.floor.slice(1), 16), th.night ? 0.45 : 1) : undefined;
     const busy = room.project?.activity ?? 0;
     const fill =
@@ -361,6 +388,20 @@ export class Office {
         plaque.anchor.set(0.5, 0);
         plaque.position.set((o.x + o.w / 2) * TILE, (o.y + o.h) * TILE + 1);
         c.addChild(plaque);
+      }
+    }
+    // The flair's emblem, plaque and effect, clear of the decor and the poster (furnishProject).
+    if (flair) {
+      const avoid = objects.map((o) => ({ x: o.x * TILE, y: o.y * TILE, w: o.w * TILE, h: o.h * TILE }));
+      if (room.w >= 7 && h - WALL_H > 120) avoid.push({ x: 14, y: WALL_H + 8, w: 26, h: 32 });
+      const art = drawFlair(flair, { w, h, wallH: WALL_H, seed: s, night: th.night, avoid });
+      if (art) {
+        // One floor layer at index 0, so the people (put in at index 1) stay in front of it.
+        const under = new PIXI.Container();
+        c.removeChild(g);
+        under.addChild(g, art.c);
+        c.addChildAt(under, 0);
+        this.flairArt.push(art);
       }
     }
 
@@ -1006,6 +1047,45 @@ export class Office {
     }
   }
 
+  // Mark the room whose chat tab is open, by room id; undefined clears it.
+  showOpenTab(id: string | undefined, colour = '#f2b544'): void {
+    const next = id ? { id, colour } : undefined;
+    if (next?.id === this.tabFor?.id && next?.colour === this.tabFor?.colour) return;
+    this.tabFor = next;
+    this.drawTabMark();
+  }
+
+  private drawTabMark(): void {
+    this.tabMark?.destroy({ children: true });
+    this.tabMark = undefined;
+    if (!this.tabFor || !this.floor || !this.world) return;
+    const room = this.floor.rooms.find((r) => r.id === this.tabFor!.id);
+    if (!room) return;
+    const colour = /^#[0-9a-f]{6}$/i.test(this.tabFor.colour) ? parseInt(this.tabFor.colour.slice(1), 16) : 0xf2b544;
+    const c = new PIXI.Container();
+    c.eventMode = 'none';
+    c.position.set(room.x * TILE, room.y * TILE);
+    const w = room.w * TILE;
+    const h = room.h * TILE;
+    const ring = new PIXI.Graphics()
+      .roundRect(-9, -9, w + 18, h + 18, 10)
+      .stroke({ color: colour, width: 12, alpha: 0.35 })
+      // White under the colour so the ring stands out even when the tab colour is close to the room's own.
+      .roundRect(-5, -5, w + 10, h + 10, 8)
+      .stroke({ color: 0xffffff, width: 7 })
+      .roundRect(-5, -5, w + 10, h + 10, 8)
+      .stroke({ color: colour, width: 3.5 });
+    const label = new PIXI.Text({ text: 'Chat open', style: { fontFamily: 'ui-rounded, system-ui, sans-serif', fontSize: 11, fontWeight: '800', fill: 0xffffff } });
+    const tw = label.width + 26;
+    const tag = new PIXI.Graphics().roundRect(0, 0, tw, 20, 10).fill(colour).stroke({ color: 0xffffff, width: 1.5, alpha: 0.9 });
+    tag.circle(11, 10, 3.5).fill(0xffffff);
+    tag.position.set(w - tw - 10, -12);
+    label.position.set(w - tw - 10 + 19, -12 + 3);
+    c.addChild(ring, tag, label);
+    this.world.addChild(c);
+    this.tabMark = c;
+  }
+
   // Glide to someone's room at a readable zoom, hold, then drift back to the whole floor.
   focus(id: string): void {
     if (!this.floor || performance.now() - this.lastTouch < 12_000) return;
@@ -1024,6 +1104,7 @@ export class Office {
   private animate(dt: number): void {
     this.t += dt;
     for (const p of this.people.values()) p.tick(dt, this.t);
+    for (const a of this.flairArt) a.tick(dt, this.t);
     // Sparkles fly out and fade.
     this.sparks = this.sparks.filter((sp) => {
       sp.life -= dt;
@@ -1075,6 +1156,7 @@ export class Office {
       }
     }
     this.sign?.tick(dt, this.t);
+    if (this.tabMark && !this.tabMark.destroyed) this.tabMark.children[0]!.alpha = 0.7 + 0.3 * Math.sin(this.t / 450);
     this.ambience(dt);
     this.bubbles?.tick(dt);
   }

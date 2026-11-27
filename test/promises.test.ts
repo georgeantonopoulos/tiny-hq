@@ -1,23 +1,14 @@
 // A promise in a room's report becomes part of its job, and the job can't be marked done until it's
 // delivered: a promise made in passing ("pictures coming") is otherwise easily forgotten and the job
-// closes without it.
+// closes without it. The Stop hook no longer reads replies for promises: adding one is the room's part.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadJobs, nudgeLine, describeJobs, openOwed, trimOwed, validJob, MAX_OWED } from '../src/team/jobs.ts';
 import { HOOKS } from '../src/cli/install.ts';
-// @ts-expect-error plain .mjs hook
-import { promises, tagFile } from '../hooks/room-ask-guard.mjs';
-
-test('promises are read from a report; plain statements and questions are not promises', () => {
-  for (const t of ['Pictures coming next.', "I'll send the screenshots once the render ends.", 'The node pictures are on their way.', "I'll report back with numbers.", 'Results to follow tomorrow.'])
-    assert.equal(promises(t).length, 1, t);
-  for (const t of ['Done: tests pass, merged #12.', 'You will see it in the office.', 'Coming up next is the deploy step.', 'The office will send a nudge.', "Run `I'll send pictures` in the shell."])
-    assert.equal(promises(t).length, 0, t);
-});
 
 test("an owed item survives the file, shows on the nudge and on the manager's list, and the nudge still ends on \"done\"", () => {
   const j = validJob({ id: 'nodes', room: '/x/garden', title: 'Node pictures', done: 'pictures sent', status: 'active', owed: [{ what: 'node pictures for the owner', at: 1 }, { what: 'old', at: 1, delivered: 2, how: '/tmp/a.png' }] })!;
@@ -48,33 +39,6 @@ test('job done is refused while a promise is open; owe and delivered move it alo
   assert.equal(loadJobs(join(data, 'manager', 'jobs.json'))[0]!.owed?.[0]?.how, 'sent to the manager: /tmp/nodes.png');
   assert.equal(cli('done', 'nodes').status, 0);
   assert.equal(loadJobs(join(data, 'manager', 'jobs.json'))[0]!.status, 'done');
-});
-
-const HOOK = new URL('../hooks/room-ask-guard.mjs', import.meta.url).pathname;
-const line = (o: object) => JSON.stringify(o);
-test('the Stop check sends a room back once when its report promises something and the job does not owe it', () => {
-  const data = mkdtempSync(join(tmpdir(), 'owe-'));
-  const room = mkdtempSync(join(tmpdir(), 'room-'));
-  mkdirSync(join(data, 'tags'));
-  mkdirSync(join(data, 'manager'));
-  writeFileSync(tagFile(room, data), 'tag');
-  writeFileSync(join(data, 'manager', 'jobs.json'), JSON.stringify({ jobs: [{ id: 'nodes', room, title: 't', done: 'd', status: 'active', createdAt: 1, updatedAt: 1 }] }));
-  const t = join(data, 't.jsonl');
-  const report = line({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'SendMessage', input: { to: 'manager', message: 'Keyer fixed. Node pictures coming shortly.' } }] } });
-  const reply = line({ type: 'assistant', message: { content: [{ type: 'text', text: 'Keyer fixed.' }] } });
-  const run = () => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ transcript_path: t, cwd: room }), env: { ...process.env, CM_DATA_DIR: data, CLAUDE_PROJECT_DIR: room }, encoding: 'utf8' }).stdout;
-  writeFileSync(t, [line({ type: 'user', message: { content: 'go' } }), report, reply].join('\n'));
-  const out = run();
-  assert.match(out, /"decision":"block"/);
-  assert.match(out, /job owe nodes/);
-  assert.equal(run(), ''); // once per turn
-  // Owed this turn: nothing to say.
-  writeFileSync(t, [line({ type: 'user', message: { content: 'again' } }), report, line({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: '~/.tiny-hq/app/manager/job owe nodes "node pictures"' } }] } }), reply].join('\n'));
-  assert.equal(run(), '');
-  // No open job: a promise is just a sentence.
-  writeFileSync(join(data, 'manager', 'jobs.json'), JSON.stringify({ jobs: [] }));
-  writeFileSync(t, [line({ type: 'user', message: { content: 'third' } }), report, reply].join('\n'));
-  assert.equal(run(), '');
 });
 
 test('the check is wired: room-ask-guard.mjs is a Stop hook the setup installs', () => {

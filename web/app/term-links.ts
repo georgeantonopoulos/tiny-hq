@@ -1,4 +1,4 @@
-// Web addresses in the chat panel, for xterm's link provider: the links on one row, with ranges in
+// Web addresses and paths in the chat panel, for xterm's link provider: the links on one row, with ranges in
 // terminal cells. A link that wraps onto the next row is found from either row, and wide or combining
 // characters take the cells the terminal gives them, so a link lines up with what's on screen.
 
@@ -7,7 +7,12 @@ export interface Line { isWrapped: boolean; length: number; getCell(x: number): 
 export interface Buffer { length: number; getLine(y: number): Line | undefined }
 export interface TermLink { range: { start: { x: number; y: number }; end: { x: number; y: number } }; text: string }
 
-const URL_RE = /https?:\/\/[^\s<>"'`)\]]+[^\s<>"'`)\].,;:!?]/g;
+// Web addresses, and file and folder paths on the Mac: `~/...`, `/Users/...`, `/tmp/...`,
+// `/Volumes/...`, `file:///...`. A path opens Finder there (src/daemon/reveal.ts); never part of a word or a URL.
+const URL_SRC = String.raw`https?:\/\/[^\s<>"'\x60)\]]+[^\s<>"'\x60)\].,;:!?]`;
+const PATH_SRC = String.raw`(?<![\w/.~-])(?:file:\/\/)?(?:~|\/(?:Users|Volumes|tmp|private|var))\/[^\s<>"'\x60)\]]*[^\s<>"'\x60)\].,;:!?]`;
+export const LINK_RE = new RegExp(`${URL_SRC}|${PATH_SRC}`, 'g');
+export const isPath = (link: string): boolean => !/^https?:/.test(link);
 
 // `y` is xterm's 1-based row.
 export function linksOnRow(buf: Buffer, y: number): TermLink[] {
@@ -28,7 +33,7 @@ export function linksOnRow(buf: Buffer, y: number): TermLink[] {
     }
   }
   const out: TermLink[] = [];
-  for (const m of text.matchAll(URL_RE)) {
+  for (const m of text.matchAll(LINK_RE)) {
     const a = at[m.index!]!;
     const b = at[m.index! + m[0].length - 1]!;
     if (b.y < y || a.y > y) continue; // not on the row asked about

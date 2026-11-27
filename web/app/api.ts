@@ -1,8 +1,10 @@
 // Talks to the daemon. The token arrives in the URL #fragment (never sent to a
 // server), is kept for this tab (or, on a paired phone, on that device), and goes in a header.
 
+import type { QuickLink } from './quick-links.ts';
 import type { Floor } from '../../src/office/layout.ts';
 import { validGag, type Gag } from './whimsy.ts';
+import { validFlair } from './flair-kit.ts';
 
 const KEY = 'cm-token';
 // Over Tailscale the key belongs to this paired device, so it's kept
@@ -39,6 +41,28 @@ export class Api {
     try {
       const r = await fetch(`/api/said-image?who=${encodeURIComponent(who)}&i=${i}`, { headers: this.headers() });
       return r.ok ? URL.createObjectURL(await r.blob()) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Finder opens at a path the owner clicked; false when it's gone or outside their folders.
+  async reveal(path: string): Promise<boolean> {
+    try {
+      const r = await fetch('/api/reveal', { method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ path }) });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  // The stay-awake switch: read it, or set it. undefined when the Mac can't be reached.
+  async awake(on?: boolean): Promise<{ on: boolean; since?: number } | undefined> {
+    try {
+      const r = on === undefined
+        ? await fetch('/api/awake', { headers: this.headers() })
+        : await fetch('/api/awake', { method: 'POST', headers: this.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ on }) });
+      return r.ok ? ((await r.json()) as { on: boolean; since?: number }) : undefined;
     } catch {
       return undefined;
     }
@@ -92,6 +116,28 @@ export class Api {
   }
 
   // The office's written happenings (Haiku's pool); [] when there are none or the Mac is away.
+  // The quick links along the bottom of the floor.
+  async links(): Promise<QuickLink[]> {
+    try {
+      const r = await fetch('/api/links', { headers: this.headers() });
+      if (!r.ok) return [];
+      const list = ((await r.json()) as { links?: QuickLink[] }).links ?? [];
+      return Array.isArray(list) ? list.filter((l) => l && typeof l.name === 'string' && typeof l.url === 'string' && /^https?:\/\//i.test(l.url)) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // Start a quick link's program on the Mac (if it isn't running) and wait until its page answers.
+  async launchLink(name: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const r = await fetch(`/api/links/launch/${encodeURIComponent(name)}`, { method: 'POST', headers: this.headers() });
+      return (await r.json()) as { ok: boolean; error?: string };
+    } catch {
+      return { ok: false, error: "couldn't reach the Mac" };
+    }
+  }
+
   async gags(): Promise<Gag[]> {
     try {
       const r = await fetch('/api/gags', { headers: this.headers() });
@@ -100,6 +146,23 @@ export class Api {
       return list.map(validGag).filter((g): g is Gag => !!g);
     } catch {
       return [];
+    }
+  }
+
+  // Each room's flair, by project folder; anything that doesn't pass the kit's check is left out.
+  async flair(): Promise<Record<string, import('./flair-kit.ts').Flair>> {
+    try {
+      const r = await fetch('/api/flair', { headers: this.headers() });
+      if (!r.ok) return {};
+      const raw = (await r.json()) as Record<string, unknown>;
+      const out: Record<string, import('./flair-kit.ts').Flair> = {};
+      for (const [k, v] of Object.entries(raw ?? {})) {
+        const f = validFlair(v);
+        if (f) out[k] = f;
+      }
+      return out;
+    } catch {
+      return {};
     }
   }
 

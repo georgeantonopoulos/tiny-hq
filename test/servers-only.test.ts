@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { extraManagers, extraRoomSessions, ownStatus, serversOnly, type BackgroundSession } from '../src/terminal/sessions.ts';
+import { extraManagers, extraRoomSessions, ownStatus, ownStatusSince, serversOnly, SHELL_SETTLED_MS, type BackgroundSession } from '../src/terminal/sessions.ts';
 import { renderStatus } from '../src/terminal/status.ts';
 
 test('a session kept "busy" only by background servers it left running reads idle, and the status page lists it', () => {
@@ -22,7 +22,16 @@ test('a session kept "busy" only by background servers it left running reads idl
   assert.equal(serversOnly(working, ownStatus(3940, dir)).status, 'busy');
   assert.equal(serversOnly(working, undefined).status, 'busy');
   // A new turn starting before Claude Code's own file catches up: still busy.
-  assert.equal(serversOnly(working, 'shell').status, 'busy');
+  assert.equal(serversOnly(working, 'shell', Date.now()).status, 'busy');
+  assert.equal(serversOnly(working, 'shell', undefined).status, 'busy');
+  // But "working" over a "shell" file that has held 10 minutes is a background-only wait: idle.
+  const now = 1_800_000_000_000;
+  assert.equal(serversOnly(working, 'shell', now - SHELL_SETTLED_MS, now).status, 'idle');
+  assert.equal(serversOnly(working, 'shell', now - SHELL_SETTLED_MS + 1000, now).status, 'busy');
+  assert.equal(serversOnly(working, 'busy', now - 2 * SHELL_SETTLED_MS, now).status, 'busy');
+  writeFileSync(join(dir, '3942.json'), JSON.stringify({ pid: 3942, status: 'shell', statusUpdatedAt: 42 }));
+  assert.equal(ownStatusSince(3942, dir), 42);
+  assert.equal(ownStatusSince(3941, dir), undefined);
   // An older session with servers left running is never retired as an extra (stopping it would kill them).
   const room = '/r/atlas';
   const old = { ...idle, realCwd: room, startedAt: 1 };

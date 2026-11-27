@@ -4,6 +4,7 @@
 // tick (every minute, see TICK_STEPS) runs the timetable, jobs, evening note and the office's own
 // checks, typing into sessions only for those.
 
+import { launchLink, linksForPage } from '../office/quick-links.ts';
 import { stillOf } from '../team/stills.ts';
 import { listTimeAfter, visibleAsks } from '../team/ask-list.ts';
 import { execFile, execFileSync } from 'node:child_process';
@@ -23,6 +24,7 @@ import { briefPath, checkLine, decide, describeJobs, isHeld, jobsPath, loadJobs,
 import { loadOrCreateToken } from './token.ts';
 import { idleMs, tidyScreen } from '../team/screen.ts';
 import { projectsIn, tidyDiskIfLow } from '../team/disk-tidy.ts';
+import { awakeNow, keepAwakeIfOn, setAwake } from '../team/awake.ts';
 import { compactPath, contextSize, loadCompacts, saveCompacts, shouldCompact } from '../team/compact.ts';
 import { ackTold, acksPath, addAck, checkAcks } from '../team/acks.ts';
 import { createDaemon, fromWords, type From } from './server.ts';
@@ -41,6 +43,7 @@ import { Allowance, meters, plan, usageReader, type Plan } from '../team/budget.
 import { lateFirstSteps, logStep, loadSteps, pickRoom, stepLine, stepsPath, whyNoStep, type Candidate } from '../team/autonomy.ts';
 import { addGags, gagsDue, loadGags, saveGags, writeGags } from '../office/gags.ts';
 import { checksLogPath, findingsPath, managerLine, KEEP_ON_MANAGER, logCheck, runCheck, saveFinding } from '../team/checks.ts';
+import { AT_ONCE as FLAIR_AT_ONCE, flairDue, flairMap, loadFlair, projectBrief, saveFlair, writeFlair, type FlairEntry } from '../office/flair.ts';
 import { describeScore, jsonl, score } from '../team/scorecard.ts';
 import { copyFlatReports, fileReport, listDesk, shortRoot, openReport, renderMarkdown, reportPage, unreadCount } from '../team/desk.ts';
 import { webBuild } from './web.ts';
@@ -48,6 +51,7 @@ import { addEntry, eveningPath, expiredAsks, expiredLine, fileEvening, restJobs 
 import { approvalsPath, grantPass } from '../team/posts.ts';
 import { bootedSims, EVERY_MS as RUNAWAY_EVERY, OWNER_APPS, findHogs, frontApp, OWNER_USING_MS, hogLine, loadState as loadRunaway, processes, saveState as saveRunaway, simsToStop, stopSim, type Sample } from '../team/runaway.ts';
 import { applyPosts, boardPath, minRooms, onBoard, loadCoffee, removeTip, saveCoffee, startupPath, takePosts, withoutRooms } from '../team/coffee.ts';
+import { reveal } from './reveal.ts';
 import { eveningGithubLine, foldIn, loadGhState, lookAtGithub, lookAtInbox, prReposIn, renderGithub, roomFor, roomGithubLine, saveGhState, writeOttoReport, type Gh, type GhItem, type GhState } from '../team/github.ts';
 
 const token = loadOrCreateToken(TOKEN_PATH);
@@ -383,7 +387,9 @@ async function snapshot(): Promise<{ list: StatusSession[]; rooms: { id: string;
     // It's only really blocked when its transcript shows a question or permission prompt pending.
     // A permission prompt on screen counts too, though Claude Code calls that "working".
     const prompt = alive && s.sessionId ? promptPending(s.sessionId, s.cwd, DATA_DIR) : undefined;
-    const wait = prompt ?? (s.state === 'blocked' ? waitingOn(s.sessionId, s.cwd) : undefined);
+    const read = prompt ?? (s.state === 'blocked' ? waitingOn(s.sessionId, s.cwd) : undefined);
+    // A dialog Claude Code reports open counts even when the transcript doesn't show the question yet.
+    const wait = s.dialog && (!read || read.kind === 'unknown') ? { kind: 'question' as const, text: s.dialog } : read;
     const state = prompt ? 'blocked' : wait?.kind === 'unknown' ? 'done' : s.state;
     const room = worksIn(s.realCwd, MANAGER_DIR) ? 'Manager' : rooms.find((r) => worksIn(s.realCwd, r.path))?.name;
     return {
@@ -654,6 +660,9 @@ const server = createDaemon({
   saidImage: (who: string, i: number) => saidImages.get(who)?.[i],
   // The still frame of the file an open post button carries (src/team/stills.ts), by its SHA-256.
   askStill: (sha: string) => (loadAsks(ASKS).some((a) => a.media?.sha256 === sha) ? stillOf(DATA_DIR, sha) : undefined),
+  // A path the owner clicks opens Finder there, on the Mac only (src/daemon/reveal.ts).
+  reveal,
+  awake: { now: () => awakeNow(DATA_DIR), set: (on: boolean) => (setAwake(DATA_DIR, on), awakeNow(DATA_DIR)) },
   // Over Tailscale (config "remote"): the owner's account plus a paired device; 10 sign-in tries per 10 minutes.
   ...(config.remote ? { remote: { config: config.remote, port: port + 1, devices: new Devices(DEVICES_PATH), signIns: new RateLimit(10, 10 * 60_000), auditPath: REMOTE_AUDIT_PATH } } : {}),
   // The page opens the manager's terminal on this folder.
@@ -742,6 +751,13 @@ const server = createDaemon({
   asks: { list: async () => openAsks(), answer: answerAsk, ignore: ignoreAsk },
   // The usage board at the top of the office: the usage meter's last reading, if there is a meter (no tokens).
   gags: () => ({ gags: loadGags(GAGS).gags }),
+  flair: () => flairMap(loadFlair(FLAIR)),
+  links: () => ({ links: linksForPage(join(DATA_DIR, 'links.json'), join(DATA_DIR, 'link-icons')) }),
+  launchLink: async (name) => {
+    const r = await launchLink(join(DATA_DIR, 'links.json'), join(DATA_DIR, 'link-logs'), name);
+    console.log(`quick link: ${name} clicked: ${r.ok ? (r.started ? 'started it' : 'already running') : `failed (${r.error})`}`);
+    return r;
+  },
   usage: async () => {
     void allowance.refresh();
     return { meters: meters(allowance) };
@@ -1708,6 +1724,7 @@ function leaveAlone(s: Awaited<ReturnType<typeof allSessions>>[number], asking: 
   return (
     (terminals.forSession(s.id)?.viewers() ?? 0) > 0 ||
     asking.has(s.sessionId) ||
+    !!s.dialog ||
     now - lastActiveAt(s) < 3 * 60_000 ||
     (s.state === 'blocked' && waitingOn(s.sessionId, s.cwd).kind !== 'unknown')
   );
@@ -1820,6 +1837,7 @@ async function compactLongSessions(): Promise<void> {
 
 // New office happenings from Haiku, about once a day; alongside the tick, never blocking it.
 const GAGS = join(DATA_DIR, 'happenings.json');
+const FLAIR = join(DATA_DIR, 'flair', 'flair.json');
 // The coffee room (src/team/coffee.ts): rooms post tips themselves with manager/coffee; each tick the
 // office files the queued posts onto the board (no model, no tokens), and the poster walks to the
 // coffee room on the floor. Private and on-call rooms are kept out, and anything they shared comes off.
@@ -1919,6 +1937,41 @@ function freshGags(): void {
     .finally(() => (gagsBusy = false));
 }
 
+// Each room's flair (src/office/flair.ts): every room on the floor without one gets a Sonnet
+// writer, a few at a time; new rooms get theirs on the next tick after they arrive. Same switch
+// as the happenings (config extras.happenings): both are play that spends a few tokens.
+const flairWriting = new Set<string>();
+function freshFlair(): void {
+  if (!config.extras.happenings) return;
+  const rooms = (floors.latest()?.rooms ?? []).filter((r) => r.kind === 'project' && r.project);
+  const due = flairDue(loadFlair(FLAIR), rooms.map((r) => r.project!.path)).filter((p) => !flairWriting.has(p));
+  for (const path of due.slice(0, Math.max(0, FLAIR_AT_ONCE - flairWriting.size))) {
+    const room = rooms.find((r) => r.project!.path === path)!;
+    const brief = projectBrief({ path, name: room.name, ...(room.project!.language ? { language: room.project!.language } : {}), private: isOnCall(path, [...config.privateProjects, ...config.onCallProjects]) });
+    flairWriting.add(path);
+    const note = (entry: FlairEntry) => {
+      const f = loadFlair(FLAIR);
+      f.rooms[path] = entry;
+      saveFlair(FLAIR, f);
+    };
+    void userEnv()
+      .then((env) => writeFlair(brief, { claude: CLAUDE_BIN, cwd: join(DATA_DIR, 'flair'), env }))
+      .then((flair) => {
+        note({ at: Date.now(), ok: true, flair });
+        console.log(`room flair: ${room.name} got ${flair.motif}`);
+      })
+      .catch((err) => {
+        console.error(`room flair (${room.name}):`, String(err).slice(0, 200));
+        try {
+          note({ at: Date.now(), ok: false });
+        } catch {
+          /* the next tick tries again */
+        }
+      })
+      .finally(() => flairWriting.delete(path));
+  }
+}
+
 // Last line of defence: log and keep running rather than crash-loop under launchd.
 process.on('unhandledRejection', (err) => console.error('unhandled rejection:', err));
 
@@ -1951,8 +2004,10 @@ server.listen(port, '127.0.0.1', () => {
       ['disk', () => {
         if (config.extras.diskTidy) void tidyDiskIfLow(DATA_DIR, projectsIn(config.projectRoots, config.extraProjects), Date.now(), (text) => tellManagerNow(`[office] ${text}`)).catch((e) => console.log(`disk: ${e}`));
       }],
+      ['stay awake', () => keepAwakeIfOn(DATA_DIR)],
       ['github news', tellGithub],
       ['happenings', freshGags],
+      ['room flair', freshFlair],
       ['coffee room', coffeeRoom],
       ['runaway', runaways],
       ['github', () => {

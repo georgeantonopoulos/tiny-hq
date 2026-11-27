@@ -378,6 +378,16 @@ td.num{font-weight:600}
 .bar .track{height:14px;background:var(--code);border-radius:7px;overflow:hidden}
 .bar .fill{display:block;height:100%;background:var(--bar);border-radius:7px}
 .bar .val{font-variant-numeric:tabular-nums;font-weight:600;min-width:3ch;text-align:right}
+.tiles{display:grid;gap:12px;margin:22px 0}
+.tile{display:flex;gap:16px;align-items:center;padding:16px 18px;border-radius:14px;border:1px solid var(--line);background:var(--accent-soft)}
+.tile:nth-child(2){background:color-mix(in srgb,#3b82f6 14%,var(--paper))}
+.tile:nth-child(3){background:color-mix(in srgb,#f97316 14%,var(--paper))}
+.tile .ti{font-size:34px;line-height:1}
+.tile .tl{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--soft);font-weight:700}
+.tile .tt{font-size:18px;font-weight:600;line-height:1.35}
+details{margin:22px 0;border:1px solid var(--line);border-radius:12px;padding:4px 16px}
+summary{cursor:pointer;padding:10px 0;font-weight:600;color:var(--accent)}
+details h3{margin-top:16px}
 @media (max-width:560px){main{padding:12px 10px 40px}header{padding:20px 18px 16px}article{padding:4px 18px 24px}.bar{grid-template-columns:1fr auto}.bar .track{grid-column:1/-1;order:3}}
 @media print{body{background:#fff}main{max-width:none;padding:0}header,article{border:0}}
 `;
@@ -425,6 +435,26 @@ export function renderMarkdown(md: string): string {
       i++;
       const max = Math.max(...items.map((x) => x.n), 0) || 1;
       out.push(`<div class="bars">${items.map((x) => `<div class="bar"><span>${inline(x.label)}</span><span class="track"><span class="fill" style="width:${Math.max(1, Math.round((x.n / max) * 100))}%"></span></span><span class="val">${esc(x.text)}</span></div>`).join('')}</div>`);
+      continue;
+    }
+    if (/^```tiles\s*$/.test(l)) {
+      // Big coloured tiles from lines "emoji | label | text": the evening note's top three.
+      const tiles: string[] = [];
+      for (i++; i < lines.length && !/^```/.test(lines[i]!); i++) {
+        const [icon, label, ...text] = lines[i]!.split('|').map((c) => c.trim());
+        if (label) tiles.push(`<div class="tile"><span class="ti">${esc(icon ?? '')}</span><div><div class="tl">${inline(label)}</div><div class="tt">${inline(text.join(' | '))}</div></div></div>`);
+      }
+      i++;
+      out.push(`<div class="tiles">${tiles.join('')}</div>`);
+      continue;
+    }
+    const fold = /^```fold\s+(.*)$/.exec(l);
+    if (fold) {
+      // A section folded shut: click to open.
+      const body: string[] = [];
+      for (i++; i < lines.length && !/^```\s*$/.test(lines[i]!); i++) body.push(lines[i]!);
+      i++;
+      out.push(`<details><summary>${inline(fold[1]!)}</summary>${renderMarkdown(body.join('\n'))}</details>`);
       continue;
     }
     if (/^```/.test(l)) {

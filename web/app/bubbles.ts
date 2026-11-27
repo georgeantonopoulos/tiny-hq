@@ -16,6 +16,9 @@
 // Short passing lines (The manager's hello when the page opens) still pop up by themselves
 // and go after a few seconds.
 
+import { isRemote } from './api.ts';
+import { isPath, LINK_RE } from './term-links.ts';
+
 export interface Speaker {
   id: string;
   name: string;
@@ -360,7 +363,7 @@ export class Bubbles {
     el.classList.add('ask');
     const q = document.createElement('div');
     q.className = 'q scroll';
-    q.textContent = ask.question;
+    linkify(q, ask.question);
     if (ask.post) {
       // The exact words that would go public: what they approve is exactly this.
       const label = document.createElement('small');
@@ -417,7 +420,7 @@ export class Bubbles {
     if (ask.tried) {
       const t = document.createElement('small');
       t.className = 'tried';
-      t.textContent = `${ask.hands ? 'More: ' : 'Already tried: '}${ask.tried}`;
+      linkify(t, `${ask.hands ? 'More: ' : 'Already tried: '}${ask.tried}`);
       q.append(document.createElement('br'), t);
     }
     const row = document.createElement('div');
@@ -720,28 +723,44 @@ export function tidy(s: string): string {
     .trim();
 }
 
-// A whole message to read: markdown marks gone, but paragraphs, lists and code kept.
 // Text with its web addresses as links the owner can tap (on a phone, copying a link out of a bubble
 // is hard). Only http(s); each opens in a new tab. Built from text nodes, never HTML.
-const URL_RE = /https?:\/\/[^\s<>"'`)\]]+[^\s<>"'`)\].,;:!?]/g;
+// File and folder paths too: on the Mac a click opens Finder there; on the phone they stay plain text.
+let revealPath: ((path: string) => void) | undefined;
+export function onReveal(fn: (path: string) => void): void {
+  revealPath = fn;
+}
 export function linkify(el: HTMLElement, text: string): void {
   el.textContent = '';
   let at = 0;
-  for (const m of text.matchAll(URL_RE)) {
+  for (const m of text.matchAll(LINK_RE)) {
+    const path = isPath(m[0]);
+    if (path && (!revealPath || isRemote())) continue;
     if (m.index! > at) el.append(text.slice(at, m.index));
     const a = document.createElement('a');
-    a.href = m[0];
     a.textContent = m[0];
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
     a.className = 'msg-link';
-    a.addEventListener('click', (e) => e.stopPropagation());
+    if (path) {
+      a.href = '#';
+      a.title = 'Show in Finder';
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        revealPath?.(m[0]);
+      });
+    } else {
+      a.href = m[0];
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.addEventListener('click', (e) => e.stopPropagation());
+    }
     el.append(a);
     at = m.index! + m[0].length;
   }
   if (at < text.length) el.append(text.slice(at));
 }
 
+// A whole message to read: markdown marks gone, but paragraphs, lists and code kept.
 export function readable(s: string): string {
   const t = s
     .replace(/```[a-z]*\n?/gi, '')

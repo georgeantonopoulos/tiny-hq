@@ -39,6 +39,8 @@ export interface DaemonDeps {
   // The i-th picture the person's last message points at (a path the office found in it), if any.
   saidImage?: (who: string, i: number) => string | undefined;
   askStill?: (sha256: string) => string | undefined; // the still frame of an open post button's file
+  reveal?: (path: string) => Promise<boolean>; // Finder at a path the owner clicked (src/daemon/reveal.ts)
+  awake?: { now: () => { on: boolean; since?: number }; set: (on: boolean) => { on: boolean; since?: number } }; // the stay-awake switch (src/team/awake.ts)
   // Person id -> what their blocked session is waiting for the owner on (permission or question).
   waiting?: () => Promise<Record<string, { kind: string; text: string }>>;
   // The manager's timetable: the scheduled tasks, and the owner switching one on or off.
@@ -59,6 +61,12 @@ export interface DaemonDeps {
   usage?: () => Promise<unknown>;
   // The office's written happenings (the Haiku writer's pool; see src/office/gags.ts).
   gags?: () => unknown;
+  // Each room's flair, by project folder (src/office/flair.ts).
+  flair?: () => unknown;
+  // The owner's quick links along the bottom of the floor (src/office/quick-links.ts).
+  links?: () => unknown;
+  // Clicking a quick link whose program isn't running starts it (src/office/quick-links.ts launchLink).
+  launchLink?: (name: string) => Promise<{ ok: boolean; started: boolean; error?: string }>;
   // The owner's desk: reports they asked for (src/team/desk.ts). `open` marks one read.
   // `page` is one report as a whole page for its own tab (src/team/desk.ts reportPage).
   desk?: { list: () => { reports: { id: string }[] }; page: (id: string, peek?: boolean) => { html: string; sandboxed: boolean } | undefined; open: (id: string) => unknown | undefined; unread: () => number };
@@ -315,6 +323,17 @@ export function createDaemon(deps: DaemonDeps): Server {
       const r = deps.desk.open(deskM[1]!);
       return r ? send(res, 200, r) : send(res, 404, { error: 'no such report' });
     }
+    const launchM = /^\/api\/links\/launch\/([^/]{1,120})$/.exec(url.pathname);
+    if (launchM && req.method === 'POST' && deps.launchLink) {
+      const r = await deps.launchLink(decodeURIComponent(launchM[1]!));
+      return send(res, r.ok ? 200 : 502, r);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/links' && deps.links) {
+      return send(res, 200, deps.links());
+    }
+    if (req.method === 'GET' && url.pathname === '/api/flair' && deps.flair) {
+      return send(res, 200, deps.flair());
+    }
     if (req.method === 'GET' && url.pathname === '/api/gags' && deps.gags) {
       return send(res, 200, deps.gags());
     }
@@ -362,6 +381,33 @@ export function createDaemon(deps: DaemonDeps): Server {
         send(res, 404, { error: 'no such picture' });
       }
       return;
+    }
+    // A path the owner clicked in a bubble, a button or the chat panel: Finder opens there.
+    // Only from the Mac itself; on the phone a Finder window on the Mac is no use.
+    if (req.method === 'POST' && url.pathname === '/api/reveal' && deps.reveal) {
+      if (remote) return send(res, 403, { error: 'Finder opens only on the Mac' });
+      let b: { path?: unknown };
+      try {
+        b = ((await readJson(req)) ?? {}) as typeof b;
+      } catch {
+        return send(res, 400, { error: 'bad request' });
+      }
+      if (typeof b.path !== 'string' || !b.path || b.path.length > 4096) return send(res, 400, { error: 'path required' });
+      return (await deps.reveal(b.path)) ? send(res, 200, { ok: true }) : send(res, 404, { error: 'no such place' });
+    }
+    // The stay-awake switch: keeps the Mac from idling into its lock screen.
+    if (url.pathname === '/api/awake' && deps.awake) {
+      if (req.method === 'GET') return send(res, 200, deps.awake.now());
+      if (req.method === 'POST') {
+        let b: { on?: unknown };
+        try {
+          b = ((await readJson(req)) ?? {}) as typeof b;
+        } catch {
+          return send(res, 400, { error: 'bad request' });
+        }
+        if (typeof b.on !== 'boolean') return send(res, 400, { error: 'on: true or false' });
+        return send(res, 200, deps.awake.set(b.on));
+      }
     }
     if (req.method === 'GET' && url.pathname === '/api/sessions' && deps.sessions) {
       const [sessions, said, waiting, asks, models] = await Promise.all([deps.sessions(), deps.said ? deps.said().catch(() => ({})) : Promise.resolve({}), deps.waiting ? deps.waiting().catch(() => ({})) : Promise.resolve(undefined), deps.asks ? deps.asks.list().catch(() => ({})) : Promise.resolve(undefined), deps.models ? deps.models().catch(() => undefined) : Promise.resolve(undefined)]);
