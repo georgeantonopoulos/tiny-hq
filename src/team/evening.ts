@@ -101,7 +101,7 @@ export function eveningNote(entries: Entry[], jobs: Job[], since: number, now: n
     if (rows.length) rest.push('', `### ${EMOJI[kind]} ${KINDS[kind]}`, '', ...rows.map((e) => `- **${roomName(e.folder)}**: ${e.text}`));
   }
   const total = done.length + fresh.length;
-  const parts = [`# Evening note, ${day}`, '', '```tiles', ...tiles, '```', '', `\`\`\`fold 📂 The rest (${total} thing${total === 1 ? '' : 's'}, nothing waiting on you)`, ...rest, '```'];
+  const parts = [`# Evening note, ${day}`, '', '```tiles', ...tiles, '```', '', `\`\`\`fold 📂 The rest (${total} thing${total === 1 ? '' : 's'})`, ...rest, '```'];
   return { title: `Evening note, ${day}: 🙋 ${waiting.length} · 🚀 ${shipped.length} · 🔥 ${broke.length}`, markdown: parts.join('\n') + '\n' };
 }
 

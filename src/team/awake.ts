@@ -33,6 +33,7 @@ export function isCaffeinate(pid: number | undefined): boolean {
 function start(): number | undefined {
   try {
     const p = spawn('/usr/bin/caffeinate', ['-d', '-i'], { detached: true, stdio: 'ignore' });
+    p.on('error', () => undefined); // no caffeinate on this machine: the switch just stays off
     p.unref();
     return p.pid;
   } catch {
